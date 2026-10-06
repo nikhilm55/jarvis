@@ -84,6 +84,17 @@ def secret_kind(text: str) -> str | None:
     return None
 
 
+URL_CREDENTIALS = re.compile(r"://[^/@\s]+@")
+
+
+def redact(text: str) -> str:
+    """Mask secrets before any text is echoed back into the transcript or logs."""
+    masked = URL_CREDENTIALS.sub("://[REDACTED]@", text)
+    for _, pattern in SECRET_PATTERNS:
+        masked = pattern.sub("[REDACTED]", masked)
+    return masked
+
+
 def is_secret_file(path: str) -> bool:
     p = normalise(path)
     return bool(SECRET_FILE.search(p)) and not TEMPLATE_FILE.search(p)
@@ -94,7 +105,7 @@ def _decide(decision: str, reason: str) -> NoReturn:
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": decision,
-            "permissionDecisionReason": reason,
+            "permissionDecisionReason": redact(reason),
         }
     }
     print(json.dumps(out))
@@ -113,7 +124,7 @@ def ask(reason: str) -> NoReturn:
 
 def warn(note: str) -> NoReturn:
     """Allow, but surface a note to the user."""
-    print(f"[hook warning] {note}", file=sys.stderr)
+    print(f"[hook warning] {redact(note)}", file=sys.stderr)
     sys.exit(0)
 
 

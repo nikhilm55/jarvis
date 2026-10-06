@@ -172,3 +172,14 @@ def test_should_allow_when_payload_is_malformed() -> None:
 
 def test_should_not_block_stop_when_stop_hook_already_active() -> None:
     assert run_hook("stop_verify.py", {"hook_event_name": "Stop", "stop_hook_active": True}) == {}
+
+
+def test_should_redact_credentials_when_echoing_a_blocked_command() -> None:
+    token = "ghp_" + "b" * 36
+    payload = {
+        "tool_name": "Bash",
+        "tool_input": {"command": f"git push --force https://me:{token}@github.com/x/y.git"},
+    }
+    output = json.dumps(run_hook("guard_bash.py", payload))
+    assert token not in output
+    assert "[REDACTED]" in output
