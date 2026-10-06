@@ -1,0 +1,787 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jarvis UI Mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ── Tokens (Raycast-derived, see docs/FRS.md §8) ───────────────────────── */
+:root{
+  --canvas:#07080a; --surface:#0d0d0d; --elevated:#101111; --card:#121212;
+  --hairline:#242728; --hairline-soft:rgba(255,255,255,.08); --hairline-strong:rgba(255,255,255,.16);
+  --ink:#f4f4f6; --body:#cdcdcd; --mute:#9c9c9d; --ash:#6a6b6c;
+  --primary:#ffffff; --primary-pressed:#e8e8e8; --on-primary:#000000;
+  --blue:#57c1ff;   --blue-soft:rgba(87,193,255,.15);
+  --green:#59d499;  --green-soft:rgba(89,212,153,.15);
+  --yellow:#ffc533; --yellow-soft:rgba(255,197,51,.15);
+  --red:#ff6161;    --red-soft:rgba(255,97,97,.15);
+  --think:rgba(255,255,255,.72);
+  --r-xs:4px; --r-sm:6px; --r-md:8px; --r-lg:10px; --r-xl:16px; --r-full:9999px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--canvas);color:var(--ink)}
+body{font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;font-feature-settings:"calt","kern","liga","ss03";font-size:14px;line-height:1.6;-webkit-font-smoothing:antialiased}
+button,input{font:inherit;color:inherit}
+h1,h2,h3,p{margin:0}
+a{color:var(--ink)}
+
+/* ── Page frame ─────────────────────────────────────────────────────────── */
+.page{max-width:1320px;margin:0 auto;padding:56px 24px 120px}
+.page-head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:56px}
+.brand{display:flex;align-items:center;gap:12px}
+.brand h1{font-size:28px;font-weight:600;letter-spacing:.2px}
+.brand p{color:var(--mute)}
+.toc{display:flex;flex-wrap:wrap;gap:6px}
+.toc a{text-decoration:none;font-size:13px;color:var(--body);padding:4px 10px;border-radius:var(--r-full);border:1px solid var(--hairline)}
+.toc a:hover{background:var(--elevated);color:var(--ink)}
+section{margin-top:96px}
+.sec-head{display:flex;flex-direction:column;gap:4px;margin-bottom:24px}
+.sec-head .eyebrow{font-size:12px;letter-spacing:.4px;text-transform:uppercase;color:var(--mute)}
+.sec-head h2{font-size:24px;font-weight:500;letter-spacing:.2px}
+.sec-head p{color:var(--mute);max-width:720px}
+
+/* ── Primitives ─────────────────────────────────────────────────────────── */
+.card{background:var(--surface);border:1px solid var(--hairline);border-radius:var(--r-xl)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:0 16px;border-radius:var(--r-md);font-size:14px;font-weight:500;letter-spacing:.2px;cursor:pointer;white-space:nowrap}
+.btn-primary{background:var(--primary);color:var(--on-primary);border:0}
+.btn-primary:active{background:var(--primary-pressed)}
+.btn-secondary{background:var(--elevated);border:1px solid var(--hairline)}
+.btn-secondary:hover{border-color:var(--hairline-strong)}
+.btn-ghost{background:transparent;border:1px solid var(--hairline)}
+.btn-sm{height:28px;padding:0 12px;font-size:12px;border-radius:var(--r-sm)}
+.badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;line-height:1.5;padding:2px 8px;border-radius:var(--r-xs);white-space:nowrap}
+.b-neutral{background:var(--elevated);color:var(--body);border:1px solid var(--hairline)}
+.b-blue{background:var(--blue-soft);color:var(--blue)}
+.b-green{background:var(--green-soft);color:var(--green)}
+.b-yellow{background:var(--yellow-soft);color:var(--yellow)}
+.b-red{background:var(--red-soft);color:#ff8585}
+kbd{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 6px;border-radius:var(--r-xs);background:linear-gradient(#121212,#0d0d0d);border:1px solid var(--hairline);color:var(--body);font:500 12px/1 Inter,system-ui,sans-serif}
+.input{height:36px;padding:0 12px;border-radius:var(--r-md);background:var(--elevated);border:1px solid var(--hairline);font-size:14px;outline:none}
+.input:focus{border-color:var(--hairline-strong)}
+.input::placeholder{color:var(--mute)}
+.muted{color:var(--mute)} .body{color:var(--body)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.icon{width:16px;height:16px;flex-shrink:0;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.tile{width:36px;height:36px;border-radius:var(--r-md);background:var(--card);border:1px solid var(--hairline);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;flex-shrink:0}
+
+/* ── The orb — the single signature element ─────────────────────────────── */
+.orb{position:relative;width:32px;height:32px;flex-shrink:0;display:flex;align-items:center;justify-content:center}
+.orb::before{content:"";position:absolute;inset:0;border-radius:var(--r-full);border:1px solid var(--orb-ring)}
+.orb::after{content:"";width:18px;height:18px;border-radius:var(--r-full);background:var(--orb)}
+.orb.listen{--orb:var(--blue);--orb-ring:rgba(87,193,255,.4)}
+.orb.think{--orb:var(--think);--orb-ring:var(--hairline-strong)}
+.orb.confirm{--orb:var(--yellow);--orb-ring:rgba(255,197,51,.4)}
+.orb.error{--orb:var(--red);--orb-ring:rgba(255,97,97,.4)}
+.orb.idle{--orb:var(--ash);--orb-ring:transparent;width:10px;height:10px}
+.orb.idle::after{width:8px;height:8px}
+.orb.listen::before{animation:ring 1.6s ease-out infinite}
+.orb.think::after{animation:breathe 1.2s ease-in-out infinite}
+@keyframes ring{0%{transform:scale(.8);opacity:1}100%{transform:scale(1.35);opacity:0}}
+@keyframes breathe{0%,100%{opacity:.45}50%{opacity:1}}
+.done-mark{width:32px;height:32px;border-radius:var(--r-full);background:var(--green-soft);color:var(--green);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.wave{display:flex;align-items:center;gap:3px;height:24px}
+.wave i{display:block;width:3px;border-radius:2px;background:var(--blue);animation:wave 1.1s ease-in-out infinite;transform-origin:center}
+.wave i:nth-child(1){height:10px}.wave i:nth-child(2){height:18px;animation-delay:.1s}.wave i:nth-child(3){height:24px;animation-delay:.2s}
+.wave i:nth-child(4){height:14px;animation-delay:.3s}.wave i:nth-child(5){height:20px;animation-delay:.4s}.wave i:nth-child(6){height:8px;animation-delay:.5s}
+@keyframes wave{0%,100%{transform:scaleY(.45)}50%{transform:scaleY(1)}}
+@media (prefers-reduced-motion:reduce){.orb::before,.orb::after,.wave i{animation:none!important}}
+
+/* ── HUD pill + cards ───────────────────────────────────────────────────── */
+.pill{display:flex;align-items:center;gap:14px;padding:10px 20px 10px 12px;background:var(--surface);border:1px solid var(--hairline);border-radius:var(--r-full)}
+.pill .text{flex:1;font-size:15px;line-height:1.4;min-width:0}
+.pill .label{font-size:12px;color:var(--mute);white-space:nowrap}
+.hud-card{padding:20px 22px;display:flex;flex-direction:column;gap:14px}
+.hud-card .top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.hud-card .title{display:flex;align-items:center;gap:12px;font-size:16px;font-weight:600}
+.hud-card .actions{display:flex;flex-wrap:wrap;gap:8px}
+.hud-card .foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding-top:12px;border-top:1px solid var(--hairline);font-size:13px;color:var(--mute)}
+.wwr{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,520px),1fr));gap:24px}
+.stage{padding:40px 32px;background:var(--canvas);border:1px solid var(--hairline-soft);border-radius:var(--r-xl);display:flex;justify-content:center}
+.stage > *{width:100%;max-width:600px}
+.quote{padding:10px 14px;border-radius:var(--r-md);background:var(--card);border:1px solid var(--hairline);color:var(--ink);font-size:15px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:14px}
+.kv dt{color:var(--mute)} .kv dd{margin:0;color:var(--body)}
+.remedy{margin:0;padding-left:18px;color:var(--body)} .remedy li{margin:2px 0}
+.msg{display:flex;align-items:flex-start;gap:12px;padding:12px;border-radius:var(--r-lg)}
+.msg.active{background:var(--card)}
+.avatar{width:32px;height:32px;border-radius:var(--r-full);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0;background:var(--card);border:1px solid var(--hairline);color:var(--body)}
+.msg .who{font-size:14px;font-weight:500}
+.msg .what{font-size:13px;color:var(--body)}
+.msg .when{font-size:12px;color:var(--mute);margin-left:auto;white-space:nowrap}
+
+/* ── Desktop scene ──────────────────────────────────────────────────────── */
+.desktop{position:relative;width:100%;aspect-ratio:16/9.5;min-height:560px;overflow:hidden;background:var(--canvas);border:1px solid var(--hairline);border-radius:var(--r-xl)}
+.ghost-win{position:absolute;background:var(--surface);border:1px solid var(--hairline);border-radius:var(--r-lg);overflow:hidden;display:flex;flex-direction:column}
+.ghost-win .bar{height:34px;display:flex;align-items:center;gap:8px;padding:0 14px;border-bottom:1px solid var(--hairline);font-size:13px;color:var(--mute)}
+.ghost-win .dot{width:10px;height:10px;border-radius:50%;background:var(--hairline)}
+.sk{border-radius:var(--r-xs);background:#161718}
+.state-switch{position:absolute;top:16px;right:16px;display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding:4px;background:var(--surface);border:1px solid var(--hairline);border-radius:var(--r-lg);z-index:3}
+.state-switch span{font-size:12px;color:var(--mute);padding:0 8px}
+.state-switch button{height:30px;padding:0 12px;border:0;border-radius:var(--r-sm);background:transparent;color:var(--body);font-size:13px;font-weight:500;cursor:pointer}
+.state-switch button[aria-pressed="true"]{background:var(--primary);color:var(--on-primary)}
+.hud-zone{position:absolute;left:0;right:0;bottom:32px;display:flex;flex-direction:column;align-items:center;gap:10px;padding:0 16px;z-index:2}
+.hud-zone > *{width:100%;max-width:580px}
+.tray-chip{position:absolute;left:16px;bottom:16px;display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--surface);border:1px solid var(--hairline);border-radius:var(--r-md);font-size:12px;color:var(--body);z-index:2}
+.control-banner{position:absolute;top:16px;left:16px;display:none;align-items:center;gap:10px;padding:6px 6px 6px 12px;background:var(--surface);border:1px solid var(--hairline);border-radius:var(--r-md);font-size:13px;z-index:3}
+.desktop[data-state="acting"] .control-banner{display:flex}
+[data-show]{display:none}
+
+/* ── App window ─────────────────────────────────────────────────────────── */
+.app{display:flex;flex-wrap:wrap;min-height:720px;overflow:hidden;background:var(--canvas);border:1px solid var(--hairline);border-radius:var(--r-xl)}
+.sidebar{flex:1 1 220px;max-width:240px;padding:16px 12px;border-right:1px solid var(--hairline);display:flex;flex-direction:column;gap:2px;background:var(--canvas)}
+.sidebar .brandmini{display:flex;align-items:center;gap:10px;padding:6px 10px 18px;font-weight:600;font-size:15px}
+.nav{display:flex;align-items:center;gap:10px;height:34px;padding:0 10px;border-radius:var(--r-sm);border:0;background:transparent;color:var(--body);font-size:14px;cursor:pointer;text-align:left;width:100%}
+.nav:hover{background:var(--surface);color:var(--ink)}
+.nav[aria-current="page"]{background:var(--card);color:var(--ink)}
+.nav .dotred{width:6px;height:6px;border-radius:50%;background:var(--red);margin-left:auto}
+.sidebar .mode{margin-top:auto;padding:12px 10px 4px;border-top:1px solid var(--hairline);display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--mute)}
+.content{flex:999 1 560px;min-width:0;padding:28px 32px 40px;display:flex;flex-direction:column;gap:24px}
+.view{display:none;flex-direction:column;gap:24px}
+.view.on{display:flex}
+.view-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}
+.view-head h3{font-size:22px;font-weight:500;letter-spacing:.2px}
+.status-row{display:flex;flex-wrap:wrap;gap:8px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:16px}
+.grid3{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr));gap:12px}
+.panel{background:var(--surface);border:1px solid var(--hairline);border-radius:var(--r-lg);padding:20px}
+.panel h4{margin:0 0 12px;font-size:14px;font-weight:500;color:var(--mute)}
+.chip-say{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--r-md);background:var(--elevated);border:1px solid var(--hairline);font-size:14px}
+.list{display:flex;flex-direction:column}
+.li{display:flex;align-items:center;gap:12px;padding:10px 8px;border-bottom:1px solid var(--hairline-soft);font-size:14px}
+.li:last-child{border-bottom:0}
+.li .time{width:44px;color:var(--mute);font-size:12px;font-variant-numeric:tabular-nums}
+.li .grow{flex:1;min-width:0}
+.ok{color:var(--green)} .bad{color:var(--red)} .warn{color:var(--yellow)}
+.banner{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:14px 16px;border-radius:var(--r-lg);background:var(--surface);border:1px solid var(--hairline)}
+.banner .grow{flex:1;min-width:220px}
+.table-wrap{overflow-x:auto;border:1px solid var(--hairline);border-radius:var(--r-lg)}
+table{width:100%;border-collapse:collapse;min-width:760px}
+th{text-align:left;font-size:12px;font-weight:500;color:var(--mute);padding:10px 14px;border-bottom:1px solid var(--hairline);background:var(--surface)}
+td{padding:10px 14px;border-bottom:1px solid var(--hairline-soft);font-size:14px;vertical-align:middle}
+tr:last-child td{border-bottom:0}
+.seg{display:inline-flex;padding:2px;border-radius:var(--r-md);background:var(--elevated);border:1px solid var(--hairline)}
+.seg button{height:26px;padding:0 10px;border:0;border-radius:var(--r-sm);background:transparent;color:var(--mute);font-size:12px;font-weight:500;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--card);color:var(--ink);box-shadow:inset 0 0 0 1px var(--hairline-strong)}
+.seg button.never[aria-pressed="true"]{color:#ff8585}
+.src{display:flex;align-items:center;gap:10px}
+.int-card{background:var(--surface);border:1px solid var(--hairline);border-radius:var(--r-lg);padding:16px;display:flex;flex-direction:column;gap:12px}
+.int-card .top{display:flex;align-items:center;gap:12px}
+.int-card .name{font-weight:500}
+.int-card .desc{font-size:13px;color:var(--mute);line-height:1.5}
+.int-card .foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:auto}
+.int-card.add{border-style:dashed;align-items:center;justify-content:center;text-align:center;color:var(--mute);min-height:150px}
+.pills{display:flex;flex-wrap:wrap;gap:6px}
+.pills button{height:28px;padding:0 12px;border-radius:var(--r-full);border:0;background:transparent;color:var(--body);font-size:13px;cursor:pointer}
+.pills button[aria-pressed="true"]{background:var(--elevated);color:var(--ink);box-shadow:inset 0 0 0 1px var(--hairline)}
+.switch{position:relative;width:34px;height:20px;border-radius:var(--r-full);background:var(--hairline);border:0;cursor:pointer;flex-shrink:0}
+.switch::after{content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:var(--mute);transition:left .15s}
+.switch[aria-checked="true"]{background:var(--ink)}
+.switch[aria-checked="true"]::after{left:17px;background:var(--canvas)}
+
+/* ── Setup ──────────────────────────────────────────────────────────────── */
+.setup{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:20px}
+.setup-head{display:flex;align-items:center;gap:24px}
+.ring{--p:75;width:96px;height:96px;border-radius:50%;background:conic-gradient(var(--ink) calc(var(--p)*1%),var(--hairline) 0);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.ring span{width:80px;height:80px;border-radius:50%;background:var(--canvas);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:600}
+.checks{background:var(--surface);border:1px solid var(--hairline);border-radius:var(--r-lg);overflow:hidden}
+.check{display:flex;flex-wrap:wrap;align-items:center;gap:14px;padding:14px 16px;border-bottom:1px solid var(--hairline)}
+.check:last-child{border-bottom:0}
+.check .st{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.check .st.ok{background:var(--green-soft)} .check .st.no{background:var(--elevated);border:1px solid var(--hairline-strong)} .check .st.busy{background:var(--yellow-soft)}
+.check .grow{flex:1;min-width:220px}
+.check .name{font-weight:500}
+.check .detail{font-size:13px;color:var(--mute)}
+.check-expand{width:100%;margin:4px 0 0 36px;padding:16px;border-radius:var(--r-md);background:var(--canvas);border:1px solid var(--hairline);display:flex;flex-direction:column;gap:14px}
+.takes{display:flex;gap:8px}
+.takes i{width:28px;height:28px;border-radius:50%;border:1px solid var(--hairline-strong);display:flex;align-items:center;justify-content:center;font-style:normal;font-size:12px;color:var(--mute)}
+.takes i.got{background:var(--blue-soft);border-color:transparent;color:var(--blue)}
+.meter{height:6px;border-radius:var(--r-full);background:var(--hairline);overflow:hidden}
+.meter b{display:block;height:100%;width:62%;background:var(--blue);border-radius:inherit}
+.modes{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));gap:10px}
+.mode-opt{padding:14px;border-radius:var(--r-md);background:var(--elevated);border:1px solid var(--hairline);display:flex;flex-direction:column;gap:6px;cursor:pointer;text-align:left}
+.mode-opt[aria-pressed="true"]{border-color:var(--ink)}
+.mode-opt .t{display:flex;align-items:center;justify-content:space-between;font-weight:500}
+.mode-opt .d{font-size:13px;color:var(--mute);line-height:1.5}
+
+/* ── Palette ────────────────────────────────────────────────────────────── */
+.palette{max-width:720px;margin:0 auto;overflow:hidden}
+.palette .search{display:flex;align-items:center;gap:12px;height:56px;padding:0 18px;border-bottom:1px solid var(--hairline)}
+.palette .search input{flex:1;background:transparent;border:0;outline:none;font-size:16px}
+.palette .search input::placeholder{color:var(--mute)}
+.palette .group{padding:8px}
+.palette .glabel{font-size:12px;color:var(--mute);padding:8px 10px 4px}
+.prow{display:flex;align-items:center;gap:12px;padding:8px 10px;border-radius:var(--r-sm);font-size:14px;cursor:pointer}
+.prow:hover,.prow.active{background:var(--card)}
+.prow .tile{width:28px;height:28px;border-radius:var(--r-sm);font-size:12px}
+.prow .hint{margin-left:auto;font-size:12px;color:var(--mute)}
+.palette .pfoot{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 18px;border-top:1px solid var(--hairline);font-size:12px;color:var(--mute)}
+
+/* ── Tokens ─────────────────────────────────────────────────────────────── */
+.swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.sw{border:1px solid var(--hairline);border-radius:var(--r-lg);overflow:hidden;background:var(--surface)}
+.sw .c{height:64px;border-bottom:1px solid var(--hairline)}
+.sw .m{padding:10px 12px;font-size:12px;line-height:1.5}
+.sw .m b{display:block;font-weight:500;font-size:13px;color:var(--ink)}
+.sw .m span{color:var(--mute);font-variant-numeric:tabular-nums}
+.typescale{display:flex;flex-direction:column;gap:14px}
+.typescale div{display:flex;align-items:baseline;gap:20px;flex-wrap:wrap}
+.typescale code{width:150px;font-size:12px;color:var(--mute);font-family:ui-monospace,monospace}
+
+@media (max-width:720px){
+  .sidebar{max-width:none;flex-basis:100%;flex-direction:row;flex-wrap:wrap;border-right:0;border-bottom:1px solid var(--hairline)}
+  .sidebar .brandmini{width:100%;padding-bottom:8px}
+  .nav{width:auto}
+  .sidebar .mode{display:none}
+  .content{padding:20px 16px}
+  .desktop{aspect-ratio:auto;min-height:720px}
+  .ghost-win{display:none}
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="page-head">
+    <div class="brand">
+      <div class="orb listen" aria-hidden="true"></div>
+      <div>
+        <h1>Jarvis — UI mockup</h1>
+        <p>Design locked to FRS §8: Raycast-derived, dark, hairlines, no shadows, one signature orb.</p>
+      </div>
+    </div>
+    <nav class="toc" aria-label="Sections">
+      <a href="#hud">HUD</a><a href="#cards">HUD cards</a><a href="#app">Main window</a><a href="#setup">Setup</a><a href="#palette">Palette</a><a href="#tokens">Tokens</a>
+    </nav>
+  </header>
+
+  <!-- ═══════════════════════════ 1. DESKTOP + HUD ═══════════════════════════ -->
+  <section id="hud" style="margin-top:0">
+    <div class="sec-head">
+      <span class="eyebrow">01 · Overlay</span>
+      <h2>The HUD on your desktop</h2>
+      <p>A small pill near the bottom of the screen, on top of whatever you're doing. Click the states to see how one command plays out.</p>
+    </div>
+
+    <div class="desktop" id="desktop" data-state="listening">
+      <div class="ghost-win" style="left:7%;top:9%;width:58%;height:62%">
+        <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span style="margin-left:8px">Microsoft Teams</span></div>
+        <div style="flex:1;display:flex">
+          <div style="width:30%;border-right:1px solid var(--hairline);padding:14px;display:flex;flex-direction:column;gap:14px">
+            <div class="sk" style="height:10px;width:70%"></div><div class="sk" style="height:10px;width:85%"></div><div class="sk" style="height:10px;width:60%"></div><div class="sk" style="height:10px;width:78%"></div><div class="sk" style="height:10px;width:52%"></div>
+          </div>
+          <div style="flex:1;padding:20px;display:flex;flex-direction:column;gap:16px">
+            <div class="sk" style="height:12px;width:40%"></div>
+            <div style="height:44px;width:62%;border-radius:8px;background:var(--card)"></div>
+            <div style="height:44px;width:48%;border-radius:8px;background:var(--card);align-self:flex-end"></div>
+            <div style="height:44px;width:55%;border-radius:8px;background:var(--card)"></div>
+          </div>
+        </div>
+      </div>
+      <div class="ghost-win" style="right:6%;top:18%;width:27%;height:36%">
+        <div class="bar">Documents</div>
+        <div style="padding:14px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">
+          <div style="height:54px;border-radius:8px;background:var(--card)"></div><div style="height:54px;border-radius:8px;background:var(--card)"></div><div style="height:54px;border-radius:8px;background:var(--card)"></div>
+          <div style="height:54px;border-radius:8px;background:var(--card)"></div><div style="height:54px;border-radius:8px;background:var(--card)"></div><div style="height:54px;border-radius:8px;background:var(--card)"></div>
+        </div>
+      </div>
+
+      <div class="control-banner" role="status">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4l7 17 2-7 7-2z"/></svg>
+        Jarvis is controlling your PC
+        <button class="btn btn-secondary btn-sm" type="button">Stop <kbd>Ctrl Alt Esc</kbd></button>
+      </div>
+
+      <div class="state-switch" role="group" aria-label="Preview state">
+        <span>Preview</span>
+        <button type="button" data-state-btn="listening" aria-pressed="true">Listening</button>
+        <button type="button" data-state-btn="thinking" aria-pressed="false">Thinking</button>
+        <button type="button" data-state-btn="consent" aria-pressed="false">Permission</button>
+        <button type="button" data-state-btn="acting" aria-pressed="false">Acting</button>
+        <button type="button" data-state-btn="speaking" aria-pressed="false">Speaking</button>
+        <button type="button" data-state-btn="error" aria-pressed="false">Error</button>
+      </div>
+
+      <div class="hud-zone">
+        <!-- consent card -->
+        <div class="card hud-card" data-show="consent">
+          <div class="top">
+            <div class="title">
+              <svg class="icon" viewBox="0 0 24 24" style="color:var(--yellow);width:18px;height:18px" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg>
+              Permission needed
+            </div>
+            <span class="badge b-yellow">Teams · read</span>
+          </div>
+          <p class="body">To read your unread messages I need to <strong style="color:var(--ink);font-weight:500">read your Teams messages</strong>. Do I have your permission?</p>
+          <div class="actions">
+            <button class="btn btn-primary" type="button">Allow once</button>
+            <button class="btn btn-secondary" type="button">This session</button>
+            <button class="btn btn-secondary" type="button">Always</button>
+            <button class="btn btn-ghost" type="button">Deny</button>
+          </div>
+        </div>
+        <!-- speaking: result -->
+        <div class="card" data-show="speaking" style="padding:8px">
+          <div class="msg active"><div class="avatar" style="color:var(--blue)">RS</div><div><div class="who">Rahul Sharma <span class="muted" style="font-weight:400">· 2 new</span></div><div class="what">Are we still on for 4?</div></div><span class="when">20:41</span></div>
+          <div class="msg"><div class="avatar">PN</div><div><div class="who">Priya Nair</div><div class="what">Invoice attached.</div></div><span class="when">19:58</span></div>
+        </div>
+        <!-- error -->
+        <div class="card hud-card" data-show="error">
+          <div class="top"><div class="title">Couldn't find Rohit Kapoor</div><span class="badge b-red">Not found</span></div>
+          <p class="body">No person or chat with that name in Teams. Closest match: <strong style="color:var(--ink);font-weight:500">Rohit Kumar</strong>.</p>
+          <div class="actions"><button class="btn btn-primary" type="button">Open Rohit Kumar</button><button class="btn btn-secondary" type="button">Search Teams</button></div>
+        </div>
+
+        <!-- the pill (always there) -->
+        <div class="pill" aria-live="polite">
+          <div class="orb listen" id="pill-orb" aria-hidden="true"></div>
+          <div class="wave" id="pill-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <span class="text" id="pill-text">“Jarvis, read me all my unread messages”</span>
+          <span class="label" id="pill-label">Listening</span>
+        </div>
+      </div>
+
+      <div class="tray-chip"><span class="orb idle" id="tray-dot" aria-hidden="true" style="--orb:var(--blue)"></span>Jarvis · Balanced</div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════ 2. HUD STATES ═══════════════════════════ -->
+  <section id="states">
+    <div class="sec-head">
+      <span class="eyebrow">02 · States</span>
+      <h2>The orb carries the state</h2>
+      <p>Each state has its own colour, used only on the orb and status badges, never on the chrome. Everything Jarvis says also appears as a caption.</p>
+    </div>
+    <div class="card" style="padding:28px;display:flex;flex-direction:column;gap:14px">
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap"><span class="muted" style="width:110px;font-size:13px">Idle</span><div class="pill" style="padding:6px 12px;gap:8px"><span class="orb idle" aria-hidden="true"></span><span class="label">Say “Jarvis…”</span></div></div>
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap"><span class="muted" style="width:110px;font-size:13px">Listening</span><div class="pill" style="flex:1;min-width:280px"><div class="orb listen" aria-hidden="true"></div><div class="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div><span class="text">“Jarvis, open Teams”</span></div></div>
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap"><span class="muted" style="width:110px;font-size:13px">Thinking</span><div class="pill" style="flex:1;min-width:280px"><div class="orb think" aria-hidden="true"></div><span class="text">open Teams</span><span class="label">Thinking…</span></div></div>
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap"><span class="muted" style="width:110px;font-size:13px">Acting</span><div class="pill" style="flex:1;min-width:280px"><div class="orb think" aria-hidden="true"></div><span class="text">Opening Teams…</span><button class="btn btn-secondary btn-sm" type="button">Stop</button></div></div>
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap"><span class="muted" style="width:110px;font-size:13px">Speaking</span><div class="pill" style="flex:1;min-width:280px"><div class="orb listen" aria-hidden="true"></div><span class="text">Teams is open.</span></div></div>
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap"><span class="muted" style="width:110px;font-size:13px">Needs you</span><div class="pill" style="flex:1;min-width:280px"><div class="orb confirm" aria-hidden="true"></div><span class="text">Rahul Sharma or Rahul Verma?</span><span class="label">Reply…</span></div></div>
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap"><span class="muted" style="width:110px;font-size:13px">Done</span><div class="pill" style="flex:1;min-width:280px"><div class="done-mark"><svg class="icon" viewBox="0 0 24 24" style="stroke-width:2.5" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg></div><span class="text">Sent to Rahul Sharma.</span></div></div>
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap"><span class="muted" style="width:110px;font-size:13px">Error</span><div class="pill" style="flex:1;min-width:280px"><div class="orb error" aria-hidden="true"></div><span class="text">Teams isn't installed. Open it on the web?</span><span class="label">Reply…</span></div></div>
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap"><span class="muted" style="width:110px;font-size:13px">Muted</span><div class="pill" style="padding:6px 12px;gap:8px"><svg class="icon" viewBox="0 0 24 24" style="color:var(--mute);width:14px;height:14px" aria-hidden="true"><path d="M3 3l18 18M9 9v3a3 3 0 0 0 5 2.2M15 9.3V5a3 3 0 0 0-5.7-1.3M19 11a7 7 0 0 1-1.2 3.9M5 11a7 7 0 0 0 11 5.7M12 18v3"/></svg><span class="label">Not listening · press</span><kbd>Ctrl Alt J</kbd></div></div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════ 3. HUD CARDS ═══════════════════════════ -->
+  <section id="cards">
+    <div class="sec-head">
+      <span class="eyebrow">03 · Cards</span>
+      <h2>When Jarvis needs you, or has something to show</h2>
+      <p>Every question can be answered by voice, by clicking, or by typing. Errors always say what went wrong, why, and what you can do about it.</p>
+    </div>
+    <div class="wwr">
+
+      <div class="stage"><div class="card hud-card">
+        <div class="top">
+          <div class="title"><div class="orb confirm" aria-hidden="true"></div>Permission needed</div>
+          <span class="badge b-yellow">Messages · Teams · read</span>
+        </div>
+        <p class="body" style="font-size:15px">To read your unread messages I need to <strong style="color:var(--ink);font-weight:500">read your Teams messages</strong>. Do I have your permission?</p>
+        <div style="display:flex;align-items:center;gap:8px;font-size:13px" class="muted">
+          <svg class="icon" viewBox="0 0 24 24" style="width:14px;height:14px" aria-hidden="true"><path d="M7 18a5 5 0 0 1-.5-10A6 6 0 0 1 18 9a4 4 0 0 1 0 9z"/></svg>
+          Message text goes to Claude (cloud). Nothing is sent anywhere else.
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" type="button">Allow once</button>
+          <button class="btn btn-secondary" type="button">This session</button>
+          <button class="btn btn-secondary" type="button">Always allow</button>
+          <button class="btn btn-ghost" type="button">Deny</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <label class="sr" for="c-reply">Type your answer</label>
+          <input class="input" id="c-reply" style="flex:1;min-width:0" placeholder="Or type: yes, session, always, no">
+          <span style="display:flex;gap:4px" aria-label="Keyboard shortcuts"><kbd>Y</kbd><kbd>S</kbd><kbd>A</kbd><kbd>N</kbd></span>
+        </div>
+        <div class="foot"><span>Or just say “yes”, “always” or “no”</span><span>No answer in 15 s = no</span></div>
+      </div></div>
+
+      <div class="stage"><div class="card hud-card">
+        <div class="top">
+          <div class="title"><div class="orb confirm" aria-hidden="true"></div>Send to Rahul Sharma?</div>
+          <span class="badge b-neutral">Teams · T2</span>
+        </div>
+        <div class="quote">I'll be ten minutes late</div>
+        <p class="muted" style="font-size:13px">Exactly as you said it. First send in Teams, so this also lets me <strong style="color:var(--body);font-weight:500">send Teams messages</strong>.</p>
+        <div class="actions">
+          <button class="btn btn-primary" type="button">Send</button>
+          <button class="btn btn-secondary" type="button">Send &amp; always allow</button>
+          <button class="btn btn-secondary" type="button">Edit</button>
+          <button class="btn btn-ghost" type="button">Cancel</button>
+        </div>
+        <div class="foot"><span>Say “send it” or “no” · or type</span><span style="display:flex;gap:4px"><kbd>Enter</kbd><kbd>Esc</kbd></span></div>
+      </div></div>
+
+      <div class="stage"><div class="card hud-card">
+        <div class="top">
+          <div class="title"><div class="orb error" aria-hidden="true"></div>Couldn't find Rohit Kapoor</div>
+          <span class="badge b-red">NOT_FOUND</span>
+        </div>
+        <dl class="kv">
+          <dt>What</dt><dd>No person or chat called Rohit Kapoor in Teams.</dd>
+          <dt>Why</dt><dd>Searched your contacts and chats. Nearest match is Rohit Kumar.</dd>
+        </dl>
+        <div>
+          <div class="muted" style="font-size:13px;margin-bottom:4px">What you can do</div>
+          <ul class="remedy">
+            <li>Say “yes” to open Rohit Kumar's chat</li>
+            <li>Say the name again, or spell it</li>
+            <li>If he's outside your organisation, add him in Teams first</li>
+          </ul>
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" type="button">Open Rohit Kumar</button>
+          <button class="btn btn-secondary" type="button">Search Teams</button>
+          <button class="btn btn-ghost" type="button">Dismiss</button>
+        </div>
+      </div></div>
+
+      <div class="stage"><div class="card" style="padding:8px">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 12px 8px">
+          <div style="display:flex;align-items:center;gap:12px;font-weight:600;font-size:16px"><div class="orb listen" aria-hidden="true"></div>9 unread in 5 chats</div>
+          <span class="badge b-neutral">3 of 9</span>
+        </div>
+        <div class="msg active"><div class="avatar" style="color:var(--blue)">RS</div><div style="min-width:0"><div class="who">Rahul Sharma <span class="muted" style="font-weight:400">· 2 new</span></div><div class="what">Are we still on for 4?</div><div class="what">I've pushed the fix.</div></div><span class="when">20:41</span></div>
+        <div class="msg"><div class="avatar">PN</div><div style="min-width:0"><div class="who">Priya Nair</div><div class="what">Invoice attached.</div></div><span class="when">19:58</span></div>
+        <div class="msg"><div class="avatar">AT</div><div style="min-width:0"><div class="who">Atlas · design <span class="muted" style="font-weight:400">· channel</span></div><div class="what">New screens are up for review.</div></div><span class="when">18:12</span></div>
+        <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:12px;border-top:1px solid var(--hairline);margin-top:4px">
+          <span class="muted" style="font-size:13px">Say “next”, “reply …” or “stop”</span>
+          <span style="display:flex;gap:8px"><button class="btn btn-secondary btn-sm" type="button">Reply</button><button class="btn btn-secondary btn-sm" type="button">Next</button><button class="btn btn-secondary btn-sm" type="button">Open in Teams</button></span>
+        </div>
+      </div></div>
+
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════ 4. MAIN WINDOW ═══════════════════════════ -->
+  <section id="app">
+    <div class="sec-head">
+      <span class="eyebrow">04 · Main window</span>
+      <h2>Simple first, deep second</h2>
+      <p>Use the sidebar to switch between Home, Activity, Integrations and Permissions.</p>
+    </div>
+
+    <div class="app">
+      <nav class="sidebar" aria-label="Jarvis">
+        <div class="brandmini"><div class="orb listen" aria-hidden="true" style="transform:scale(.8)"></div>Jarvis</div>
+        <button class="nav" type="button" data-view="home" aria-current="page"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>Home</button>
+        <button class="nav" type="button" data-view="activity"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>Activity</button>
+        <button class="nav" type="button" data-view="integrations"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 2v6M15 2v6M6 8h12v4a6 6 0 0 1-12 0zM12 18v4"/></svg>Integrations</button>
+        <button class="nav" type="button" data-view="permissions"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg>Permissions</button>
+        <button class="nav" type="button" data-view="soon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7"/></svg>Routines</button>
+        <button class="nav" type="button" data-view="soon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a6 6 0 0 0-6 6c0 2.2 1.2 3.4 2 4.5V17h8v-3.5c.8-1.1 2-2.3 2-4.5a6 6 0 0 0-6-6zM9 21h6"/></svg>Memory</button>
+        <button class="nav" type="button" data-view="soon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 3.6 15H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.1-2.7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.6 1.6 0 0 0 9.7 4.6V4a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>Settings</button>
+        <button class="nav" type="button" data-view="soon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>Doctor<span class="dotred" aria-label="1 issue"></span></button>
+        <div class="mode">
+          <span>Safety mode</span>
+          <span class="badge b-neutral" style="align-self:flex-start">Balanced</span>
+          <span>Brain · Claude Code</span>
+        </div>
+      </nav>
+
+      <main class="content">
+
+        <!-- HOME -->
+        <div class="view on" id="v-home">
+          <div class="view-head">
+            <h3>Good evening, Nikhil</h3>
+            <div class="status-row">
+              <span class="badge b-blue"><span class="orb idle" style="--orb:var(--blue)" aria-hidden="true"></span>Listening for “Jarvis”</span>
+              <span class="badge b-neutral">Claude Code · warm</span>
+              <span class="badge b-neutral">Groq Whisper</span>
+            </div>
+          </div>
+          <div class="grid2">
+            <div class="panel">
+              <h4>Try saying</h4>
+              <div style="display:flex;flex-direction:column;gap:8px">
+                <div class="chip-say"><svg class="icon muted" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>“Jarvis, read my unread messages”</div>
+                <div class="chip-say"><svg class="icon muted" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>“Jarvis, what's on my calendar tomorrow?”</div>
+                <div class="chip-say"><svg class="icon muted" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>“Jarvis, start my day”</div>
+              </div>
+            </div>
+            <div class="panel">
+              <h4>Today</h4>
+              <div class="list">
+                <div class="li"><span class="grow">Commands</span><strong>23</strong></div>
+                <div class="li"><span class="grow">Succeeded</span><strong class="ok">21</strong></div>
+                <div class="li"><span class="grow">Needed you</span><strong class="warn">4</strong></div>
+                <div class="li"><span class="grow">Failed (with a fix offered)</span><strong class="bad">2</strong></div>
+              </div>
+            </div>
+          </div>
+          <div class="panel">
+            <h4>Recent</h4>
+            <div class="list">
+              <div class="li"><span class="time">21:12</span><svg class="icon ok" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg><span class="grow">Sent message to Rahul Sharma</span><span class="badge b-neutral">Teams</span></div>
+              <div class="li"><span class="time">21:10</span><svg class="icon ok" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg><span class="grow">Read 9 unread messages</span><span class="badge b-neutral">Teams</span></div>
+              <div class="li"><span class="time">21:05</span><svg class="icon ok" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg><span class="grow">Opened Teams</span><span class="badge b-neutral">Fast path</span></div>
+              <div class="li"><span class="time">20:58</span><svg class="icon bad" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg><span class="grow">Couldn't find Rohit Kapoor</span><button class="btn btn-secondary btn-sm" type="button">Why?</button></div>
+              <div class="li"><span class="time">20:41</span><svg class="icon warn" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg><span class="grow">You allowed: read Outlook calendar · always</span><span class="badge b-neutral">Permission</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ACTIVITY -->
+        <div class="view" id="v-activity">
+          <div class="view-head">
+            <h3>Activity</h3>
+            <div style="display:flex;gap:8px"><label class="sr" for="a-search">Search activity</label><input class="input" id="a-search" placeholder="Search commands"><button class="btn btn-secondary" type="button">Debug bundle</button></div>
+          </div>
+          <div class="panel" style="display:flex;flex-direction:column;gap:14px">
+            <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px">
+              <svg class="icon ok" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>
+              <strong style="font-weight:500">“write a message to Rahul saying I'll be ten minutes late”</strong>
+              <span class="muted" style="font-size:12px;margin-left:auto">21:12 · 6.8 s · Claude Code</span>
+            </div>
+            <div class="list" style="padding-left:28px">
+              <div class="li"><span class="time">+0.0s</span><span class="grow body">Heard “Jarvis, write a message to Rahul…”</span><span class="badge b-neutral">STT 0.5 s</span></div>
+              <div class="li"><span class="time">+0.9s</span><span class="grow body">Asked permission: contacts + send Teams messages → <span class="ok">always</span> (voice)</span><span class="badge b-yellow">Consent</span></div>
+              <div class="li"><span class="time">+2.4s</span><span class="grow body">people.search “Rahul” → 2 matches · asked which → “Sharma”</span><span class="badge b-neutral">T0</span></div>
+              <div class="li"><span class="time">+5.1s</span><span class="grow body">teams.compose → Rahul Sharma · “I'll be ten minutes late”</span><span class="badge b-neutral">T1</span></div>
+              <div class="li"><span class="time">+6.8s</span><span class="grow body">Confirmed “send it” → teams.send_message</span><span class="badge b-neutral">T2 · confirmed</span></div>
+            </div>
+            <div style="display:flex;gap:8px;padding-left:28px"><button class="btn btn-secondary btn-sm" type="button">Run again</button><button class="btn btn-ghost btn-sm" type="button">This was wrong</button></div>
+          </div>
+        </div>
+
+        <!-- INTEGRATIONS -->
+        <div class="view" id="v-integrations">
+          <div class="view-head">
+            <h3>Integrations</h3>
+            <button class="btn btn-primary" type="button">Add custom MCP</button>
+          </div>
+          <div class="pills" role="group" aria-label="Category">
+            <button type="button" aria-pressed="true">All</button><button type="button" aria-pressed="false">Messaging</button><button type="button" aria-pressed="false">Email &amp; calendar</button><button type="button" aria-pressed="false">Files</button><button type="button" aria-pressed="false">Browser</button><button type="button" aria-pressed="false">Work</button><button type="button" aria-pressed="false">Home</button>
+          </div>
+          <div class="grid3">
+            <div class="int-card"><div class="top"><div class="tile" style="color:var(--blue)">M</div><div><div class="name">Microsoft 365</div><div class="muted" style="font-size:12px">Teams · Outlook · OneDrive</div></div></div><div class="desc">Read and send Teams chats, mail and calendar via Microsoft Graph.</div><div class="foot"><span class="badge b-green">Connected</span><button class="switch" type="button" role="switch" aria-checked="true" aria-label="Microsoft 365"></button></div></div>
+            <div class="int-card"><div class="top"><div class="tile">G</div><div><div class="name">Google Workspace</div><div class="muted" style="font-size:12px">Gmail · Calendar · Drive</div></div></div><div class="desc">Mail, calendar, Drive and Docs.</div><div class="foot"><span class="badge b-neutral">Not connected</span><button class="btn btn-secondary btn-sm" type="button">Connect</button></div></div>
+            <div class="int-card"><div class="top"><div class="tile">S</div><div><div class="name">Slack</div><div class="muted" style="font-size:12px">Channels · DMs</div></div></div><div class="desc">Read, search and post messages.</div><div class="foot"><span class="badge b-yellow">Sign in again</span><button class="btn btn-secondary btn-sm" type="button">Fix</button></div></div>
+            <div class="int-card"><div class="top"><div class="tile">F</div><div><div class="name">Files</div><div class="muted" style="font-size:12px">Built-in</div></div></div><div class="desc">Search, open, move and tidy files in folders you allow.</div><div class="foot"><span class="badge b-green">Healthy · 11 tools</span><button class="switch" type="button" role="switch" aria-checked="true" aria-label="Files"></button></div></div>
+            <div class="int-card"><div class="top"><div class="tile">B</div><div><div class="name">Browser</div><div class="muted" style="font-size:12px">Playwright</div></div></div><div class="desc">Drive web apps that have no API.</div><div class="foot"><span class="badge b-green">Healthy · 21 tools</span><button class="switch" type="button" role="switch" aria-checked="true" aria-label="Browser"></button></div></div>
+            <div class="int-card"><div class="top"><div class="tile">GH</div><div><div class="name">GitHub</div><div class="muted" style="font-size:12px">Repos · PRs · Issues</div></div></div><div class="desc">Check PRs, comment, open issues.</div><div class="foot"><span class="badge b-neutral">Not connected</span><button class="btn btn-secondary btn-sm" type="button">Connect</button></div></div>
+            <div class="int-card"><div class="top"><div class="tile">H</div><div><div class="name">Home Assistant</div><div class="muted" style="font-size:12px">Lights · plugs · climate</div></div></div><div class="desc">“Jarvis, lights off.”</div><div class="foot"><span class="badge b-neutral">Not connected</span><button class="btn btn-secondary btn-sm" type="button">Connect</button></div></div>
+            <div class="int-card"><div class="top"><div class="tile">W</div><div><div class="name">WhatsApp</div><div class="muted" style="font-size:12px">Linked device</div></div></div><div class="desc">Unofficial bridge. May break or violate terms.</div><div class="foot"><span class="badge b-red">Unofficial</span><button class="btn btn-ghost btn-sm" type="button">Details</button></div></div>
+            <div class="int-card add"><svg class="icon" viewBox="0 0 24 24" style="width:20px;height:20px" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><div>Paste a JSON snippet, a command or a URL</div><div style="font-size:12px">or import from Claude Code, Claude Desktop, Cursor</div></div>
+          </div>
+        </div>
+
+        <!-- PERMISSIONS -->
+        <div class="view" id="v-permissions">
+          <div class="view-head">
+            <h3>Permissions</h3>
+            <div style="display:flex;gap:8px"><button class="btn btn-secondary" type="button">Reset all to Ask</button><button class="btn btn-ghost" type="button">Revoke everything</button></div>
+          </div>
+          <div class="banner">
+            <div class="orb confirm" aria-hidden="true"></div>
+            <div class="grow"><strong style="font-weight:500">Balanced mode:</strong> <span class="body">I ask before touching anything personal the first time, then follow your answer here.</span></div>
+            <span class="muted" style="font-size:13px">YOLO skips these questions · “Never” always holds</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Source</th><th>Access</th><th>Permission</th><th>Granted</th><th>Last used</th><th><span class="sr">Actions</span></th></tr></thead>
+              <tbody>
+                <tr><td><div class="src"><div class="tile" style="width:28px;height:28px;color:var(--blue)">T</div>Teams messages</div></td><td>Read</td><td><div class="seg" role="group" aria-label="Teams read"><button type="button" aria-pressed="false">Ask</button><button type="button" aria-pressed="false">Session</button><button type="button" aria-pressed="true">Always</button><button type="button" class="never" aria-pressed="false">Never</button></div></td><td class="muted">Voice · 6 Oct</td><td class="muted">21:10</td><td><button class="btn btn-ghost btn-sm" type="button">Revoke</button></td></tr>
+                <tr><td><div class="src"><div class="tile" style="width:28px;height:28px;color:var(--blue)">T</div>Teams messages</div></td><td>Send</td><td><div class="seg" role="group" aria-label="Teams send"><button type="button" aria-pressed="false">Ask</button><button type="button" aria-pressed="false">Session</button><button type="button" aria-pressed="true">Always</button><button type="button" class="never" aria-pressed="false">Never</button></div></td><td class="muted">Typed · 6 Oct</td><td class="muted">21:12</td><td><button class="btn btn-ghost btn-sm" type="button">Revoke</button></td></tr>
+                <tr><td><div class="src"><div class="tile" style="width:28px;height:28px">O</div>Outlook calendar</div></td><td>Read</td><td><div class="seg" role="group" aria-label="Calendar read"><button type="button" aria-pressed="false">Ask</button><button type="button" aria-pressed="true">Session</button><button type="button" aria-pressed="false">Always</button><button type="button" class="never" aria-pressed="false">Never</button></div></td><td class="muted">Click · today</td><td class="muted">20:41</td><td><button class="btn btn-ghost btn-sm" type="button">Revoke</button></td></tr>
+                <tr><td><div class="src"><div class="tile" style="width:28px;height:28px">@</div>Outlook mail</div></td><td>Read</td><td><div class="seg" role="group" aria-label="Mail read"><button type="button" aria-pressed="true">Ask</button><button type="button" aria-pressed="false">Session</button><button type="button" aria-pressed="false">Always</button><button type="button" class="never" aria-pressed="false">Never</button></div></td><td class="muted">—</td><td class="muted">—</td><td></td></tr>
+                <tr><td><div class="src"><div class="tile" style="width:28px;height:28px">D</div>Documents folder</div></td><td>Read</td><td><div class="seg" role="group" aria-label="Documents read"><button type="button" aria-pressed="false">Ask</button><button type="button" aria-pressed="false">Session</button><button type="button" aria-pressed="true">Always</button><button type="button" class="never" aria-pressed="false">Never</button></div></td><td class="muted">Setup</td><td class="muted">Yesterday</td><td><button class="btn btn-ghost btn-sm" type="button">Revoke</button></td></tr>
+                <tr><td><div class="src"><div class="tile" style="width:28px;height:28px">▢</div>Screen content</div></td><td>Read</td><td><div class="seg" role="group" aria-label="Screen read"><button type="button" aria-pressed="true">Ask</button><button type="button" aria-pressed="false">Session</button><button type="button" aria-pressed="false">Always</button><button type="button" class="never" aria-pressed="false">Never</button></div></td><td class="muted">—</td><td class="muted">—</td><td></td></tr>
+                <tr><td><div class="src"><div class="tile" style="width:28px;height:28px">W</div>WhatsApp</div></td><td>Read &amp; send</td><td><div class="seg" role="group" aria-label="WhatsApp"><button type="button" aria-pressed="false">Ask</button><button type="button" aria-pressed="false">Session</button><button type="button" aria-pressed="false">Always</button><button type="button" class="never" aria-pressed="true">Never</button></div></td><td class="muted">Voice · 2 Oct</td><td class="muted">—</td><td><button class="btn btn-ghost btn-sm" type="button">Clear</button></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- placeholder -->
+        <div class="view" id="v-soon">
+          <div class="panel" style="text-align:center;padding:64px 20px"><p class="muted">Not drawn in this mockup. Same components as the other screens.</p></div>
+        </div>
+
+      </main>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════ 5. SETUP ═══════════════════════════ -->
+  <section id="setup">
+    <div class="sec-head">
+      <span class="eyebrow">05 · Setup</span>
+      <h2>One ring to 100%</h2>
+      <p>The same checklist as beyondMeetings: each row detects a problem and fixes it. Opening a row expands its steps in place.</p>
+    </div>
+    <div class="setup">
+      <div class="setup-head">
+        <div class="ring" style="--p:67" role="img" aria-label="67 percent complete"><span>67%</span></div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <h3 style="font-size:22px;font-weight:500">Set up Jarvis</h3>
+          <p class="muted">8 of 12 done. About 4 minutes left.</p>
+          <div><button class="btn btn-primary" type="button">Fix everything I can</button></div>
+        </div>
+      </div>
+      <div class="checks">
+        <div class="check"><span class="st ok"><svg class="icon ok" viewBox="0 0 24 24" style="width:12px;height:12px;stroke-width:3" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg></span><div class="grow"><div class="name">System</div><div class="detail">Ubuntu 24.04 · GNOME on Wayland · NVIDIA GPU</div></div></div>
+        <div class="check"><span class="st ok"><svg class="icon ok" viewBox="0 0 24 24" style="width:12px;height:12px;stroke-width:3" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg></span><div class="grow"><div class="name">Microphone</div><div class="detail">Jabra Evolve2 · signal good</div></div><button class="btn btn-ghost btn-sm" type="button">Change</button></div>
+        <div class="check">
+          <span class="st busy"><span class="orb idle" style="--orb:var(--yellow)" aria-hidden="true"></span></span>
+          <div class="grow"><div class="name">Wake word “Jarvis”</div><div class="detail">Calibrating to your voice</div></div>
+          <div class="check-expand">
+            <p class="body">Say <strong style="color:var(--ink);font-weight:500">“Jarvis”</strong> five times, at your normal volume.</p>
+            <div class="takes"><i class="got">1</i><i class="got">2</i><i class="got">3</i><i>4</i><i>5</i></div>
+            <div><div class="meter"><b></b></div><div class="muted" style="font-size:12px;margin-top:6px">Mic level</div></div>
+            <div style="display:flex;gap:8px"><button class="btn btn-secondary btn-sm" type="button">Start over</button><button class="btn btn-ghost btn-sm" type="button">Skip for now</button></div>
+          </div>
+        </div>
+        <div class="check"><span class="st ok"><svg class="icon ok" viewBox="0 0 24 24" style="width:12px;height:12px;stroke-width:3" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg></span><div class="grow"><div class="name">Speech to text</div><div class="detail">Groq Whisper · key verified · 0.4 s per command</div></div></div>
+        <div class="check"><span class="st ok"><svg class="icon ok" viewBox="0 0 24 24" style="width:12px;height:12px;stroke-width:3" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg></span><div class="grow"><div class="name">Brain</div><div class="detail">Claude Code · signed in · test round trip passed</div></div><span class="badge b-neutral">Recommended</span></div>
+        <div class="check"><span class="st no"></span><div class="grow"><div class="name">Desktop control</div><div class="detail">Wayland needs one permission so I can type and click for you</div></div><button class="btn btn-secondary btn-sm" type="button">Fix</button></div>
+        <div class="check">
+          <span class="st no"></span>
+          <div class="grow"><div class="name">Safety and permissions</div><div class="detail">How much should I ask before acting?</div></div>
+          <div class="check-expand">
+            <div class="modes" role="group" aria-label="Safety mode">
+              <button class="mode-opt" type="button" aria-pressed="false"><span class="t">Safe</span><span class="d">Asks before every action and every time it reads your data.</span></button>
+              <button class="mode-opt" type="button" aria-pressed="true"><span class="t">Balanced <span class="badge b-neutral">Recommended</span></span><span class="d">Asks once per data source, and before sending or deleting.</span></button>
+              <button class="mode-opt" type="button" aria-pressed="false"><span class="t">YOLO</span><span class="d">Never asks. Only irreversible actions still need a “confirm”.</span></button>
+            </div>
+          </div>
+        </div>
+        <div class="check"><span class="st no"></span><div class="grow"><div class="name">Integrations</div><div class="detail">Connect Teams, Outlook and more</div></div><button class="btn btn-secondary btn-sm" type="button">Open</button></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════ 6. PALETTE ═══════════════════════════ -->
+  <section id="palette">
+    <div class="sec-head">
+      <span class="eyebrow">06 · Command palette</span>
+      <h2>Type instead of talking</h2>
+      <p>Press <kbd>Ctrl Alt Space</kbd> anywhere. Commands go through the same steps as voice ones, just without the speech.</p>
+    </div>
+    <div class="card palette">
+      <div class="search">
+        <div class="orb listen" aria-hidden="true" style="transform:scale(.75)"></div>
+        <label class="sr" for="p-in">Command</label>
+        <input id="p-in" value="read my unr" autocomplete="off">
+        <kbd>Enter</kbd>
+      </div>
+      <div class="group">
+        <div class="glabel">Suggestions</div>
+        <div class="prow active"><div class="tile" style="color:var(--blue)">T</div>read my unread messages<span class="hint">Teams · Slack</span></div>
+        <div class="prow"><div class="tile">@</div>read my unread email<span class="hint">Outlook</span></div>
+        <div class="glabel">Routines</div>
+        <div class="prow"><div class="tile">▶</div>start my day<span class="hint">5 steps</span></div>
+        <div class="glabel">Recent</div>
+        <div class="prow"><div class="tile">↺</div>write a message to Rahul saying I'll be ten minutes late<span class="hint">21:12</span></div>
+        <div class="prow"><div class="tile">↺</div>open Teams<span class="hint">21:05</span></div>
+      </div>
+      <div class="pfoot"><span>Balanced · Claude Code</span><span style="display:flex;align-items:center;gap:6px"><kbd>↑</kbd><kbd>↓</kbd> move <kbd>Enter</kbd> run <kbd>Esc</kbd> close</span></div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════ 7. TOKENS ═══════════════════════════ -->
+  <section id="tokens">
+    <div class="sec-head">
+      <span class="eyebrow">07 · Tokens</span>
+      <h2>The locked palette and type</h2>
+      <p>Inter with stylistic set ss03, bundled locally in the app. Depth comes from stepping up the surface colour, never from drop shadows. White is the only primary button colour.</p>
+    </div>
+    <div class="swatches">
+      <div class="sw"><div class="c" style="background:#07080a"></div><div class="m"><b>canvas</b><span>#07080a</span></div></div>
+      <div class="sw"><div class="c" style="background:#0d0d0d"></div><div class="m"><b>surface</b><span>#0d0d0d</span></div></div>
+      <div class="sw"><div class="c" style="background:#101111"></div><div class="m"><b>elevated</b><span>#101111</span></div></div>
+      <div class="sw"><div class="c" style="background:#121212"></div><div class="m"><b>card</b><span>#121212</span></div></div>
+      <div class="sw"><div class="c" style="background:#242728"></div><div class="m"><b>hairline</b><span>#242728</span></div></div>
+      <div class="sw"><div class="c" style="background:#f4f4f6"></div><div class="m"><b>ink</b><span>#f4f4f6</span></div></div>
+      <div class="sw"><div class="c" style="background:#cdcdcd"></div><div class="m"><b>body</b><span>#cdcdcd</span></div></div>
+      <div class="sw"><div class="c" style="background:#9c9c9d"></div><div class="m"><b>mute</b><span>#9c9c9d</span></div></div>
+      <div class="sw"><div class="c" style="background:#ffffff"></div><div class="m"><b>primary</b><span>#ffffff</span></div></div>
+      <div class="sw"><div class="c" style="background:#57c1ff"></div><div class="m"><b>listening / speaking</b><span>#57c1ff</span></div></div>
+      <div class="sw"><div class="c" style="background:rgba(255,255,255,.72)"></div><div class="m"><b>thinking / acting</b><span>white 72%</span></div></div>
+      <div class="sw"><div class="c" style="background:#ffc533"></div><div class="m"><b>needs you</b><span>#ffc533</span></div></div>
+      <div class="sw"><div class="c" style="background:#59d499"></div><div class="m"><b>done / healthy</b><span>#59d499</span></div></div>
+      <div class="sw"><div class="c" style="background:#ff6161"></div><div class="m"><b>error</b><span>#ff6161</span></div></div>
+    </div>
+    <div class="card typescale" style="padding:24px;margin-top:16px">
+      <div><code>display · 56/500</code><span style="font-size:56px;font-weight:500;line-height:1.1">Jarvis</span></div>
+      <div><code>heading-xl · 24/500</code><span style="font-size:24px;font-weight:500">Good evening, Nikhil</span></div>
+      <div><code>heading-sm · 18/500</code><span style="font-size:18px;font-weight:500">Permission needed</span></div>
+      <div><code>body · 14/400</code><span class="body">To read your unread messages I need to read your Teams messages.</span></div>
+      <div><code>caption · 12/400</code><span class="muted" style="font-size:12px">No answer in 15 s = no</span></div>
+      <div><code>radii</code><span style="display:flex;gap:10px;align-items:center"><span style="width:28px;height:28px;border:1px solid var(--hairline-strong);border-radius:4px"></span><span style="width:28px;height:28px;border:1px solid var(--hairline-strong);border-radius:6px"></span><span style="width:28px;height:28px;border:1px solid var(--hairline-strong);border-radius:8px"></span><span style="width:28px;height:28px;border:1px solid var(--hairline-strong);border-radius:10px"></span><span style="width:28px;height:28px;border:1px solid var(--hairline-strong);border-radius:16px"></span><span class="muted" style="font-size:12px">4 · 6 · 8 · 10 · 16</span></span></div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+(function () {
+  // Desktop HUD state preview
+  var desktop = document.getElementById('desktop');
+  var orb = document.getElementById('pill-orb');
+  var wave = document.getElementById('pill-wave');
+  var text = document.getElementById('pill-text');
+  var label = document.getElementById('pill-label');
+  var tray = document.getElementById('tray-dot');
+  var looks = {
+    listening: { orb: 'listen', wave: true,  text: '“Jarvis, read me all my unread messages”', label: 'Listening', tray: 'var(--blue)' },
+    thinking:  { orb: 'think',  wave: false, text: 'read me all my unread messages', label: 'Thinking…', tray: 'var(--think)' },
+    consent:   { orb: 'confirm',wave: false, text: 'Do I have your permission to read your Teams messages?', label: 'Reply · Y S A N', tray: 'var(--yellow)' },
+    acting:    { orb: 'think',  wave: false, text: 'Opening your Teams chat with Rahul Sharma…', label: 'Step 2 of 3', tray: 'var(--think)' },
+    speaking:  { orb: 'listen', wave: true,  text: 'You have 9 unread messages in 5 chats. Rahul Sharma, 2 messages…', label: 'Speaking', tray: 'var(--blue)' },
+    error:     { orb: 'error',  wave: false, text: 'The closest is Rohit Kumar. Should I open that chat?', label: 'Reply…', tray: 'var(--red)' }
+  };
+  function setState(s) {
+    var l = looks[s];
+    desktop.setAttribute('data-state', s);
+    orb.className = 'orb ' + l.orb;
+    wave.style.display = l.wave ? 'flex' : 'none';
+    text.textContent = l.text;
+    label.textContent = l.label;
+    tray.style.setProperty('--orb', l.tray);
+    desktop.querySelectorAll('[data-show]').forEach(function (el) {
+      el.style.display = el.getAttribute('data-show') === s ? 'flex' : 'none';
+      if (el.getAttribute('data-show') === s && el.classList.contains('card') && !el.classList.contains('hud-card')) el.style.display = 'block';
+    });
+    desktop.querySelectorAll('[data-state-btn]').forEach(function (b) {
+      b.setAttribute('aria-pressed', b.getAttribute('data-state-btn') === s ? 'true' : 'false');
+    });
+  }
+  desktop.querySelectorAll('[data-state-btn]').forEach(function (b) {
+    b.addEventListener('click', function () { setState(b.getAttribute('data-state-btn')); });
+  });
+  setState('listening');
+
+  // Main window navigation
+  var navs = document.querySelectorAll('.sidebar .nav');
+  navs.forEach(function (n) {
+    n.addEventListener('click', function () {
+      navs.forEach(function (o) { o.removeAttribute('aria-current'); });
+      n.setAttribute('aria-current', 'page');
+      document.querySelectorAll('.view').forEach(function (v) { v.classList.remove('on'); });
+      document.getElementById('v-' + n.getAttribute('data-view')).classList.add('on');
+    });
+  });
+
+  // Small interactive bits: segmented controls, pills, switches, mode picker
+  document.querySelectorAll('.seg, .pills, .modes').forEach(function (group) {
+    group.querySelectorAll('button').forEach(function (b) {
+      b.addEventListener('click', function () {
+        group.querySelectorAll('button').forEach(function (o) { o.setAttribute('aria-pressed', 'false'); });
+        b.setAttribute('aria-pressed', 'true');
+      });
+    });
+  });
+  document.querySelectorAll('.switch').forEach(function (s) {
+    s.addEventListener('click', function () {
+      s.setAttribute('aria-checked', s.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
+    });
+  });
+})();
+</script>
+</body>
+</html>
