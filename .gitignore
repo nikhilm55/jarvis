@@ -1,0 +1,44 @@
+# Python / tooling
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Secrets — never commit (agents are denied these too)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.toml
+
+# Personal AI agent config — keep local
+CLAUDE.local.md
+.claude/settings.local.json
+.claude/*.local.*
+
+# Third-party reference material — link, don't vendor (docs/ai/policy.md §6)
+docs/design/*.reference.md
+
+# Large / generated artefacts
+models/
+*.onnx
+*.bin
+*.wav
+!tests/fixtures/**/*.wav
+spikes/**/output/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
