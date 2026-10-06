@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "disableBypassPermissionsMode": "disable",
+    "allow": [
+      "Bash(uv sync)",
+      "Bash(uv sync *)",
+      "Bash(uv run pytest *)",
+      "Bash(uv run ruff *)",
+      "Bash(uv run mypy *)",
+      "Bash(uv run mypy)",
+      "Bash(uv run pre-commit run *)",
+      "Bash(uv run python scripts/check_ai_config.py)",
+      "Bash(git status)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git branch *)",
+      "Bash(git switch *)",
+      "Bash(gh pr view *)",
+      "Bash(gh pr diff *)",
+      "Bash(gh pr checks *)"
+    ],
+    "ask": [
+      "Bash(git push *)",
+      "Bash(gh pr create *)",
+      "Bash(uv add *)",
+      "Bash(uv remove *)",
+      "Bash(uv lock *)",
+      "Edit(./AGENTS.md)",
+      "Edit(./CLAUDE.md)",
+      "Edit(./.mcp.json)",
+      "Edit(./.claude/**)",
+      "Edit(./.github/**)",
+      "Edit(./.pre-commit-config.yaml)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.config/gh/**)",
+      "Read(~/.local/share/jarvis/**)",
+      "Read(~/.config/jarvis/secrets.toml)",
+      "Edit(./.env)",
+      "Edit(./.env.*)",
+      "Edit(./uv.lock)",
+      "Bash(sudo *)",
+      "Bash(rm -rf *)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(git commit --no-verify *)",
+      "Bash(gh pr merge *)",
+      "Bash(gh repo delete *)",
+      "Bash(pip install *)",
+      "Bash(uv pip install *)"
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "enabledPlatforms": ["linux", "wsl", "macos"],
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "autoAllowBashIfSandboxed": false,
+    "excludedCommands": ["git", "gh"],
+    "filesystem": {
+      "allowWrite": ["~/.cache/uv", "~/.cache/pre-commit", "~/.cache/huggingface"],
+      "denyRead": ["~/.ssh", "~/.aws", "~/.config/gh", "~/.local/share/jarvis"]
+    },
+    "network": {
+      "allowedDomains": [
+        "pypi.org",
+        "files.pythonhosted.org",
+        "github.com",
+        "api.github.com",
+        "objects.githubusercontent.com",
+        "huggingface.co",
+        "*.hf.co"
+      ]
+    }
+  },
+  "enabledMcpjsonServers": ["context7"],
+  "cleanupPeriodDays": 30,
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "uv run --no-project --quiet python \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_bash.py\"", "timeout": 10 }]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [{ "type": "command", "command": "uv run --no-project --quiet python \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_write.py\"", "timeout": 10 }]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [{ "type": "command", "command": "uv run --no-project --quiet python \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_read.py\"", "timeout": 10 }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [{ "type": "command", "command": "uv run --no-project --quiet python \"$CLAUDE_PROJECT_DIR/.claude/hooks/format_file.py\"", "timeout": 60 }]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [{ "type": "command", "command": "uv run --no-project --quiet python \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop_verify.py\"", "timeout": 600 }]
+      }
+    ]
+  }
+}

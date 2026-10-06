@@ -26,6 +26,8 @@ jobs:
           SKIP: no-commit-to-branch  # branch rules are enforced by GitHub branch protection in CI
       - name: Type-check
         run: uv run mypy
+      - name: Validate AI configuration
+        run: uv run python scripts/check_ai_config.py
 
   test:
     name: tests (${{ matrix.os }}, py${{ matrix.python }})

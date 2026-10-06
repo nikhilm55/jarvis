@@ -44,6 +44,12 @@ repos:
 
   - repo: local
     hooks:
+      - id: ai-config
+        name: validate AI agent configuration
+        entry: uv run python scripts/check_ai_config.py
+        language: system
+        pass_filenames: false
+        files: ^(AGENTS\.md|CLAUDE\.md|\.mcp\.json|\.claude/.*|docs/.*\.md|scripts/check_ai_config\.py)$
       - id: mypy
         name: mypy (pre-push)
         entry: uv run mypy

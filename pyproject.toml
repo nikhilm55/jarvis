@@ -46,8 +46,8 @@ ignore = ["PLR2004"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
-mypy_path = ["src"]
-files = ["src", "tests"]
+mypy_path = ["src", ".claude/hooks"]
+files = ["src", "scripts", ".claude/hooks", "tests"]
 explicit_package_bases = true
 
 # ── Tests ──────────────────────────────────────────────────────────────────
