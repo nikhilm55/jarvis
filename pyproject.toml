@@ -41,6 +41,7 @@ ignore = ["PLR2004"]
 "tests/**" = ["S101", "S603", "S607", "PLR0913"]
 ".claude/hooks/**" = ["S603", "S607", "E501"]  # one-line veto messages read best
 "scripts/**" = ["S603", "S607"]
+"spikes/**" = ["S603", "S607", "S101", "E501", "T201"]  # throwaway measurement code
 
 # ── Types ──────────────────────────────────────────────────────────────────
 [tool.mypy]
