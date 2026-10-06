@@ -13,8 +13,53 @@
 
 ## Result
 
-_Pending._
+Run on 2026-10-06 with Claude Code 2.1.291, model aliases `sonnet`, `haiku` and `opus`, on the dev machine in the plan. Sessions were isolated with `--setting-sources project` in an empty temp dir and `--strict-mcp-config`; the only hook was the policy stub. There were 20 measured turns per run (14 answer-only, 6 one-tool), plus a warm-up and a deny turn. 0 turns failed. Raw data: `M0b-brain-latency.data.csv`. Harness: `spikes/M0b-brain-latency/`.
+
+| Model | Mode | Turn kind | n | first token p50 | total p50 | total p95 | max |
+|---|---|---|---|---|---|---|---|
+| sonnet | cold | answer | 14 | 2.19 s | 2.26 s | 4.74 s | 5.05 s |
+| sonnet | cold | tool | 6 | 3.69 s | 3.71 s | 12.33 s | 12.33 s |
+| **sonnet** | **warm** | **answer** | 14 | 1.38 s | **1.41 s** | **1.50 s** | 2.95 s |
+| **sonnet** | **warm** | **tool** | 6 | 3.08 s | **3.10 s** | **3.21 s** | 3.21 s |
+| haiku | warm | answer | 14 | 1.15 s | 1.18 s | 2.56 s | 2.71 s |
+| haiku | warm | tool | 6 | 3.48 s | 3.50 s | 10.98 s | 10.98 s |
+| opus | warm | answer | 14 | 1.07 s | 1.59 s | 1.95 s | 2.45 s |
+| opus | warm | tool | 6 | 2.98 s | 3.00 s | 3.24 s | 3.24 s |
+
+**Policy hook** (command hook → loopback HTTP stub → allow/deny):
+
+| Measured | n | p50 | p95 | max |
+|---|---|---|---|---|
+| Inside the hook script (HTTP round trip) | 20 | 15.0 ms | 16.5 ms | 21.4 ms |
+| Whole hook process (spawn + Python start + HTTP) | 30 | 82.3 ms | 110.6 ms | 164.1 ms |
+
+**Deny honoured:** on all three models the denied `echo DENYME` never ran, and the model explained the block in plain words.
+
+**Against the pass bar:**
+
+| Bar | Result | |
+|---|---|---|
+| Warm p50 ≤ 4 s | 1.41 s (answer) / 3.10 s (tool) | ✅ |
+| Warm p95 ≤ 7 s | 1.50 s / 3.21 s | ✅ |
+| Hook p95 ≤ 150 ms | 110.6 ms whole process | ✅ (max 164 ms) |
+| Deny honoured | 3 / 3 models | ✅ |
+
+**Hypothesis corrections:**
+- Cold was faster than predicted: p50 2.3 s, not > 6 s.
+- Cold's tail is much worse, though: p95 4.7 s and 12.3 s. Warm also saves about 0.6–0.9 s per turn.
+
+**Limitations:**
+- Small n for tool turns (6 per run): treat the p95 values as indicative only.
+- One machine, one time of day, one network.
+- Single trivial tool calls; no MCP servers loaded and no long-context growth across a warm session. Re-measure in M1 with real tools.
 
 ## Decision
 
-_Pending._
+**GO: Claude Code as the default brain, running a warm stream-json session** (confirms ADR-0003, FR-BRN-02/03).
+
+**Consequences:**
+- Keep one warm session per conversation, and start it (with a warm-up turn) when jarvisd starts, so that turn's latency is paid up front.
+- The brain's floor is about 1.2–1.4 s even for trivial answers. So the local **fast path** (FR-NLU-01, ≤ 300 ms) stays necessary for common commands, and the 1.2 s spoken acknowledgement (FR-TALK-02) is needed for tool turns.
+- A policy gate through a PreToolUse hook is viable, but process spawn costs about 70 ms of the hook's 82 ms. In M1, evaluate Claude Code's HTTP hook type pointed at jarvisd's loopback endpoint (no process spawn); fall back to a command hook.
+- Model choice: Opus was no slower than Sonnet here, and Haiku had no latency advantage on tool turns. Choose the default model on answer quality, not speed. Model routing (FR-BRN-08) stays C.
+- No FRS budget changes: §7.1 holds for the brain path.
