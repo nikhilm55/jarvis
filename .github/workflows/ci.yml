@@ -45,6 +45,18 @@ jobs:
       - run: uv sync --locked
       - run: uv run pytest -q
 
+  pr-size:
+    name: PR size
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Reviewable lines ≤ 400 (AGENTS.md rule 12)
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'size-exception') }}
+        run: python3 scripts/check_pr_size.py "origin/${{ github.base_ref }}"
+
   dependencies:
     name: dependency review & audit
     if: github.event_name == 'pull_request'

@@ -20,6 +20,9 @@ htmlcov/
 *.key
 secrets.toml
 
+# Audit reports — sent to the audit team, never committed
+ai-audit/
+
 # Personal AI agent config — keep local
 CLAUDE.local.md
 .claude/settings.local.json
