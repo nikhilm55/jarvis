@@ -33,7 +33,8 @@ MARKER = "jarvis-m0c-probe"
 
 def timed(fn: Callable[[], object], trials: int = TRIALS) -> tuple[int, float, float]:
     """Run fn `trials` times; return (successes, p50 ms, max ms)."""
-    print(f"  … {getattr(fn, '__name__', 'step')}", file=sys.stderr, flush=True)
+    name = getattr(fn, "__name__", "step")
+    print(f"  … {name}", file=sys.stderr, flush=True)
     ok, times = 0, []
     for _ in range(trials):
         start = time.perf_counter()
@@ -43,6 +44,11 @@ def timed(fn: Callable[[], object], trials: int = TRIALS) -> tuple[int, float, f
         except Exception as exc:  # spike: record, don't crash
             print(f"  error: {type(exc).__name__}", file=sys.stderr)
         times.append((time.perf_counter() - start) * 1000)
+    print(
+        f"  = {name}: {ok}/{trials}, p50 {statistics.median(times):.0f} ms",
+        file=sys.stderr,
+        flush=True,
+    )
     return ok, statistics.median(times), max(times)
 
 
@@ -218,4 +224,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    code = main()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    # libwnck/PyGObject can segfault while finalising wrappers of closed windows: skip finalisers.
+    os._exit(code)
