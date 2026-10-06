@@ -1,0 +1,12 @@
+# Default owner for everything.
+*                           @nikhilm55 @nikhilmalhotra55
+
+# AI agent configuration and policy: owner or backup owner reviews every change.
+/AGENTS.md                  @nikhilm55 @nikhilmalhotra55
+/CLAUDE.md                  @nikhilm55 @nikhilmalhotra55
+/.claude/                   @nikhilm55 @nikhilmalhotra55
+/.mcp.json                  @nikhilm55 @nikhilmalhotra55
+/docs/ai/                   @nikhilm55 @nikhilmalhotra55
+/scripts/check_ai_config.py @nikhilm55 @nikhilmalhotra55
+/.pre-commit-config.yaml    @nikhilm55 @nikhilmalhotra55
+/.github/                   @nikhilm55 @nikhilmalhotra55

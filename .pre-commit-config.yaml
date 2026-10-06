@@ -1,0 +1,58 @@
+# Install: uv run pre-commit install --hook-type pre-commit --hook-type pre-push
+# All revs pinned; update deliberately (monthly review, docs/ai/policy.md §9).
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: no-commit-to-branch
+        args: [--branch, main, --branch, master]
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: end-of-file-fixer
+        exclude: ^docs/design/
+      - id: trailing-whitespace
+        exclude: ^docs/design/
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: detect-private-key
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.10
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: [--baseline, .secrets.baseline]
+        exclude: ^uv\.lock$
+
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.38.2
+    hooks:
+      - id: check-jsonschema
+        name: validate .claude/settings.json against the Claude Code schema
+        files: ^\.claude/settings\.json$
+        args: [--schemafile, "https://json.schemastore.org/claude-code-settings.json"]
+      - id: check-github-workflows
+      - id: check-dependabot
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (pre-push)
+        entry: uv run mypy
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+      - id: pytest
+        name: pytest (pre-push)
+        entry: uv run pytest -q
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
