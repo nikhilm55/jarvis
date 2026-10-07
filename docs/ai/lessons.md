@@ -10,6 +10,7 @@ When an agent makes the same mistake twice, record it here. If it can happen aga
 | 2026-08 | A 13-day, 73 GB orphaned recorder process — beyondMeetings | Track child PIDs in one state file | skill `python-practices`, FRS FR-LIFE-01 |
 | 2026-08 | Tests passed on substring checks while the real output was corrupted — beyondMeetings | "Evidence, not claims": read the real end-to-end output | skill `feature-development` |
 | 2026-10-06 | A downloaded design reference and third-party text risk being committed wholesale | Third-party text stays out of the repo, linked instead | `docs/ai/policy.md` §6, `.gitignore` |
+| 2026-10-07 | Under the Claude Code sandbox, 8 tests errored: a fixture copied whole folders, and the sandbox makes untracked agent-config paths under `.claude/` unreadable | Fixtures copy git-tracked files only (what CI sees) | `tests/test_ai_config.py` `repo` fixture |
 
 ## Review log
 
