@@ -5,7 +5,12 @@ description = "Voice control for your whole PC — say \"Jarvis, …\" and it ge
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Nikhil Malhotra", email = "nikhil.malhotra@fiftyfivetech.io" }]
-dependencies = []
+dependencies = [
+    "httpx>=0.28.1",
+    "numpy>=2.4.6",
+    "platformdirs>=4.12.3",
+    "pydantic>=2.13.5",
+]
 
 [project.scripts]
 jarvis = "jarvis.cli:main"
