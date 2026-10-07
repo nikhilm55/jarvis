@@ -407,7 +407,7 @@ On failure:
 | ID | Requirement | Pri |
 |---|---|---|
 | FR-IO-01 | Jarvis validates every `jarvis.respond` payload against the schema. If it's invalid: **one repair retry** ("your last response failed validation: …"). If still invalid: speak the generic fallback ("Something went wrong on my side — the details are in the activity log") and log it. | M |
-| FR-IO-02 | `spoken` must be plain speakable text: **no markdown, URLs, code, emoji or file paths**, ≤ 2 sentences unless the user asked for content to be read (messages, agenda). A deterministic sanitiser enforces this; long content goes in `display`. | M |
+| FR-IO-02 | `spoken` must be plain speakable text: **no markdown, URLs, code, emoji or file paths**, ≤ 2 sentences (plus one closing question when Jarvis needs an answer) unless the user asked for content to be read (messages, agenda). A deterministic sanitiser enforces this; long content goes in `display`. | M |
 | FR-IO-03 | `status: failed` **requires** an `error` with `code`, `what`, `why` and at least one `remedy`. Jarvis rejects a failure without a remedy (FR-IO-01 repair). | M |
 | FR-IO-04 | **Verbatim content:** when the user dictates content ("saying …", "that says …", "write …"), the text sent or typed must be **exactly what was spoken**, with spoken punctuation ("comma", "full stop", "new line") converted. It is never paraphrased unless the user asked ("make it polite", "translate to Hindi"). | M |
 | FR-IO-05 | "Write a message" means **compose without sending** (text typed into the box, cursor left there). "Send a message" means compose and send, subject to policy. The rules file teaches this distinction. | M |
