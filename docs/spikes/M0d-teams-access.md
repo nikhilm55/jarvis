@@ -1,5 +1,7 @@
 # M0d — Can Jarvis read and send Teams messages?
 
+> **Deferred to M3** (FRS D16, 2026-10-07): sign-in must be done by the setup wizard, so this is tested once the wizard can sign in. The Windows UI-Automation path follows the Windows milestone (D15).
+
 **Hypothesis:** Microsoft Graph, through an M365 MCP server, can list unread chats and send a message with delegated permissions *if* the tenant allows user consent (OQ-001). If it doesn't, UI Automation on the Teams desktop app (Windows) can at least read the chat list and unread badges and type into the compose box.
 **FRS refs:** FR-MCP-11, §6.2–6.4 scenarios, FRS §12.1 Graph risk, OQ-001.
 **Method:**
