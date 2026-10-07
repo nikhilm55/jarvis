@@ -2,7 +2,7 @@
 
 Rolling note so a fresh session (human or agent) picks up instantly. Overwrite it at the end of every working session; history lives in git.
 
-**Updated:** 2026-10-06 (M0b done, M0c X11 done)
+**Updated:** 2026-10-07 (M0 closed)
 
 DONE:
 - FRS v0.3 written (`docs/FRS.md`), including the consent layer. UI design approved and frozen (`docs/design/jarvis-ui-mockup.html`).
@@ -13,7 +13,8 @@ DONE:
 - M0a wake word (synthetic voices): architecture GO, model PIVOT. Detector + Whisper first-word gate: 0 false accepts in 60 min, 0/200 mid-sentence, 94–95% recall at the bar. Next: a custom 'Jarvis' model and real-voice validation. See `docs/spikes/M0a-wake-word.md`.
 
 NEXT:
-- M0c part 2 needs a Wayland login. Then M0 per `docs/plans/2026-10-06-m0-spikes.md`: M0c (X11 now, Wayland after re-login), M0a (needs the owner's recordings), M0d (needs the owner's Microsoft sign-in).
+- Plan M1, the voice loop on Linux X11 (FRS §11): mic → wake (custom model + first-word gate) → STT → warm Claude Code brain → I/O contract → TTS, plus basic HUD, fast path and activity log. Write `docs/plans/<date>-m1-voice-loop.md` first.
+- Optional, any time: the owner's 15-min real-voice set (`spikes/M0a-wake-word/record.py`) to validate wake-word recall.
 
 OPEN:
-- OQ-001…OQ-006 in `docs/open-questions.md`. OQ-001 blocks M0d's decision; the others don't block M0.
+- OQ-001 (Teams tenant consent) now belongs to M3. OQ-002…006 in `docs/open-questions.md`; none blocks M1.
