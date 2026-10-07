@@ -1,0 +1,28 @@
+{
+  "turn_id": "2026-10-06T15:42:10.331Z-7f3a",
+  "command": "write a message to Rahul saying I'll be ten minutes late",
+  "raw_transcript": "Jarvis, write a message to Rahul saying I'll be ten minutes late.",
+  "stt": { "engine": "groq/whisper-large-v3-turbo", "confidence": 0.93, "language": "en" },
+  "input_mode": "voice",
+  "context": {
+    "os": "windows-11-23h2",
+    "display_server": null,
+    "locale": "en-IN",
+    "local_time": "2026-10-06T21:12:10+05:30",
+    "user": { "name": "Nikhil", "address_as": "Nikhil" },
+    "active_window": { "app": "Microsoft Teams", "title": "Chat | Microsoft Teams" },
+    "selection_text": null,
+    "defaults": { "messaging": "teams", "email": "outlook", "browser": "chrome" },
+    "recent_entities": [{ "type": "person", "name": "Rahul Sharma", "source": "turn-41" }],
+    "pending_question": null
+  },
+  "policy": {
+    "mode": "balanced",
+    "max_steps": 25,
+    "grants": {
+      "messages.teams:read": "always",
+      "calendar.outlook:read": "session",
+      "email.gmail:read": "never"
+    }
+  }
+}
