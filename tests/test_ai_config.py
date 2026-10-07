@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -30,24 +31,23 @@ checker = load_checker()
 
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
-    for item in [
-        "AGENTS.md",
-        "CLAUDE.md",
-        "README.md",
-        ".mcp.json",
-        ".claude",
-        "docs",
-        "src",
-        "tests",
-        "scripts",
-        ".github",
-    ]:
-        source = ROOT / item
-        target = tmp_path / item
-        if source.is_dir():
-            shutil.copytree(source, target, ignore=shutil.ignore_patterns("__pycache__"))
-        elif source.exists():
-            shutil.copy2(source, target)
+    """A copy of the repo's TRACKED files only — what CI sees in a clean clone.
+
+    Copying whole folders would pull in local-only files, and under the Claude Code
+    sandbox some untracked agent-config paths under .claude/ are unreadable by design.
+    """
+    tracked = (
+        subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True)
+        .stdout.decode("utf-8")
+        .split("\0")
+    )
+    for rel in filter(None, tracked):
+        source = ROOT / rel
+        if not source.is_file():
+            continue  # deleted in the working tree but not yet committed
+        target = tmp_path / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
     return tmp_path
 
 
