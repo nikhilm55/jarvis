@@ -1,0 +1,11 @@
+{
+  "status": "failed",
+  "spoken": "I couldn't find Rohit Kapoor in your Teams contacts. The closest is Rohit Kumar. Should I open that chat instead?",
+  "error": {
+    "code": "NOT_FOUND",
+    "what": "Contact 'Rohit Kapoor' not found in Teams",
+    "why": "No person or chat matched; nearest match Rohit Kumar (0.71)",
+    "remedy": ["Say the name again or spell it", "Say 'yes' to open Rohit Kumar's chat", "If he's outside your organisation, add him in Teams first"]
+  },
+  "follow_up_expected": true
+}

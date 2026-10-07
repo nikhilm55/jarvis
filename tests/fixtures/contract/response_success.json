@@ -1,0 +1,10 @@
+{
+  "status": "success",
+  "spoken": "Sent to Rahul Sharma.",
+  "display": { "title": "Message sent", "body_md": "**To:** Rahul Sharma\n\n> I'll be ten minutes late", "card": "message" },
+  "error": null,
+  "actions_taken": [
+    { "tool": "teams.send_message", "summary": "Sent message to Rahul Sharma", "undoable": false }
+  ],
+  "follow_up_expected": false
+}

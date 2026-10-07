@@ -1,14 +1,100 @@
-"""Pydantic models for the brain↔Jarvis I/O contract: the turn envelope (FRS §5.6.1)."""
+"""Pydantic models for the brain↔Jarvis I/O contract (FRS §5.6.1, §5.6.3, Appendix B)."""
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StringConstraints,
+    ValidationInfo,
+    field_validator,
+)
+from pydantic_core import PydanticCustomError
 
 CONTRACT_VERSION = "1"
+
+Status = Literal["success", "partial", "failed", "needs_input", "cancelled"]
+
+ErrorCode = Literal[
+    "NOT_FOUND",
+    "AMBIGUOUS",
+    "APP_NOT_INSTALLED",
+    "AUTH_REQUIRED",
+    "PERMISSION_DENIED",
+    "INTEGRATION_NOT_CONNECTED",
+    "MCP_UNAVAILABLE",
+    "BRAIN_UNAVAILABLE",
+    "STT_UNAVAILABLE",
+    "UNSUPPORTED_ON_PLATFORM",
+    "ELEVATED_WINDOW",
+    "CONSENT_DENIED",
+    "CONSENT_TIMEOUT",
+    "BLOCKED_BY_POLICY",
+    "CANCELLED",
+    "TIMEOUT",
+    "NETWORK",
+    "PC_LOCKED",
+    "INTERNAL",
+]
+
+
+NonBlankText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+# ── Final response (brain → Jarvis) ────────────────────────────────────────
+
+
+class ErrorInfo(_Strict):
+    code: ErrorCode
+    what: NonBlankText
+    why: NonBlankText
+    remedy: list[NonBlankText]
+
+    @field_validator("remedy")
+    @classmethod
+    def _needs_a_remedy(cls, remedy: list[str]) -> list[str]:
+        if not remedy:
+            raise PydanticCustomError("remedy_required", "at least one remedy is required")
+        return remedy
+
+
+class ActionTaken(_Strict):
+    tool: str
+    summary: str
+    undoable: StrictBool
+
+
+class Display(_Strict):
+    title: str
+    body_md: str
+    card: str | None = None
+
+
+class FinalResponse(_Strict):
+    status: Status
+    spoken: str
+    display: Display | None = None
+    error: ErrorInfo | None = Field(default=None, validate_default=True)
+    actions_taken: list[ActionTaken] = Field(default_factory=list)
+    follow_up_expected: StrictBool = False
+
+    @field_validator("error")
+    @classmethod
+    def _failure_needs_error(
+        cls, error: ErrorInfo | None, info: ValidationInfo
+    ) -> ErrorInfo | None:
+        if error is None and info.data.get("status") == "failed":  # FR-IO-03
+            raise PydanticCustomError(
+                "error_required",
+                "status 'failed' requires an error with code, what, why and a remedy",
+            )
+        return error
 
 
 # ── Turn envelope (Jarvis → brain) ─────────────────────────────────────────
