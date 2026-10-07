@@ -51,7 +51,7 @@ The cause is a libwnck/PyGObject lifetime bug around closed windows. It is not a
 
 ## Result — part 2: GNOME Wayland
 
-_Pending: needs the owner to log in to "Ubuntu on Wayland" once._
+**Skipped by owner decision (2026-10-07, FRS D17 / ADR-0009):** v1 targets GNOME on X11. Wayland moves to a later milestone, and its first task is this card's part-2 matrix.
 
 ## Decision (part 1)
 
