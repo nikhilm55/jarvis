@@ -12,6 +12,8 @@ from types import ModuleType
 
 import pytest
 
+from .git_env_utils import clean_git_env
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -37,7 +39,13 @@ def repo(tmp_path: Path) -> Path:
     sandbox some untracked agent-config paths under .claude/ are unreadable by design.
     """
     tracked = (
-        subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "ls-files", "-z"],
+            cwd=ROOT,
+            capture_output=True,
+            check=True,
+            env=clean_git_env(),
+        )
         .stdout.decode("utf-8")
         .split("\0")
     )
