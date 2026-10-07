@@ -38,6 +38,7 @@ models/
 *.wav
 !tests/fixtures/**/*.wav
 spikes/**/output/
+spikes/**/data/
 
 # OS / editors
 .DS_Store
