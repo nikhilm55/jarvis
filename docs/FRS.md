@@ -7,7 +7,7 @@
 | **Version** | 0.3 (draft) — consent / data permissions (§5.11); UI design **approved** 2026-10-06 (§8) |
 | **Date** | 2026-10-06 |
 | **Owner** | Nikhil Malhotra |
-| **Platforms** | Windows 10/11 and Linux in v1. macOS later. |
+| **Platforms** | **Linux first** (Ubuntu/GNOME). Windows 10/11 in a later milestone. macOS later (D15). |
 | **Sister product** | beyondMeetings (`~/meetings/beyondmeetings`) — Jarvis reuses its engine where it fits (§10) |
 
 > **One-line pitch:** Say "Jarvis, …" and your computer does it. If it can't, it tells you why and what to do.
@@ -1101,6 +1101,8 @@ Jarvis is a **separate repo and product**. Code is reused by copying or vendorin
 | D12 | YOLO skips consent prompts, **but** an explicit "never" and the deny list still hold | "Never" is the user's own standing instruction, stronger than a mode switch. Change if you want YOLO to override even that. |
 | D13 | No answer = no (15 s) | Silence must never grant access |
 | D14 | Consent and confirmation are merged into **one** prompt when both are due | Avoid prompt fatigue, which makes people click "yes" blindly |
+| D15 | **Linux first, Windows later**: M1–M3 target Ubuntu/GNOME; Windows backends follow as their own milestone. The code keeps per-platform backends behind interfaces from day one (ADR-0002) | Owner decision 2026-10-07: get one platform excellent before the second |
+| D16 | **Integration sign-ins happen only in the setup wizard** (FR-MCP-03, FR-SET), never as manual dev steps. The Teams/M365 feasibility test moves from M0 to M3 and runs through the wizard's own sign-in flow | Owner decision 2026-10-07: the product must handle sign-in itself |
 
 ---
 
