@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from .git_env_utils import clean_git_env
+
 HOOKS = Path(__file__).resolve().parent.parent / ".claude" / "hooks"
 
 
@@ -26,6 +28,7 @@ def run_hook(name: str, payload: Mapping[str, object]) -> dict[str, object]:
         encoding="utf-8",
         timeout=30,
         check=False,
+        env=clean_git_env(),
     )
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout) if result.stdout.strip() else {}
@@ -90,12 +93,16 @@ def test_should_allow_normal_command_when_it_is_safe(command: str) -> None:
 
 
 def test_should_block_commit_when_on_main_branch(tmp_path: Path) -> None:
-    subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True)
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main", str(tmp_path)], check=True, env=clean_git_env()
+    )
     assert bash("git commit -m 'x'", cwd=tmp_path) == "deny"
 
 
 def test_should_allow_commit_when_on_feature_branch(tmp_path: Path) -> None:
-    subprocess.run(["git", "init", "-q", "-b", "feat/x", str(tmp_path)], check=True)
+    subprocess.run(
+        ["git", "init", "-q", "-b", "feat/x", str(tmp_path)], check=True, env=clean_git_env()
+    )
     assert bash("git commit -m 'x'", cwd=tmp_path) == "allow"
 
 
