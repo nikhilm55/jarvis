@@ -6,7 +6,9 @@ from typing import Any
 
 import httpx
 import numpy as np
+import pytest
 
+from jarvis.stt.base import SttUnavailable
 from jarvis.stt.server import WhisperServer
 
 
@@ -155,3 +157,154 @@ def test_should_clean_transcript_and_set_engine_when_transcribing() -> None:
     assert result.text == "Jarvis, open Teams."
     assert result.engine == "whisper.cpp/base.en"
     assert result.seconds >= 0
+
+
+def test_should_clean_blank_audio_when_server_returns_blank() -> None:
+    popen = FakePopen()
+    transport, _ = make_transport(texts=[" [BLANK_AUDIO]"])
+    server = make_server(popen, transport)
+
+    result = server.transcribe(np.zeros(1600, dtype=np.int16))
+
+    assert result.text == ""
+
+
+def test_should_reuse_child_when_warm() -> None:
+    popen = FakePopen()
+    transport, _ = make_transport(texts=["a", "b"])
+    server = make_server(popen, transport)
+
+    server.transcribe(np.zeros(1600, dtype=np.int16))
+    server.transcribe(np.zeros(1600, dtype=np.int16))
+
+    assert len(popen.calls) == 1
+
+
+def test_should_restart_once_when_child_died() -> None:
+    popen = FakePopen()
+    transport, _ = make_transport(texts=["a", "b"])
+    server = make_server(popen, transport)
+
+    server.transcribe(np.zeros(1600, dtype=np.int16))
+    popen.procs[0].returncode = 1
+
+    result = server.transcribe(np.zeros(1600, dtype=np.int16))
+
+    assert result.text == "b"
+    assert len(popen.calls) == 2
+
+
+def test_should_raise_when_restart_also_fails() -> None:
+    popen = FakePopen(dead_after_first=True)
+    transport, _ = make_transport(texts=["a"])
+    server = make_server(popen, transport)
+
+    server.transcribe(np.zeros(1600, dtype=np.int16))
+    popen.procs[0].returncode = 1
+
+    with pytest.raises(SttUnavailable) as exc_info:
+        server.transcribe(np.zeros(1600, dtype=np.int16))
+
+    assert "STT_UNAVAILABLE" in str(exc_info.value)
+
+
+def test_should_raise_http_error_without_restart_when_500() -> None:
+    popen = FakePopen()
+    transport, _ = make_transport(texts=["a"], status=500)
+    server = make_server(popen, transport)
+
+    with pytest.raises(SttUnavailable) as exc_info:
+        server.transcribe(np.zeros(1600, dtype=np.int16))
+
+    assert "HTTP 500" in str(exc_info.value)
+    assert len(popen.calls) == 1
+
+
+def test_should_restart_once_on_transport_error_then_fail() -> None:
+    popen = FakePopen()
+
+    def failing_handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/health":
+            return httpx.Response(200, json={"status": "ok"})
+        raise httpx.ConnectError("boom")
+
+    transport = httpx.MockTransport(failing_handler)
+    server = make_server(popen, transport)
+
+    with pytest.raises(SttUnavailable):
+        server.transcribe(np.zeros(1600, dtype=np.int16))
+
+    assert len(popen.calls) == 2
+
+
+def test_should_raise_when_startup_times_out() -> None:
+    popen = FakePopen()
+    transport, _ = make_transport(health="loading model")
+    server = make_server(popen, transport, startup_timeout_s=0.0)
+
+    with pytest.raises(SttUnavailable) as exc_info:
+        server.start()
+
+    assert "did not become ready" in str(exc_info.value)
+    assert popen.procs[0].terminated
+
+
+def test_should_raise_when_child_exits_during_startup() -> None:
+    popen = FakePopen(first_dead=True)
+    transport, _ = make_transport()
+    server = make_server(popen, transport)
+
+    with pytest.raises(SttUnavailable) as exc_info:
+        server.start()
+
+    assert "exited during startup" in str(exc_info.value)
+
+
+def test_should_terminate_and_kill_when_close() -> None:
+    popen = FakePopen()
+    transport, _ = make_transport()
+    server = make_server(popen, transport)
+
+    server.start()
+    assert server.pid == popen.procs[0].pid
+
+    server.close()
+    assert popen.procs[0].terminated
+    assert server.pid is None
+
+    server.close()
+
+
+def test_should_kill_after_timeout_when_terminate_ignored() -> None:
+    popen = FakePopen()
+    transport, _ = make_transport()
+    server = make_server(popen, transport)
+
+    server.start()
+    popen.procs[0].ignore_terminate = True
+
+    server.close()
+
+    assert popen.procs[0].killed
+    assert popen.procs[0].terminated
+
+
+def test_should_start_and_close_when_context_manager() -> None:
+    popen = FakePopen()
+    transport, _ = make_transport()
+    server = make_server(popen, transport)
+
+    with server:
+        assert server.pid is not None
+
+    assert popen.procs[0].terminated
+
+
+def test_should_raise_when_response_body_has_no_text() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"status": "ok"})
+
+    server = make_server(FakePopen(), httpx.MockTransport(handler))
+
+    with pytest.raises(SttUnavailable, match="malformed"):
+        server.transcribe(np.zeros(1600, dtype=np.int16))
