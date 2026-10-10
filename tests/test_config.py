@@ -20,6 +20,7 @@ def test_should_return_documented_defaults_when_file_is_missing() -> None:
     assert settings.audio.device is None
     assert (settings.wake.threshold, settings.wake.model) == (0.005, "hey_jarvis_v0.1")
     assert (settings.stt.engine, settings.stt.model) == ("whisper-server", "base.en")
+    assert (settings.stt.server_bin, settings.stt.threads) == (None, 4)
     assert settings.tts.engine == "kokoro"
     assert settings.brain.inactivity_reset_s == 600
     assert settings.log.retention_days == 30

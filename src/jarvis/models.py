@@ -76,6 +76,13 @@ REGISTRY: dict[str, ModelSpec] = {
             "ggml-base.en.bin",
         ),
         ModelSpec(
+            "whisper-small.en",
+            f"{_WHISPER}/ggml-small.en.bin",
+            # pragma: allowlist nextline secret
+            "c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d",
+            "ggml-small.en.bin",
+        ),
+        ModelSpec(
             "silero-vad",
             f"{_SILERO}/silero_vad.onnx",
             # pragma: allowlist nextline secret
