@@ -8,8 +8,10 @@ from dataclasses import dataclass
 
 from jarvis.config import TtsSettings
 from jarvis.log import get_logger
+from jarvis.tts.earcons import EARCON_RATE, earcon_samples
 from jarvis.tts.engines import (
     AudioEngine,
+    DirectEngine,
     Engine,
     Pcm,
     default_engine,
@@ -29,6 +31,7 @@ class _Job:
 
     handle: SpeechHandle
     text: str
+    clip: Pcm | None
 
 
 class Speaker:
@@ -66,7 +69,17 @@ class Speaker:
         if not text.strip():
             handle._finish()
             return handle
-        self._jobs.put(_Job(handle, text))
+        self._jobs.put(_Job(handle, text, None))
+        self._ensure_worker()
+        return handle
+
+    def earcon(self, name: str) -> SpeechHandle:
+        """Queue an earcon (pre-rendered clip) and return its handle."""
+        if self._closed:
+            raise RuntimeError("speaker is closed")
+        clip = earcon_samples(name)
+        handle = SpeechHandle(name, self._clock)
+        self._jobs.put(_Job(handle, name, clip))
         self._ensure_worker()
         return handle
 
@@ -128,11 +141,24 @@ class Speaker:
         return self._engine
 
     def _run(self, job: _Job) -> None:
+        if job.clip is not None:
+            self._play_earcon(job.handle, job.clip)
+            return
         engine = self._get_engine()
+        if isinstance(engine, DirectEngine):
+            self._speak_direct(job, engine)
+            return
         if isinstance(engine, AudioEngine):
             self._speak_audio(job, engine)
             return
         raise TypeError(f"unsupported engine type: {type(engine).__name__}")
+
+    def _speak_direct(self, job: _Job, engine: DirectEngine) -> None:
+        handle = job.handle
+        handle._register_cancel(engine.cancel)
+        handle._note_first_audio()
+        engine.speak(job.text)
+        handle._clear_cancel()
 
     def _speak_audio(self, job: _Job, engine: AudioEngine) -> None:
         handle = job.handle
@@ -189,6 +215,17 @@ class Speaker:
                 sink.abort()
             else:
                 sink.close()
+
+    def _play_earcon(self, handle: SpeechHandle, clip: Pcm) -> None:
+        sink = self._sink_factory(EARCON_RATE)
+        self._play_clips(_single_queue(clip), sink, EARCON_RATE, handle)
+
+
+def _single_queue(clip: Pcm) -> queue.Queue[Pcm | Exception | None]:
+    q: queue.Queue[Pcm | Exception | None] = queue.Queue()
+    q.put(clip)
+    q.put(None)
+    return q
 
 
 def _put(

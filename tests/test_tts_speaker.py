@@ -7,9 +7,10 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
+from jarvis.tts.earcons import EARCON_RATE, earcon_samples
 from jarvis.tts.sink import BLOCK_S, AudioOutputError
 from jarvis.tts.speaker import Speaker
-from tests.tts_fakes import FakeEngine, FakeSink, MutableClock, make_speaker
+from tests.tts_fakes import FakeDirect, FakeEngine, FakeSink, MutableClock, make_speaker
 
 
 def test_should_return_before_synthesis_finishes_when_engine_gated() -> None:
@@ -278,5 +279,75 @@ def test_should_finish_immediately_when_text_has_nothing_to_say(text: str) -> No
         assert handle.first_audio_s is None
         assert handle.wait(0) is True
         assert engine.texts == []
+    finally:
+        speaker.close()
+
+
+def test_should_play_earcon_when_known_name() -> None:
+    engine = FakeEngine()
+    sinks: list[FakeSink] = []
+    rates: list[int] = []
+
+    def sink_factory(rate: int) -> FakeSink:
+        rates.append(rate)
+        sink = FakeSink(rate)
+        sinks.append(sink)
+        return sink
+
+    speaker = Speaker(
+        engine_factory=lambda: engine,
+        sink_factory=sink_factory,
+    )
+    try:
+        handle = speaker.earcon("wake")
+        assert handle.wait(5.0) is True
+        assert handle.first_audio_s is not None
+        assert len(sinks) == 1
+        assert len(sinks[0].blocks) >= 1
+        assert rates == [EARCON_RATE]
+        assert np.array_equal(np.concatenate(sinks[0].blocks), earcon_samples("wake"))
+    finally:
+        speaker.close()
+
+
+def test_should_raise_value_error_when_earcon_unknown() -> None:
+    engine = FakeEngine()
+    sinks: list[FakeSink] = []
+    speaker = make_speaker(engine, sinks)
+    try:
+        with pytest.raises(ValueError):
+            speaker.earcon("bogus")
+    finally:
+        speaker.close()
+
+
+def test_should_use_direct_engine_when_say_called() -> None:
+    direct = FakeDirect()
+    speaker = Speaker(
+        engine_factory=lambda: direct,
+        sink_factory=FakeSink,
+    )
+    try:
+        handle = speaker.say("Hello there. Bye.")
+        assert handle.wait(5.0) is True
+        assert direct.spoken == ["Hello there. Bye."]
+        assert handle.first_audio_s is not None
+    finally:
+        speaker.close()
+
+
+def test_should_cancel_direct_engine_when_handle_cancelled() -> None:
+    direct = FakeDirect(block=True)
+    speaker = Speaker(
+        engine_factory=lambda: direct,
+        sink_factory=FakeSink,
+    )
+    try:
+        handle = speaker.say("Hello there. Bye.")
+        assert direct.entered.wait(5.0) is True
+        handle.cancel()
+        assert handle.wait(0.3) is True
+        assert handle.is_speaking is False
+        assert direct.cancelled.is_set() is True
     finally:
         speaker.close()
