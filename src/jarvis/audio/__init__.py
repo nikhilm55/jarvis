@@ -1,5 +1,6 @@
 """Audio capture: sources, pre-roll buffer and voice-activity endpointing."""
 
+from jarvis.audio.endpointer import Endpointer, Event, SpeechStart, Utterance
 from jarvis.audio.preroll import PreRoll
 from jarvis.audio.sources import (
     FRAME_SAMPLES,
@@ -10,6 +11,7 @@ from jarvis.audio.sources import (
     MicSource,
     WavFileSource,
 )
+from jarvis.audio.vad import SileroVad, Vad
 
 __all__ = [
     "FRAME_SAMPLES",
@@ -17,7 +19,13 @@ __all__ = [
     "AudioDeviceError",
     "AudioFormatError",
     "AudioSource",
+    "Endpointer",
+    "Event",
     "MicSource",
     "PreRoll",
+    "SileroVad",
+    "SpeechStart",
+    "Utterance",
+    "Vad",
     "WavFileSource",
 ]
