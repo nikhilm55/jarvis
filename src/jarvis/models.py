@@ -11,6 +11,11 @@ from jarvis.paths import ensure as ensure_dir
 
 _OWW = "https://github.com/dscripka/openWakeWord/releases/download/v0.5.1"
 _WHISPER = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
+# snakers4/silero-vad v5.1.2, pinned by commit so the URL can never drift.
+_SILERO = (
+    "https://raw.githubusercontent.com/snakers4/silero-vad/"
+    "6478567951ae5c9979ad7b234185b5515f4be7a1/src/silero_vad/data"
+)
 
 
 class ModelIntegrityError(RuntimeError):
@@ -69,6 +74,13 @@ REGISTRY: dict[str, ModelSpec] = {
             # pragma: allowlist nextline secret
             "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002",
             "ggml-base.en.bin",
+        ),
+        ModelSpec(
+            "silero-vad",
+            f"{_SILERO}/silero_vad.onnx",
+            # pragma: allowlist nextline secret
+            "2623a2953f6ff3d2c1e61740c6cdb7168133479b267dfef114a4a3cc5bdd788f",
+            "silero_vad.onnx",
         ),
     )
 }

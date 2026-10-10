@@ -59,7 +59,7 @@ files = ["src", "scripts", ".claude/hooks", "tests"]
 explicit_package_bases = true
 
 [[tool.mypy.overrides]]
-module = ["sounddevice"]  # ships no type stubs
+module = ["sounddevice", "onnxruntime"]  # ship no type stubs
 ignore_missing_imports = true
 
 # ── Tests ──────────────────────────────────────────────────────────────────
