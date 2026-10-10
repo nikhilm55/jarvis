@@ -66,3 +66,4 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
+markers = ["model: needs a cached model file (set JARVIS_HOME to a cache that holds it); skipped otherwise"]
