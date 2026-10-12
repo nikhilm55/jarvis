@@ -7,6 +7,7 @@ import secrets
 import socket
 import time
 from collections.abc import Awaitable, Callable, Iterator
+from pathlib import Path
 from typing import Any
 
 import mcp_types as types
@@ -16,6 +17,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from jarvis import policy
 from jarvis.log import get_logger, redact
+from jarvis.mcp.config_file import write_private_json
 from jarvis.mcp.guard import GuardMiddleware
 from jarvis.mcp.tools import SERVER_NAME, TOOLS, TOOLS_BY_NAME
 
@@ -119,6 +121,15 @@ class JarvisMcpServer:
             raise
         self._token = token
         self._url = f"http://127.0.0.1:{port}/mcp"
+
+    def write_client_config(self, path: Path) -> None:
+        """Write the Claude Code `--mcp-config` file (mode 0600) that points at this server."""
+        server = {
+            "type": "http",
+            "url": self.url,
+            "headers": {"Authorization": f"Bearer {self.token}"},
+        }
+        write_private_json(path, {"mcpServers": {SERVER_NAME: server}})
 
     async def _wait_started(self, server: uvicorn.Server, task: asyncio.Task[None]) -> None:
         """Wait until the server is listening, raising on failure or timeout."""
