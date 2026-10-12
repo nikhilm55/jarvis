@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import json
 import secrets
 import socket
 import time
@@ -14,11 +15,26 @@ from mcp.server import Server, ServerRequestContext
 from mcp.server.transport_security import TransportSecuritySettings
 
 from jarvis import policy
-from jarvis.log import get_logger
+from jarvis.log import get_logger, redact
 from jarvis.mcp.guard import GuardMiddleware
-from jarvis.mcp.tools import SERVER_NAME, TOOLS
+from jarvis.mcp.tools import SERVER_NAME, TOOLS, TOOLS_BY_NAME
 
 Dispatch = Callable[[str, dict[str, object]], Awaitable[object]]
+
+
+def _render(result: object) -> str:
+    """Return result as a string, JSON-encoding non-strings."""
+    if isinstance(result, str):
+        return result
+    return json.dumps(result, default=str)
+
+
+def _error(text: str) -> types.CallToolResult:
+    """Build a CallToolResult marking an error with a single text payload."""
+    return types.CallToolResult(
+        content=[types.TextContent(type="text", text=text)],
+        is_error=True,
+    )
 
 
 class _EmbeddedServer(uvicorn.Server):
@@ -75,6 +91,7 @@ class JarvisMcpServer:
         lowlevel = Server(
             SERVER_NAME,
             on_list_tools=self._list_tools,
+            on_call_tool=self._call_tool,
         )
         app = lowlevel.streamable_http_app(
             streamable_http_path="/mcp",
@@ -140,3 +157,33 @@ class JarvisMcpServer:
                 for t in TOOLS
             ]
         )
+
+    async def _gate(self, policy_name: str, args: dict[str, Any]) -> policy.Decision:
+        """Run the policy gate in a thread, failing closed on error."""
+        try:
+            mode = self._get_mode()
+            return await asyncio.to_thread(policy.gate, policy_name, args, mode)
+        except Exception:
+            self._log.exception("policy gate failed", extra={"tool": policy_name})
+            return policy.Decision(False, "policy error: mode unavailable")
+
+    async def _call_tool(
+        self,
+        ctx: ServerRequestContext[Any],
+        params: types.CallToolRequestParams,
+    ) -> types.CallToolResult:
+        """Gate and dispatch a tool call, returning an error result on failure."""
+        args = dict(params.arguments or {})
+        tool = TOOLS_BY_NAME.get(params.name)
+        if tool is None:
+            await self._gate("mcp.unknown", args)
+            return _error("unknown tool")
+        decision = await self._gate(tool.policy_name, args)
+        if not decision.allowed:
+            return _error(decision.reason)
+        try:
+            text = _render(await self._dispatch(tool.policy_name, args))
+        except Exception as exc:
+            self._log.exception("tool dispatch failed", extra={"tool": tool.policy_name})
+            return _error(f"tool error: {type(exc).__name__}: {redact(str(exc))}")
+        return types.CallToolResult(content=[types.TextContent(type="text", text=text)])
