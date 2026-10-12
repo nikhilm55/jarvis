@@ -1,0 +1,4 @@
+[Desktop Entry]
+Type=Application
+Name=Flat Notes
+Exec=flatpak run --branch=stable org.example.FlatNotes

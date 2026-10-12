@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from Xlib import X, error
 
-from jarvis.desktop.apps import AppEntry
+from jarvis.desktop.apps import AppEntry, load_index
 from jarvis.desktop.x11 import (
     WindowInfo,
     X11Error,
@@ -111,6 +111,7 @@ class FakeDisplay:
 
 CALC = "org.gnome.Calculator"
 CALC_EXEC = "gnome-calculator %U"
+FIXTURE_SHARE = Path(__file__).parent / "fixtures" / "desktop" / "share" / "applications"
 
 
 def _mk_app(
@@ -253,3 +254,83 @@ def test_should_send_close_message_when_close_window() -> None:
     assert ev.client_type == disp.intern_atom("_NET_CLOSE_WINDOW")
     assert mask == X.SubstructureRedirectMask | X.SubstructureNotifyMask
     assert disp.synced is True
+
+
+@pytest.mark.parametrize(
+    "exec_name",
+    [
+        "python",
+        "python3",
+        "python3.12",
+        "sh",
+        "bash",
+        "java",
+        "flatpak",
+        "electron",
+        "env",
+        "snap",
+        "node",
+    ],
+)
+def test_should_not_match_generic_exec_name_window(exec_name: str) -> None:
+    app = AppEntry(
+        "x-app.desktop",
+        "X",
+        "",
+        (),
+        f"{exec_name} /opt/x",
+        "",
+        Path("x.desktop"),
+    )
+    win = WindowInfo(1, exec_name, exec_name.capitalize(), None, "t")
+    assert app_matches(app, win) is False
+    win2 = WindowInfo(1, exec_name, exec_name, None, "t")
+    assert app_matches(app, win2) is False
+
+
+def test_should_match_python_app_by_desktop_id_only() -> None:
+    index = load_index([FIXTURE_SHARE])
+    app = next(e for e in index if e.desktop_id == "python-tool.desktop")
+    win_generic = WindowInfo(1, "python3", "Python3", None, "t")
+    assert app_matches(app, win_generic) is False
+    win_desktop = WindowInfo(1, "python-tool", "Python-tool", None, "t")
+    assert app_matches(app, win_desktop) is True
+
+
+def test_should_match_flatpak_app_by_desktop_id_not_flatpak_name() -> None:
+    index = load_index([FIXTURE_SHARE])
+    app = next(e for e in index if e.desktop_id == "org.example.FlatNotes.desktop")
+    win_flatpak = WindowInfo(1, "flatpak", "flatpak", None, "t")
+    assert app_matches(app, win_flatpak) is False
+    win_desktop = WindowInfo(1, "org.example.FlatNotes", "org.example.FlatNotes", None, "t")
+    assert app_matches(app, win_desktop) is True
+
+
+def test_should_still_match_startup_wm_class_for_generic_exec() -> None:
+    app = AppEntry(
+        "x-app.desktop",
+        "X",
+        "",
+        (),
+        "python3 /opt/x",
+        "XApp",
+        Path("x.desktop"),
+    )
+    win_startup = WindowInfo(1, "XApp", "XApp", None, "t")
+    assert app_matches(app, win_startup) is True
+    win_generic = WindowInfo(1, "python3", "python3", None, "t")
+    assert app_matches(app, win_generic) is False
+
+
+def test_should_still_match_non_generic_exec_name() -> None:
+    app = AppEntry(
+        "x-app.desktop",
+        "X",
+        "",
+        (),
+        "gnome-calculator %U",
+        "",
+        Path("x.desktop"),
+    )
+    win = WindowInfo(1, "gnome-calculator", "gnome-calculator", None, "t")
+    assert app_matches(app, win) is True

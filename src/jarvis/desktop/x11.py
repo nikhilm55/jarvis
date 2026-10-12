@@ -2,6 +2,7 @@
 
 import contextlib
 import os
+import re
 from collections.abc import Collection, Iterable, Iterator
 from dataclasses import dataclass
 
@@ -9,6 +10,48 @@ from Xlib import X, display, error
 from Xlib.protocol import event
 
 from jarvis.desktop.apps import AppEntry
+
+_GENERIC_EXEC = frozenset(
+    {
+        "sh",
+        "bash",
+        "dash",
+        "zsh",
+        "fish",
+        "env",
+        "java",
+        "javaw",
+        "flatpak",
+        "snap",
+        "electron",
+        "node",
+        "nodejs",
+        "npx",
+        "deno",
+        "bun",
+        "perl",
+        "ruby",
+        "wine",
+        "wine64",
+        "mono",
+        "dotnet",
+        "sudo",
+        "pkexec",
+        "xdg-open",
+        "gtk-launch",
+        "gio",
+        "dbus-launch",
+        "xterm",
+    }
+)
+
+_PYTHON_RE = re.compile(r"^python[0-9.]*$")
+
+
+def _is_generic_exec(name: str) -> bool:
+    """Return True if the program name is a generic interpreter or launcher."""
+    folded = name.casefold()
+    return folded in _GENERIC_EXEC or bool(_PYTHON_RE.match(folded))
 
 
 class X11Error(Exception):
@@ -121,11 +164,17 @@ def close_window(window_id: int, disp: display.Display | None = None) -> None:
 
 
 def app_matches(app: AppEntry, window: WindowInfo) -> bool:
-    """Return True if the window belongs to the given app entry."""
+    """Return True if the window belongs to the given app entry.
+
+    A generic program name (python3, flatpak, ...) never identifies an app: it would match every
+    unrelated window of that interpreter.
+    """
     if app.startup_wm_class:
         target = app.startup_wm_class.lower()
         return window.wm_class.lower() == target or window.wm_instance.lower() == target
-    wanted = {app.desktop_id.removesuffix(".desktop").casefold(), app.exec_name.casefold()}
+    wanted = {app.desktop_id.removesuffix(".desktop").casefold()}
+    if app.exec_name and not _is_generic_exec(app.exec_name):
+        wanted.add(app.exec_name.casefold())
     seen = {window.wm_class.casefold(), window.wm_instance.casefold()}
     return bool((wanted - {""}) & (seen - {""}))
 
