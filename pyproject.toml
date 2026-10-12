@@ -12,6 +12,7 @@ dependencies = [
     "onnxruntime>=1.30.0",
     "platformdirs>=4.12.3",
     "pydantic>=2.13.5",
+    "python-xlib>=0.33",
     "sounddevice>=0.5.6",
 ]
 
@@ -60,7 +61,7 @@ files = ["src", "scripts", ".claude/hooks", "tests"]
 explicit_package_bases = true
 
 [[tool.mypy.overrides]]
-module = ["sounddevice", "onnxruntime"]  # ship no type stubs
+module = ["sounddevice", "onnxruntime", "Xlib", "Xlib.*"]  # ship no type stubs
 ignore_missing_imports = true
 
 # ── Tests ──────────────────────────────────────────────────────────────────
