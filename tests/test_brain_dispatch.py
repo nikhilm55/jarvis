@@ -237,3 +237,16 @@ def test_should_partial_when_hard_step_cap_exceeded() -> None:
         run(rig.tools, "jarvis.say", {"text": "s5"})
     assert len(rig.rec.finished) == 1
     assert rig.rec.finished[0].status == "partial"
+
+
+def test_should_sanitise_the_question_when_ask_has_markup() -> None:
+    rig = make()
+    run(rig.tools, "jarvis.ask", {"question": "**Which** one?"})
+    assert rig.rec.asked == [("Which one?", [])]
+
+
+def test_should_raise_tool_error_when_the_question_has_nothing_speakable() -> None:
+    rig = make()
+    with pytest.raises(ToolError, match="nothing speakable"):
+        run(rig.tools, "jarvis.ask", {"question": "`ls`"})
+    assert rig.rec.asked == []

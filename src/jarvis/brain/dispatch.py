@@ -94,7 +94,9 @@ class TurnTools:
 
     async def _ask(self, args: dict[str, object]) -> str:
         """Ask the user a question, optionally with options, and return their answer."""
-        question = _text(args, "question")
+        question = sanitise_spoken(_text(args, "question"))
+        if not question:
+            raise ToolError("question has nothing speakable")
         options = _options(args.get("options"))
         self._hooks.clock.pause()
         try:
