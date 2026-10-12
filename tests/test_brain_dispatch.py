@@ -250,3 +250,20 @@ def test_should_raise_tool_error_when_the_question_has_nothing_speakable() -> No
     with pytest.raises(ToolError, match="nothing speakable"):
         run(rig.tools, "jarvis.ask", {"question": "`ls`"})
     assert rig.rec.asked == []
+
+
+def test_should_sanitise_the_options_when_ask_offers_markup() -> None:
+    rig = make()
+    run(
+        rig.tools,
+        "jarvis.ask",
+        {"question": "Which?", "options": ["**Red**", "see https://x.io now"]},
+    )
+    assert rig.rec.asked == [("Which?", ["Red", "see now"])]
+
+
+def test_should_raise_tool_error_when_an_option_has_nothing_speakable() -> None:
+    rig = make()
+    with pytest.raises(ToolError, match="options"):
+        run(rig.tools, "jarvis.ask", {"question": "Which?", "options": ["`ls`"]})
+    assert rig.rec.asked == []

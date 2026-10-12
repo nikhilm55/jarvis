@@ -24,7 +24,7 @@ class TurnClock:
             if when is not None:
                 loop = asyncio.get_running_loop()
                 self._remaining = max(0.0, when - loop.time())
-                self._scope.reschedule(None)
+                self._reschedule(None)
 
     def resume(self) -> None:
         """Decrement pause depth and restore the budget on the last resume."""
@@ -33,5 +33,13 @@ class TurnClock:
         self._depth -= 1
         if self._depth == 0 and self._scope is not None and self._remaining is not None:
             loop = asyncio.get_running_loop()
-            self._scope.reschedule(loop.time() + self._remaining)
+            self._reschedule(loop.time() + self._remaining)
             self._remaining = None
+
+    def _reschedule(self, when: float | None) -> None:
+        """Move the scope's deadline; a scope that already exited (the turn ended) is left alone."""
+        if self._scope is not None:
+            try:
+                self._scope.reschedule(when)
+            except RuntimeError:
+                self._scope = None
