@@ -71,3 +71,26 @@ def test_should_name_the_file_when_toml_is_malformed(tmp_path: Path) -> None:
     path = write_toml(tmp_path / "broken.toml", "[audio\n")
     with pytest.raises(ConfigError, match=r"broken\.toml"):
         load_settings(path)
+
+
+def test_should_default_the_brain_session_settings_when_file_is_missing() -> None:
+    brain = load_settings().brain
+    assert (brain.model, brain.max_steps, brain.turn_timeout_s) == ("sonnet", 25, 120)
+    assert brain.claude_bin is None
+
+
+def test_should_read_brain_overrides_from_toml(tmp_path: Path) -> None:
+    path = write_toml(
+        tmp_path / "c.toml",
+        "[brain]\nmodel = 'opus'\nmax_steps = 5\nturn_timeout_s = 30\nclaude_bin = '/opt/claude'\n",
+    )
+    brain = load_settings(path).brain
+    assert (brain.model, brain.max_steps, brain.turn_timeout_s) == ("opus", 5, 30)
+    assert brain.claude_bin == "/opt/claude"
+
+
+@pytest.mark.parametrize("key", ["max_steps", "turn_timeout_s"])
+def test_should_reject_a_non_positive_brain_limit(tmp_path: Path, key: str) -> None:
+    path = write_toml(tmp_path / "c.toml", f"[brain]\n{key} = 0\n")
+    with pytest.raises(ConfigError, match=rf"brain\.{key}"):
+        load_settings(path)
