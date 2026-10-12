@@ -54,13 +54,32 @@ def test_should_deny_when_scoped_t0_in_every_mode(mode: Mode) -> None:
 
 
 @pytest.mark.parametrize("mode", MODES)
-@pytest.mark.parametrize("tier", [Tier.T0, Tier.T1])
-def test_should_allow_when_t0_or_t1_in_every_mode(mode: Mode, tier: Tier) -> None:
-    name = f"tool.{tier.value}"
-    register(ToolSpec(name=name, tier=tier))
+def test_should_allow_t0_in_every_mode(mode: Mode) -> None:
+    name = "tool.T0"
+    register(ToolSpec(name=name, tier=Tier.T0))
     d = gate(name, {}, mode)
     assert d.allowed is True
-    assert d.reason == f"allowed: {tier.value}"
+    assert d.reason == "allowed: T0"
+
+
+@pytest.mark.parametrize("mode", ["balanced", "yolo"])
+def test_should_allow_t1_when_balanced_or_yolo(mode: Mode) -> None:
+    name = "tool.T1"
+    register(ToolSpec(name=name, tier=Tier.T1))
+    d = gate(name, {}, mode)
+    assert d.allowed is True
+    assert d.reason == "allowed: T1"
+
+
+def test_should_deny_t1_when_safe_mode() -> None:
+    name = "tool.T1"
+    register(ToolSpec(name=name, tier=Tier.T1))
+    d = gate(name, {}, "safe")
+    assert d.allowed is False
+    assert d.reason == "needs confirmation (M2)"
+    rec = _last_policy_record()
+    assert rec["decision"] == "deny"
+    assert rec["tier"] == "T1"
 
 
 @pytest.mark.parametrize("mode", MODES)
@@ -129,6 +148,20 @@ def test_should_register_desktop_tools_with_exact_tiers() -> None:
 def test_should_allow_desktop_tools_when_balanced(name: str) -> None:
     d = gate(name, {}, "balanced")
     assert d.allowed is True
+
+
+def test_should_deny_open_and_close_app_when_safe() -> None:
+    for name in ("desktop.open_app", "desktop.close_app"):
+        d = gate(name, {}, "safe")
+        assert d.allowed is False
+    for name in (
+        "desktop.volume_get",
+        "desktop.volume_set",
+        "desktop.volume_step",
+        "desktop.mute",
+    ):
+        d = gate(name, {}, "safe")
+        assert d.allowed is True
 
 
 def test_should_not_mutate_args_when_gate_called() -> None:
