@@ -5,6 +5,7 @@ import pytest
 from jarvis.brain.failures import (
     ToolError,
     contract_fallback,
+    internal_response,
     mcp_unavailable_response,
     process_exit_response,
     result_error_response,
@@ -88,3 +89,12 @@ def test_should_return_partial_when_step_limit_reached() -> None:
 
 def test_should_carry_the_message_when_tool_error_is_raised() -> None:
     assert str(ToolError("boom")) == "boom"
+
+
+def test_should_return_internal_when_the_session_hits_an_unexpected_error() -> None:
+    response = internal_response()
+    assert response.status == "failed"
+    assert response.error is not None
+    assert response.error.code == "INTERNAL"
+    assert "unexpected" in response.error.why
+    assert response.spoken == FALLBACK_SPOKEN

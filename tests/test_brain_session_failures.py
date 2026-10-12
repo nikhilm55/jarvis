@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from jarvis.brain.failures import BrainUnavailable
+from jarvis.brain.process import ClaudeProcess
 from tests.brain_fakes import FakeClaude, process_gone, wait_until
 from tests.brain_rig import Rig, running_brain
 
@@ -202,3 +203,44 @@ def test_should_kill_the_session_and_restart_when_a_turn_is_cancelled(
             await asyncio.gather(task, return_exceptions=True)
 
     drive(tmp_path, monkeypatch, [[{"hang": True}], OK], scenario)
+
+
+def test_should_drop_the_session_and_report_internal_when_a_turn_hits_a_bug(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def explode(self: ClaudeProcess, text: str) -> None:
+        raise RuntimeError("boom")
+
+    async def scenario(rig: Rig, fake: FakeClaude) -> None:
+        await rig.brain.start()
+        pid1 = rig.brain.pid
+        assert pid1 is not None
+        monkeypatch.setattr(ClaudeProcess, "send", explode)
+        response = await rig.turn()
+        assert response.error is not None
+        assert response.error.code == "INTERNAL"
+        assert process_gone(pid1)
+
+    drive(tmp_path, monkeypatch, [OK], scenario)
+
+
+def test_should_not_leave_a_process_behind_when_closed_during_startup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spawned: list[ClaudeProcess] = []
+    real_spawn: Any = ClaudeProcess.spawn.__func__  # type: ignore[attr-defined]
+
+    async def scenario(rig: Rig, fake: FakeClaude) -> None:
+        async def spawn_then_close(cls: type[ClaudeProcess], spec: Any, sink: Any) -> ClaudeProcess:
+            proc: ClaudeProcess = await real_spawn(cls, spec, sink)
+            spawned.append(proc)
+            await rig.brain.close()  # arrives while the brain is still starting this process
+            return proc
+
+        monkeypatch.setattr(ClaudeProcess, "spawn", classmethod(spawn_then_close))
+        response = await rig.turn()
+        assert response.error is not None
+        assert response.error.code == "BRAIN_UNAVAILABLE"
+        assert process_gone(spawned[0].pid)
+
+    drive(tmp_path, monkeypatch, [OK], scenario)
