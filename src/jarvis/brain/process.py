@@ -39,6 +39,7 @@ class ClaudeProcess:
             proc = await asyncio.create_subprocess_exec(
                 *spec.argv,
                 cwd=spec.cwd,
+                env=spec.env,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,

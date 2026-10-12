@@ -153,7 +153,8 @@ class _Mcp:
             if self._config_path is None:
                 raise RuntimeError("no --mcp-config in argv")
             server = _read_json(self._config_path)["mcpServers"]["jarvis"]
-            http = httpx2.AsyncClient(headers=server.get("headers", {}))
+            headers = {k: os.path.expandvars(v) for k, v in server.get("headers", {}).items()}
+            http = httpx2.AsyncClient(headers=headers)
             await self._stack.enter_async_context(http)
             client = Client(streamable_http_client(server["url"], http_client=http), mode="auto")
             self._client = await self._stack.enter_async_context(client)
@@ -217,7 +218,7 @@ async def _run(argv: list[str]) -> None:
     """Read user messages from stdin and replay one scenario turn for each."""
     log_path = os.environ.get("FAKE_CLAUDE_LOG")
     if log_path:
-        _log(log_path, {"argv": argv})
+        _log(log_path, {"argv": argv, "env": sorted(os.environ)})
     if pidfile := os.environ.get("FAKE_CLAUDE_CHILD_PIDFILE"):
         _spawn_child(pidfile)
     scenario = _read_json(os.environ["FAKE_CLAUDE_SCENARIO"])

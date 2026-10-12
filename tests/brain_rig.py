@@ -1,6 +1,7 @@
 """A running brain wired to the real MCP server and a fake claude, for session tests."""
 
 import asyncio
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -14,6 +15,11 @@ from jarvis.config import BrainSettings, Settings
 from jarvis.contract import FinalResponse
 from jarvis.mcp import JarvisMcpServer
 from tests.brain_fakes import FakeClaude, envelope, wait_until
+
+
+def fake_env() -> dict[str, str]:
+    """The FAKE_CLAUDE_* variables the fake needs; the brain env is otherwise allowlisted."""
+    return {k: v for k, v in os.environ.items() if k.startswith("FAKE_CLAUDE_")}
 
 
 class FakeDesktop:
@@ -85,7 +91,7 @@ async def running_brain(fake: FakeClaude, **brain: Any) -> AsyncIterator[Rig]:
 
     server = JarvisMcpServer(dispatch, lambda: "balanced")
     await server.start()
-    brain_obj = ClaudeCodeBrain(settings, server, desktop)
+    brain_obj = ClaudeCodeBrain(settings, server, desktop, extra_env=fake_env())
     holder.append(brain_obj)
     try:
         yield Rig(brain=brain_obj, desktop=desktop, cb=Callbacks())

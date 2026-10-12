@@ -101,3 +101,23 @@ def test_should_write_client_config_when_server_started(tmp_path: Path) -> None:
         }
 
     asyncio.run(scenario())
+
+
+def test_should_reference_the_token_by_env_name_when_token_env_is_given(tmp_path: Path) -> None:
+    async def dispatch(tool: str, args: dict[str, object]) -> object:
+        return "x"
+
+    async def scenario() -> None:
+        server = JarvisMcpServer(dispatch, lambda: "balanced")
+        await server.start()
+        try:
+            server.write_client_config(tmp_path / "c.json", token_env="JARVIS_MCP_TOKEN")  # noqa: S106
+            text = (tmp_path / "c.json").read_text(encoding="utf-8")
+            assert server.token not in text
+            headers = json.loads(text)["mcpServers"]["jarvis"]["headers"]
+            assert headers == {"Authorization": "Bearer ${JARVIS_MCP_TOKEN}"}
+            assert stat.S_IMODE((tmp_path / "c.json").stat().st_mode) == 0o600
+        finally:
+            await server.close()
+
+    asyncio.run(scenario())
