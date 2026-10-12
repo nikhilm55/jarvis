@@ -1,7 +1,9 @@
 """Tests for jarvis.desktop.client against the fake worker."""
 
 import asyncio
+import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -160,6 +162,93 @@ def test_should_raise_worker_error_when_error_mode(tmp_path: Path) -> None:
             assert exc.value.code == "NOT_FOUND"
             assert exc.value.message == "nope"
             assert len(_requests(tmp_path)) == 1
+        finally:
+            await c.close()
+
+    asyncio.run(scenario())
+
+
+def test_should_retry_then_fail_when_garbage(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        c = _client(tmp_path, "garbage")
+        try:
+            with pytest.raises(DesktopError) as exc:
+                await c.volume_get()
+            assert exc.value.code == "INTERNAL"
+            assert _starts(tmp_path) == 2
+        finally:
+            await c.close()
+
+    asyncio.run(scenario())
+
+
+def test_should_ignore_stale_reply_when_stale_mode(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        c = _client(tmp_path, "stale")
+        try:
+            r = await c.volume_get()
+            assert r["op"] == "volume_get"
+        finally:
+            await c.close()
+
+    asyncio.run(scenario())
+
+
+def test_should_timeout_when_hang(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        c = _client(tmp_path, "hang", timeout_s=0.3)
+        try:
+            t0 = time.monotonic()
+            with pytest.raises(DesktopError) as exc:
+                await c.volume_get()
+            assert exc.value.code == "TIMEOUT"
+            assert time.monotonic() - t0 < 3.0
+            with pytest.raises(DesktopError) as exc2:
+                await c.volume_get()
+            assert exc2.value.code == "TIMEOUT"
+            assert _starts(tmp_path) == 2
+        finally:
+            await c.close()
+
+    asyncio.run(scenario())
+
+
+def test_should_timeout_slow_but_open_ok_when_slow(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        c = _client(tmp_path, "slow", timeout_s=0.25, open_timeout_s=3.0)
+        try:
+            with pytest.raises(DesktopError) as exc:
+                await c.volume_get()
+            assert exc.value.code == "TIMEOUT"
+            r = await c.open_app("x")
+            assert r["op"] == "open_app"
+        finally:
+            await c.close()
+
+    asyncio.run(scenario())
+
+
+def test_should_close_idempotently_and_kill_worker_when_closed(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        c = _client(tmp_path, "ok")
+        try:
+            r = await c.volume_get()
+            pid = r["pid"]
+            assert isinstance(pid, int)
+            await c.close()
+            await c.close()
+            for _ in range(50):
+                try:
+                    os.kill(pid, 0)
+                    await asyncio.sleep(0.1)
+                except ProcessLookupError:
+                    break
+            else:
+                pytest.fail("worker still running after close")
+            with pytest.raises(DesktopError) as exc:
+                await c.volume_get()
+            assert exc.value.code == "INTERNAL"
+            assert "closed" in exc.value.message
         finally:
             await c.close()
 
