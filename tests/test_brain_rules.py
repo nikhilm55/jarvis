@@ -88,3 +88,10 @@ def test_should_be_deterministic_when_called_twice() -> None:
     """build_rules() is deterministic and equals RULES."""
     assert build_rules() == build_rules()
     assert build_rules() == RULES
+
+
+def test_should_ask_for_minimal_respond_when_the_action_is_simple() -> None:
+    """Output tokens are latency: simple actions must not carry display or actions_taken."""
+    text = build_rules()
+    assert "Keep respond minimal" in text
+    assert "actions_taken or display" in text
