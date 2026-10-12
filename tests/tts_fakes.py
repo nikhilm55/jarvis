@@ -63,6 +63,7 @@ class FakeSink:
         self.abort_called = threading.Event()
         self.writes_after_abort = 0
         self.closed = False
+        self.close_called = threading.Event()
         self._on_write = on_write
         self._pace = threading.Event()
 
@@ -81,6 +82,7 @@ class FakeSink:
 
     def close(self) -> None:
         self.closed = True
+        self.close_called.set()
 
 
 class FakeDirect:

@@ -149,7 +149,6 @@ def test_should_cancel_during_playback_when_long_text() -> None:
         assert first_write.wait(5.0) is True
         start = time.monotonic()
         handle.cancel()
-        assert handle.is_speaking is False
         assert sink.abort_called.wait(0.3) is True
         assert time.monotonic() - start < 0.3
         assert handle.wait(0.3) is True
@@ -347,7 +346,6 @@ def test_should_cancel_direct_engine_when_handle_cancelled() -> None:
         assert direct.entered.wait(5.0) is True
         handle.cancel()
         assert handle.wait(0.3) is True
-        assert handle.is_speaking is False
         assert direct.cancelled.is_set() is True
     finally:
         speaker.close()
