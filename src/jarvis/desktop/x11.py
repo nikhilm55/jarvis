@@ -115,7 +115,7 @@ def close_window(window_id: int, disp: display.Display | None = None) -> None:
                 data=(32, [X.CurrentTime, 1, 0, 0, 0]),
             )
             root.send_event(ev, event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask)
-            d.flush()
+            d.sync()  # not flush(): we disconnect next, the server must have the request first
         except error.XError as exc:
             raise X11Error("NOT_FOUND", "window is gone") from exc
 

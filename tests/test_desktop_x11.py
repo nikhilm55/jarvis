@@ -89,7 +89,7 @@ class FakeDisplay:
         self._windows = windows
         self._root = FakeRoot(client_list, windows)
         self.closed = False
-        self.flushed = False
+        self.synced = False
 
     def intern_atom(self, name: str) -> int:
         if name not in self._atoms:
@@ -105,8 +105,8 @@ class FakeDisplay:
     def close(self) -> None:
         self.closed = True
 
-    def flush(self) -> None:
-        self.flushed = True
+    def sync(self) -> None:
+        self.synced = True
 
 
 CALC = "org.gnome.Calculator"
@@ -252,4 +252,4 @@ def test_should_send_close_message_when_close_window() -> None:
     ev, mask = disp._root.sent[0]
     assert ev.client_type == disp.intern_atom("_NET_CLOSE_WINDOW")
     assert mask == X.SubstructureRedirectMask | X.SubstructureNotifyMask
-    assert disp.flushed is True
+    assert disp.synced is True
