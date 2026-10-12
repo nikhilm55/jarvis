@@ -1,6 +1,7 @@
 """Tests for the jarvis.policy safety gate."""
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -254,3 +255,68 @@ def test_should_keep_valid_spec_equal_and_hashable() -> None:
     b = ToolSpec("n", "T0")  # type: ignore[arg-type]
     assert a == b
     assert hash(a) == hash(b)
+
+
+def test_should_deny_when_logger_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("secret-token-abc")
+
+    monkeypatch.setattr(policy, "get_logger", boom)
+    d = gate("desktop.volume_get", {}, "yolo")
+    assert d.allowed is False
+    assert d.reason == "policy error: RuntimeError"
+    assert "secret-token-abc" not in d.reason
+
+
+def test_should_deny_when_log_dir_unwritable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    blocker = tmp_path / "blocker"
+    blocker.write_text("x", encoding="utf-8")
+    monkeypatch.setenv("JARVIS_HOME", str(blocker / "home"))
+    d = gate("desktop.volume_get", {}, "balanced")
+    assert d.allowed is False
+    assert d.reason.startswith("policy error:")
+    monkeypatch.setenv("JARVIS_HOME", str(tmp_path / "ok"))
+    d2 = gate("desktop.volume_get", {}, "balanced")
+    assert d2.allowed is True
+
+
+def test_should_deny_when_decision_logic_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def boom(*args: object, **kwargs: object) -> None:
+        raise ValueError("boom")
+
+    monkeypatch.setattr(policy, "_decide", boom)
+    d = gate("desktop.volume_get", {}, "balanced")
+    assert d.allowed is False
+    assert d.reason == "policy error: ValueError"
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_should_deny_for_every_mode_when_logger_fails(
+    mode: Mode,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("x")
+
+    monkeypatch.setattr(policy, "get_logger", boom)
+    d = gate("desktop.volume_get", {}, mode)
+    assert d.allowed is False
+    assert d.reason == "policy error: RuntimeError"
+
+
+def test_should_not_swallow_keyboard_interrupt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def boom(*args: object, **kwargs: object) -> None:
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(policy, "get_logger", boom)
+    with pytest.raises(KeyboardInterrupt):
+        gate("desktop.volume_get", {}, "yolo")

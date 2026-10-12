@@ -121,19 +121,25 @@ def _decide_spec(spec: ToolSpec, mode: Mode) -> tuple[Decision, str]:
 
 
 def gate(tool: str, args: Mapping[str, object], mode: Mode) -> Decision:
-    """Evaluate one tool call against the safety gate."""
-    decision, tier = _decide(tool, mode)
-    get_logger("jarvis.policy").info(
-        "policy decision",
-        extra={
-            "tool": tool,
-            "tier": tier,
-            "mode": mode,
-            "decision": "allow" if decision.allowed else "deny",
-            "reason": decision.reason,
-        },
-    )
-    return decision
+    """Evaluate one tool call against the safety gate.
+
+    Fails closed: any error, including an unwritable audit log, is a deny.
+    """
+    try:
+        decision, tier = _decide(tool, mode)
+        get_logger("jarvis.policy").info(
+            "policy decision",
+            extra={
+                "tool": tool,
+                "tier": tier,
+                "mode": mode,
+                "decision": "allow" if decision.allowed else "deny",
+                "reason": decision.reason,
+            },
+        )
+        return decision
+    except Exception as exc:
+        return Decision(False, f"policy error: {type(exc).__name__}")
 
 
 _DESKTOP_TOOLS = (
