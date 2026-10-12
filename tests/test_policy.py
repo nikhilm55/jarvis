@@ -1,11 +1,14 @@
 """Tests for the jarvis.policy safety gate."""
 
+import errno
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from jarvis import log as jlog
 from jarvis import paths, policy
 from jarvis.policy import Mode, Tier, ToolSpec, gate, get, register
 
@@ -17,8 +20,18 @@ def clean_registry(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(policy, "_REGISTRY", dict(policy._REGISTRY))
 
 
+@pytest.fixture(autouse=True)
+def clean_audit_handler() -> None:
+    logger = logging.getLogger("jarvis.audit")
+    for handler in list(logger.handlers):
+        handler.close()
+        logger.removeHandler(handler)
+    logger.handlers.clear()
+    logger.propagate = True
+
+
 def _last_policy_record() -> dict[str, Any]:
-    log = paths.data_dir() / "logs" / "jarvisd.jsonl"
+    log = paths.data_dir() / "logs" / "audit.jsonl"
     records: list[dict[str, Any]] = [
         json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()
     ]
@@ -257,16 +270,16 @@ def test_should_keep_valid_spec_equal_and_hashable() -> None:
     assert hash(a) == hash(b)
 
 
-def test_should_deny_when_logger_fails(
+def test_should_deny_when_audit_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def boom(*args: object, **kwargs: object) -> None:
         raise RuntimeError("secret-token-abc")
 
-    monkeypatch.setattr(policy, "get_logger", boom)
+    monkeypatch.setattr(policy, "audit", boom)
     d = gate("desktop.volume_get", {}, "yolo")
     assert d.allowed is False
-    assert d.reason == "policy error: RuntimeError"
+    assert d.reason == "policy error: audit unavailable"
     assert "secret-token-abc" not in d.reason
 
 
@@ -279,7 +292,7 @@ def test_should_deny_when_log_dir_unwritable(
     monkeypatch.setenv("JARVIS_HOME", str(blocker / "home"))
     d = gate("desktop.volume_get", {}, "balanced")
     assert d.allowed is False
-    assert d.reason.startswith("policy error:")
+    assert d.reason == "policy error: audit unavailable"
     monkeypatch.setenv("JARVIS_HOME", str(tmp_path / "ok"))
     d2 = gate("desktop.volume_get", {}, "balanced")
     assert d2.allowed is True
@@ -298,17 +311,17 @@ def test_should_deny_when_decision_logic_raises(
 
 
 @pytest.mark.parametrize("mode", MODES)
-def test_should_deny_for_every_mode_when_logger_fails(
+def test_should_deny_for_every_mode_when_audit_fails(
     mode: Mode,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def boom(*args: object, **kwargs: object) -> None:
         raise RuntimeError("x")
 
-    monkeypatch.setattr(policy, "get_logger", boom)
+    monkeypatch.setattr(policy, "audit", boom)
     d = gate("desktop.volume_get", {}, mode)
     assert d.allowed is False
-    assert d.reason == "policy error: RuntimeError"
+    assert d.reason == "policy error: audit unavailable"
 
 
 def test_should_not_swallow_keyboard_interrupt(
@@ -317,6 +330,70 @@ def test_should_not_swallow_keyboard_interrupt(
     def boom(*args: object, **kwargs: object) -> None:
         raise KeyboardInterrupt()
 
-    monkeypatch.setattr(policy, "get_logger", boom)
+    monkeypatch.setattr(policy, "audit", boom)
     with pytest.raises(KeyboardInterrupt):
         gate("desktop.volume_get", {}, "yolo")
+
+
+class _BrokenStream:
+    def write(self, data: str) -> None:
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        return 0
+
+    def tell(self) -> int:
+        return 0
+
+    def flush(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+def test_should_deny_when_audit_write_hits_enospc(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    d = gate("desktop.volume_get", {}, "yolo")
+    assert d.allowed is True
+    handler = jlog._audit_handler()
+    monkeypatch.setattr(handler, "stream", _BrokenStream())
+    d2 = gate("desktop.volume_get", {}, "yolo")
+    assert d2.allowed is False
+    assert d2.reason == "policy error: audit unavailable"
+
+
+def test_should_deny_when_audit_rollover_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    d = gate("desktop.volume_get", {}, "yolo")
+    assert d.allowed is True
+    handler = jlog._audit_handler()
+
+    def boom() -> None:
+        raise OSError("rollover failed")
+
+    monkeypatch.setattr(handler, "maxBytes", 1)
+    monkeypatch.setattr(handler, "doRollover", boom)
+    d2 = gate("desktop.volume_get", {}, "yolo")
+    assert d2.allowed is False
+    assert d2.reason == "policy error: audit unavailable"
+
+
+def test_should_allow_and_record_when_audit_works() -> None:
+    d = gate("desktop.volume_get", {}, "balanced")
+    assert d.allowed is True
+    rec = _last_policy_record()
+    assert rec["decision"] == "allow"
+
+
+def test_should_audit_even_when_logging_is_disabled() -> None:
+    logging.disable(logging.CRITICAL)
+    try:
+        d = gate("desktop.volume_get", {}, "balanced")
+        assert d.allowed is True
+        rec = _last_policy_record()
+        assert rec["decision"] == "allow"
+    finally:
+        logging.disable(logging.NOTSET)
