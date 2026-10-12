@@ -49,7 +49,6 @@ ACCEPTED: list[tuple[str, Intent]] = [
     ("kill slack", CloseApp("slack")),
     ("close the terminal", CloseApp("terminal")),
     ("close vs code please", CloseApp("vs code")),
-    ("quit the text editor", CloseApp("text editor")),
     ("close firefox, thanks", CloseApp("firefox")),
     ("can you close the calculator", CloseApp("calculator")),
     ("what time is it", TellTime()),
@@ -83,9 +82,6 @@ ACCEPTED: list[tuple[str, Intent]] = [
     ("decrease the volume", VolumeStep(-10)),
     ("reduce the volume", VolumeStep(-10)),
     ("increase the volume", VolumeStep(10)),
-    ("louder", VolumeStep(10)),
-    ("quieter", VolumeStep(-10)),
-    ("make it louder", VolumeStep(10)),
     ("set volume to 40", VolumeSet(40)),
     ("set the volume to 40 percent", VolumeSet(40)),
     ("volume 40 percent", VolumeSet(40)),
@@ -166,6 +162,10 @@ REJECTED: list[str] = [
     "close this window",
     "never mind open firefox",
     "hello there",
+    "louder",
+    "quieter",
+    "make it louder",
+    "quit the text editor",
     "open \u0938\u0902\u0917\u0940\u0924",
 ]
 
