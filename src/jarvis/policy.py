@@ -9,6 +9,9 @@ from jarvis.log import audit
 
 _MODES = ("safe", "balanced", "yolo")
 
+# The reason of the safe-mode T1 denial; callers compare against it by equality.
+NEEDS_CONFIRMATION_REASON = "needs confirmation (M2)"
+
 
 class Tier(enum.StrEnum):
     """Tool risk tiers."""
@@ -114,7 +117,7 @@ def _decide_spec(spec: ToolSpec, mode: Mode) -> tuple[Decision, str]:
         return Decision(False, "consent layer not built yet (M2)"), spec.tier.value
     if mode == "safe" and spec.tier == Tier.T1:
         # FRS 5.10: Safe mode confirms T1; the confirmation layer arrives in M2.
-        return Decision(False, "needs confirmation (M2)"), spec.tier.value
+        return Decision(False, NEEDS_CONFIRMATION_REASON), spec.tier.value
     if spec.tier in (Tier.T0, Tier.T1):
         return Decision(True, f"allowed: {spec.tier.value}"), spec.tier.value
     return Decision(False, "needs confirmation - M2"), spec.tier.value

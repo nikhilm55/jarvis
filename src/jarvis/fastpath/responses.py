@@ -36,7 +36,7 @@ _REMEDY = {
 def blocked(decision: policy.Decision, mode: policy.Mode) -> FinalResponse:
     """Build a failed response for a policy-blocked action."""
     reason = decision.reason if decision.reason.strip() else "no reason given"
-    if mode == "safe" and "confirmation" in decision.reason:
+    if mode == "safe" and decision.reason == policy.NEEDS_CONFIRMATION_REASON:
         spoken = "I can't do that in safe mode yet. Switch to balanced mode and ask again."
         remedy = ["Switch to balanced mode in Settings, then ask again."]
     else:
@@ -77,7 +77,7 @@ def text_of(result: Mapping[str, object], key: str, default: str) -> str:
     return default
 
 
-def percent_of(result: Mapping[str, object], default: int) -> int:
+def percent_of(result: Mapping[str, object], default: int | None) -> int | None:
     """Return the integer percent at key, else default."""
     value = result.get("percent")
     if isinstance(value, int) and not isinstance(value, bool):
