@@ -208,3 +208,49 @@ def test_should_deny_when_tool_unhashable() -> None:
 )
 def test_should_deny_when_tool_name_differs_only_by_case_or_whitespace(name: str) -> None:
     assert gate(name, {}, "yolo").allowed is False
+
+
+def test_should_coerce_tier_string_when_valid() -> None:
+    spec = ToolSpec("x.t", "T1")  # type: ignore[arg-type]
+    assert spec.tier is Tier.T1
+    register(spec)
+    d_safe = gate("x.t", {}, "safe")
+    assert d_safe.allowed is False
+    assert d_safe.reason == "needs confirmation (M2)"
+    d_balanced = gate("x.t", {}, "balanced")
+    assert d_balanced.allowed is True
+
+
+@pytest.mark.parametrize("bad_tier", ["T9", "t0", "", 0, None, 1.5])
+def test_should_reject_invalid_tier(bad_tier: object) -> None:
+    with pytest.raises(ValueError, match="tier"):
+        ToolSpec("x.t", bad_tier)  # type: ignore[arg-type]
+
+
+def test_should_coerce_scopes_list_to_tuple() -> None:
+    spec = ToolSpec(name="s.tool", tier=Tier.T0, scopes=["a", "b"])  # type: ignore[arg-type]
+    assert spec.scopes == ("a", "b")
+    assert isinstance(spec.scopes, tuple)
+    register(spec)
+    d = gate("s.tool", {}, "safe")
+    assert d.allowed is False
+    assert d.reason == "consent layer not built yet (M2)"
+
+
+@pytest.mark.parametrize("bad_scopes", ["file", 5, [1], ("a", 2), None])
+def test_should_reject_invalid_scopes(bad_scopes: object) -> None:
+    with pytest.raises(ValueError, match="scopes"):
+        ToolSpec(name="s.tool", tier=Tier.T0, scopes=bad_scopes)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("bad_name", ["", "  ", 5, None])
+def test_should_reject_invalid_name(bad_name: object) -> None:
+    with pytest.raises(ValueError, match="name"):
+        ToolSpec(name=bad_name, tier=Tier.T0)  # type: ignore[arg-type]
+
+
+def test_should_keep_valid_spec_equal_and_hashable() -> None:
+    a = ToolSpec("n", Tier.T0)
+    b = ToolSpec("n", "T0")  # type: ignore[arg-type]
+    assert a == b
+    assert hash(a) == hash(b)
