@@ -166,6 +166,7 @@ class Orchestrator:
     def _submit(self, command: Command) -> None:
         """Queue a command for the serial turn worker."""
         self._commands.put_nowait(command)
+        self._touched.set()  # a new turn restarts the inactivity period
 
     async def _turn_worker(self) -> None:
         """Run queued commands one at a time, remembering the current task."""
@@ -219,6 +220,8 @@ class Orchestrator:
                     )
                 except TimeoutError:
                     break
+            if self._current is not None or not self._commands.empty():
+                continue  # a turn is running or queued: its context must not be wiped (R52)
             try:
                 await brain.reset()
             except Exception:
