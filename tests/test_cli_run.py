@@ -42,7 +42,7 @@ def test_should_complete_a_fast_path_turn_end_to_end_with_no_brain(
     hook = Hook(rig.parts)
     monkeypatch.setattr(cli, "build_components", hook)
 
-    code = cli.main(["run", "--source", str(tmp_path / "meeting.wav"), "--no-brain"])
+    code = cli.main(["run", "--source", str(tmp_path / "meeting.wav"), "--no-brain", "--no-hud"])
 
     assert code == 0
     assert rig.speaker.said == ["Volume 40 percent."]
@@ -61,7 +61,7 @@ def test_should_pass_the_mode_and_keep_the_brain_by_default(
     hook = Hook(rig.parts)
     monkeypatch.setattr(cli, "build_components", hook)
 
-    assert cli.main(["run", "--source", str(tmp_path / "x.wav"), "--mode", "yolo"]) == 0
+    assert cli.main(["run", "--source", str(tmp_path / "x.wav"), "--mode", "yolo", "--no-hud"]) == 0
 
     assert hook.calls[0][1:] == ("yolo", True)
 
@@ -72,7 +72,7 @@ def test_should_exit_2_with_a_message_when_a_component_cannot_be_built(
     hook = Hook(AudioFormatError("bad.wav: not a readable WAV file"))
     monkeypatch.setattr(cli, "build_components", hook)
 
-    code = cli.main(["run", "--source", str(tmp_path / "bad.wav"), "--no-brain"])
+    code = cli.main(["run", "--source", str(tmp_path / "bad.wav"), "--no-brain", "--no-hud"])
 
     assert code == 2
     assert capsys.readouterr().err.strip() == "jarvis run: bad.wav: not a readable WAV file"
