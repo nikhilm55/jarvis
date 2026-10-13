@@ -1,0 +1,190 @@
+"""One turn: route a command to the fast path or the brain, speak the answer, log it (FRS 4.3)."""
+
+import asyncio
+import contextlib
+import time
+from dataclasses import dataclass
+from datetime import datetime
+
+from jarvis.activity import ActivityLog, Route, ToolCallRecord, TurnRecord
+from jarvis.brain import BrainUnavailable
+from jarvis.brain.failures import internal_response
+from jarvis.config import Settings
+from jarvis.contract import FinalResponse
+from jarvis.desktop.client import DesktopClient
+from jarvis.fastpath import FastPathDeclined, Intent, execute
+from jarvis.log import get_logger
+from jarvis.orchestrator.envelope import build_envelope, new_turn_id
+from jarvis.orchestrator.hud import HudEvent, HudSink
+from jarvis.orchestrator.ports import BrainPort
+from jarvis.orchestrator.timing import Timing
+from jarvis.orchestrator.trace import ToolTrace
+from jarvis.orchestrator.voice import Voice
+from jarvis.orchestrator.windows import Windows
+from jarvis.policy import Mode
+from jarvis.stt import Transcript
+
+logger = get_logger("turns")
+
+__all__ = ["Command", "TurnRunner", "TurnServices"]
+
+
+@dataclass(frozen=True)
+class Command:
+    """A single user command ready to be routed to the fast path or the brain."""
+
+    text: str
+    raw: str
+    transcript: Transcript
+    intent: Intent | None
+    speech_ended_at: float
+    stt_ms: int
+
+
+@dataclass(frozen=True)
+class TurnServices:
+    """The collaborators a TurnRunner needs to complete one turn."""
+
+    settings: Settings
+    mode: Mode
+    desktop: DesktopClient
+    brain: BrainPort | None
+    voice: Voice
+    hud: HudSink
+    activity: ActivityLog
+    timing: Timing
+    windows: Windows
+    trace: ToolTrace
+
+
+class TurnRunner:
+    """Runs one command to completion, speaks the result and writes the activity record."""
+
+    def __init__(self, services: TurnServices) -> None:
+        """Bind the services used for the lifetime of the runner."""
+        self._s = services
+        self._hud = services.hud
+        self._spoken = False
+
+    async def run(self, command: Command) -> None:
+        """Execute one turn: route, speak and log the outcome."""
+        turn_id = new_turn_id()
+        route: Route = "fastpath" if command.intent is not None else "brain"
+        record = TurnRecord(
+            ts=datetime.now().astimezone(),
+            turn_id=turn_id,
+            raw_transcript=command.raw,
+            command=command.text,
+            route=route,
+        )
+        record.durations_ms["stt"] = command.stt_ms
+        self._spoken = False
+        started = time.monotonic()
+        timer = asyncio.create_task(self._thinking_earcon(command.speech_ended_at))
+        try:
+            try:
+                final = await self._route(command, record, turn_id)
+                record.final = final
+                await self._finish(final)
+            except asyncio.CancelledError:
+                record.drop_reason = "cancelled"
+                raise
+            except Exception:
+                logger.exception("turn failed", extra={"turn_id": turn_id})
+                final = internal_response()
+                record.final = final
+                try:
+                    await self._finish(final)
+                except Exception:
+                    logger.exception("finish failed", extra={"turn_id": turn_id})
+        finally:
+            record.durations_ms["total"] = int((time.monotonic() - started) * 1000)
+            record.tool_calls.extend(self._s.trace.take())
+            self._s.activity.record(record)
+            timer.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await timer
+
+    async def _route(self, command: Command, record: TurnRecord, turn_id: str) -> FinalResponse:
+        """Send the command to the fast path when possible, otherwise to the brain."""
+        if command.intent is not None:
+            await self._hud(HudEvent("acting", command.text))
+            try:
+                final = await execute(command.intent, self._s.desktop, self._s.mode)
+            except FastPathDeclined as declined:
+                logger.info(
+                    "fast path declined",
+                    extra={"turn_id": turn_id, "reason": declined.reason},
+                )
+            else:
+                record.tool_calls = [
+                    ToolCallRecord(a.tool, {"summary": a.summary}) for a in final.actions_taken
+                ]
+                return final
+        record.route = "brain"
+        return await self._brain(command, record, turn_id)
+
+    async def _brain(self, command: Command, record: TurnRecord, turn_id: str) -> FinalResponse:
+        """Delegate the command to the brain, or report that it is unavailable."""
+        if self._s.brain is None:
+            return BrainUnavailable(
+                "the brain is switched off for this run",
+                ["Start Jarvis without --no-brain."],
+            ).to_response()
+        await self._hud(HudEvent("thinking", command.text))
+        record.brain_model = self._s.settings.brain.model
+        envelope = build_envelope(
+            command=command.text,
+            raw_transcript=command.raw,
+            transcript=command.transcript,
+            settings=self._s.settings,
+            mode=self._s.mode,
+            turn_id=turn_id,
+        )
+        self._s.trace.take()
+        t0 = time.monotonic()
+        try:
+            return await self._s.brain.turn(envelope, self._on_say, self._on_ask)
+        finally:
+            record.durations_ms["brain"] = int((time.monotonic() - t0) * 1000)
+
+    async def _on_say(self, text: str) -> None:
+        """Speak a brain utterance and mirror it to the HUD."""
+        self._spoken = True
+        await self._hud(HudEvent("speaking", text))
+        self._s.voice.say(text)
+
+    async def _on_ask(self, question: str, options: list[str]) -> str:
+        """Ask the user a question and wait for their reply."""
+        self._spoken = True
+        await self._hud(HudEvent("reply", question, {"options": options}))
+        handle = self._s.voice.say(question)
+        await self._s.voice.wait(handle)
+        await self._hud(HudEvent("listening", "Reply...", {"window": "reply"}))
+        return await self._s.windows.ask(self._s.timing.reply_window_s)
+
+    async def _finish(self, final: FinalResponse) -> None:
+        """Speak the final answer, update the HUD and wait for the audio."""
+        self._spoken = True
+        if final.status == "failed" and final.error is not None:
+            await self._hud(HudEvent("error", final.error.what))
+        display = final.display.model_dump(mode="json") if final.display is not None else None
+        await self._hud(
+            HudEvent("reply", final.spoken, {"status": final.status, "display": display})
+        )
+        spoken = final.spoken.strip()
+        if spoken:
+            await self._hud(HudEvent("speaking", final.spoken))
+            handle = self._s.voice.say(final.spoken)
+        else:
+            handle = self._s.voice.earcon("error" if final.status == "failed" else "done")
+        await self._s.voice.wait(handle)
+        await self._hud(HudEvent("idle"))
+
+    async def _thinking_earcon(self, speech_ended_at: float) -> None:
+        """Play the thinking earcon if the user has not been spoken to yet."""
+        delay = max(0.0, speech_ended_at + self._s.timing.thinking_after_s - time.monotonic())
+        await asyncio.sleep(delay)
+        if not self._spoken:
+            self._spoken = True
+            self._s.voice.earcon("thinking")
