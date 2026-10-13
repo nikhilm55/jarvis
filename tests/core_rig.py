@@ -41,7 +41,7 @@ class CoreRig:
         self.hud_events: list[HudEvent] = []
         self.activity_dir = tmp_path / "activity"
         the_timing = timing or Timing(deaf_tail_s=0.0)
-        parts = Components(
+        self.parts = parts = Components(
             source=self.feed,
             segmenter=self.feed,
             transcriber=self.transcriber,
