@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -14,6 +15,44 @@ from jarvis.paths import data_dir
 logger = get_logger("activity")
 
 Route = Literal["fastpath", "brain", "dropped"]
+
+_TYPING_TOOLS = re.compile(r"^desktop\.(type|paste|send_keys|key)")
+
+_REDACT_KEYS = {
+    "password",
+    "passwd",
+    "pwd",
+    "secret",
+    "token",
+    "apikey",
+    "key",
+    "authorization",
+    "cookie",
+    "setcookie",
+}
+
+_REDACT_SUFFIXES = (
+    "password",
+    "secret",
+    "token",
+    "apikey",
+    "accesskey",
+    "secretkey",
+    "privatekey",
+)
+
+
+def _normalise_key(key: str) -> str:
+    """Return the lowercase alphanumeric form of a key."""
+    return "".join(ch for ch in key.lower() if ch.isalnum())
+
+
+def _is_redact_key(key: str) -> bool:
+    """Return True if the key name matches a redaction rule."""
+    norm = _normalise_key(key)
+    if norm in _REDACT_KEYS:
+        return True
+    return any(norm.endswith(suffix) for suffix in _REDACT_SUFFIXES)
 
 
 @dataclass(frozen=True)
@@ -51,6 +90,12 @@ class TurnRecord:
 
     def to_json(self) -> str:
         """Serialize the record to a single redacted JSON line."""
+        tool_calls: list[dict[str, object]] = []
+        for tc in self.tool_calls:
+            args: dict[str, object] = dict(tc.args)
+            if _TYPING_TOOLS.match(tc.tool):
+                args = {k: "***" for k in args}
+            tool_calls.append({"tool": tc.tool, "args": args})
         tree: dict[str, object] = {
             "ts": self.ts.isoformat(),
             "turn_id": self.turn_id,
@@ -58,7 +103,7 @@ class TurnRecord:
             "command": self.command,
             "route": self.route,
             "brain_model": self.brain_model,
-            "tool_calls": [{"tool": tc.tool, "args": tc.args} for tc in self.tool_calls],
+            "tool_calls": tool_calls,
             "policy_decisions": [
                 {"tool": pd.tool, "allowed": pd.allowed, "reason": pd.reason}
                 for pd in self.policy_decisions
@@ -76,7 +121,13 @@ def _redact_tree(value: object) -> object:
     if isinstance(value, str):
         return redact(value)
     if isinstance(value, dict):
-        return {k: _redact_tree(v) for k, v in value.items()}
+        result: dict[str, object] = {}
+        for k, v in value.items():
+            if isinstance(k, str) and _is_redact_key(k):
+                result[k] = "***"
+            else:
+                result[k] = _redact_tree(v)
+        return result
     if isinstance(value, list):
         return [_redact_tree(item) for item in value]
     return value
@@ -88,6 +139,7 @@ class ActivityLog:
     def __init__(self, directory: Path | None = None) -> None:
         """Create a log rooted at directory, defaulting to data_dir()/activity."""
         self._directory = directory if directory is not None else data_dir() / "activity"
+        self._warned = False
 
     def record(self, record: TurnRecord) -> None:
         """Append one redacted JSON line for the turn, never raising."""
@@ -102,8 +154,12 @@ class ActivityLog:
                 os.write(fd, (line + "\n").encode("utf-8"))
             finally:
                 os.close(fd)
-        except OSError:
-            logger.warning("could not write the activity record", exc_info=True)
+        except Exception:
+            if not self._warned:
+                logger.warning("could not write the activity record", exc_info=True)
+                self._warned = True
+            else:
+                logger.debug("could not write the activity record", exc_info=True)
 
     def purge(self, retention_days: int, today: date | None = None) -> int:
         """Delete activity files older than retention_days; return count removed."""

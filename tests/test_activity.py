@@ -84,8 +84,8 @@ def test_should_redact_nested_tool_call_args_when_recorded(tmp_path: Path) -> No
     text = (tmp_path / "2026-10-07.jsonl").read_text(encoding="utf-8")
     assert "Bearer abc123def456ghi789" not in text
     assert "sk-" + "a" * 20 not in text
-    assert "Bearer ***" in text
-    assert "***" in text
+    assert '"Authorization": "***"' in text  # redacted by its key name
+    assert '"keys": ["***", "plain"]' in text  # and the key shape by value
 
 
 def test_should_redact_raw_transcript_and_command_when_recorded(tmp_path: Path) -> None:
