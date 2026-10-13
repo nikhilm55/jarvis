@@ -12,6 +12,7 @@ from jarvis.orchestrator.envelope import (
     display_server,
     first_name,
     locale_tag,
+    new_turn_id,
     os_label,
     user_info,
 )
@@ -155,3 +156,8 @@ def test_should_generate_unique_default_turn_ids_when_no_turn_id_given() -> None
     assert pattern.fullmatch(envelope_a.turn_id)
     assert pattern.fullmatch(envelope_b.turn_id)
     assert envelope_a.turn_id != envelope_b.turn_id
+
+
+def test_should_make_a_sortable_utc_id_when_given_a_time() -> None:
+    now = datetime.datetime(2026, 10, 7, 9, 30, 15, 123456, tzinfo=datetime.UTC)
+    assert new_turn_id(now).startswith("2026-10-07T09:30:15.123Z-")

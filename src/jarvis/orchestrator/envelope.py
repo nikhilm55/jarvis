@@ -13,6 +13,13 @@ from jarvis.policy import Mode
 from jarvis.stt import Transcript
 
 
+def new_turn_id(now: datetime | None = None) -> str:
+    """A sortable id: UTC time to the millisecond plus four random hex characters."""
+    now = now or datetime.now(UTC)
+    stamp = now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.")
+    return f"{stamp}{now.microsecond // 1000:03d}Z-{secrets.token_hex(2)}"
+
+
 def os_label() -> str:
     """Return the OS label as system-release."""
     return f"{platform.system().lower()}-{platform.release()}"
@@ -81,14 +88,8 @@ def build_envelope(  # noqa: PLR0913 - keyword-only; now/environ/turn_id are tes
     now = now or datetime.now(UTC)
     environ = os.environ if environ is None else environ
     gecos, login = _os_user()
-    if turn_id is None:
-        turn_id = (
-            now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.")
-            + f"{now.microsecond // 1000:03d}Z-"
-            + secrets.token_hex(2)
-        )
     return TurnEnvelope(
-        turn_id=turn_id,
+        turn_id=turn_id or new_turn_id(now),
         command=command,
         raw_transcript=raw_transcript,
         # whisper-server reports no confidence, so it is always 1.0
