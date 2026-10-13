@@ -1,0 +1,86 @@
+{
+  "brain-close-am_michael": {
+    "duration_s": 2.486,
+    "speech_end_s": 2.286,
+    "text": "Jarvis, close it.",
+    "voice": "am_michael"
+  },
+  "brain-open-af_heart": {
+    "duration_s": 3.978,
+    "speech_end_s": 3.778,
+    "text": "Jarvis, please open the calculator app for me.",
+    "voice": "af_heart"
+  },
+  "close-calculator-af_heart": {
+    "duration_s": 3.04,
+    "speech_end_s": 2.84,
+    "text": "Jarvis, close Calculator.",
+    "voice": "af_heart"
+  },
+  "close-calculator-am_michael": {
+    "duration_s": 3.093,
+    "speech_end_s": 2.893,
+    "text": "Jarvis, close Calculator.",
+    "voice": "am_michael"
+  },
+  "listen-open-af_heart": {
+    "duration_s": 2.487,
+    "speech_end_s": 2.287,
+    "text": "Open Calculator.",
+    "voice": "af_heart"
+  },
+  "mid-sentence-am_michael": {
+    "duration_s": 3.706,
+    "speech_end_s": 3.506,
+    "text": "I told Jarvis to open Calculator.",
+    "voice": "am_michael"
+  },
+  "open-calculator-af_heart": {
+    "duration_s": 3.162,
+    "speech_end_s": 2.962,
+    "text": "Jarvis, open Calculator.",
+    "voice": "af_heart"
+  },
+  "open-calculator-am_michael": {
+    "duration_s": 3.317,
+    "speech_end_s": 3.117,
+    "text": "Jarvis, open Calculator.",
+    "voice": "am_michael"
+  },
+  "volume-set-am_michael": {
+    "duration_s": 3.867,
+    "speech_end_s": 3.667,
+    "text": "Jarvis, set volume to 30 percent.",
+    "voice": "am_michael"
+  },
+  "volume-up-af_heart": {
+    "duration_s": 2.665,
+    "speech_end_s": 2.465,
+    "text": "Jarvis, volume up.",
+    "voice": "af_heart"
+  },
+  "volume-up-am_michael": {
+    "duration_s": 2.844,
+    "speech_end_s": 2.644,
+    "text": "Jarvis, volume up.",
+    "voice": "am_michael"
+  },
+  "wake-only-am_michael": {
+    "duration_s": 2.084,
+    "speech_end_s": 1.884,
+    "text": "Jarvis.",
+    "voice": "am_michael"
+  },
+  "what-time-af_heart": {
+    "duration_s": 2.802,
+    "speech_end_s": 2.602,
+    "text": "Jarvis, what time is it?",
+    "voice": "af_heart"
+  },
+  "what-time-am_michael": {
+    "duration_s": 2.793,
+    "speech_end_s": 2.593,
+    "text": "Jarvis, what time is it?",
+    "voice": "am_michael"
+  }
+}
