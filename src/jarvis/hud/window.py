@@ -5,9 +5,13 @@ Runs as a separate process under the system python 3.12 with stdlib and gi
 Exit codes: 0 normal, 2 no token, 78 no GUI. The window exits when its
 parent process dies or on SIGTERM/SIGINT. The token arrives in the
 environment (never argv) and reaches the page only in the URL fragment.
+The window is click-through in every state via an empty X input shape
+(X11 only in M1).
 """
 
 import argparse
+import ctypes
+import ctypes.util
 import os
 import signal
 import sys
@@ -17,7 +21,6 @@ from typing import Any
 EXIT_NO_GUI = 78
 EXIT_USAGE = 2
 TOKEN_ENV = "JARVIS_HUD_TOKEN"  # noqa: S105 - the variable name, not a secret
-TITLE_PREFIX = "Jarvis HUD:"
 WINDOW_WIDTH = 612
 WINDOW_HEIGHT = 140
 
@@ -33,17 +36,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def visible_from_title(title: str | None) -> bool | None:
-    """Map a page title to a visibility flag or None for unknown titles."""
-    if title is None:
-        return None
-    if title == f"{TITLE_PREFIX}visible":
-        return True
-    if title == f"{TITLE_PREFIX}hidden":
-        return False
-    return None
-
-
 def placement(area: tuple[int, int, int, int], width: int, height: int) -> tuple[int, int]:
     """Compute the top-centred, bottom-aligned window position for an area."""
     ax, ay, aw, ah = area
@@ -55,6 +47,49 @@ def page_url(url: str, token: str) -> str:
     return f"{url}#{urllib.parse.quote(token, safe='')}"
 
 
+def _load_x_libraries() -> tuple[Any, Any] | None:
+    """Load libX11 and libXext, configuring ctypes signatures; None on failure."""
+    x11_name = ctypes.util.find_library("X11")
+    xext_name = ctypes.util.find_library("Xext")
+    if x11_name is None or xext_name is None:
+        return None
+    x11 = ctypes.CDLL(x11_name)
+    xext = ctypes.CDLL(xext_name)
+    x11.XOpenDisplay.restype = ctypes.c_void_p
+    x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+    x11.XFlush.argtypes = x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+    xext.XShapeCombineRectangles.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+    ]
+    return x11, xext
+
+
+def set_empty_input_shape(xid: int, x11: Any = None, xext: Any = None) -> bool:
+    """Give window `xid` an empty X input shape so every click falls through it; True on success."""
+    if x11 is None or xext is None:
+        loaded = _load_x_libraries()
+        if loaded is None:
+            return False
+        x11, xext = loaded
+    display = x11.XOpenDisplay(None)
+    if not display:
+        return False
+    try:
+        xext.XShapeCombineRectangles(display, xid, 2, 0, 0, None, 0, 0, 0)
+        x11.XFlush(display)
+    finally:
+        x11.XCloseDisplay(display)
+    return True
+
+
 def _load_gtk() -> tuple[Any, Any, Any, Any]:
     """Import gi and GTK 3 / WebKit2 4.1, raising GuiUnavailable on failure."""
     try:
@@ -62,8 +97,15 @@ def _load_gtk() -> tuple[Any, Any, Any, Any]:
 
         gi.require_version("Gtk", "3.0")
         gi.require_version("Gdk", "3.0")
+        gi.require_version("GdkX11", "3.0")
         gi.require_version("WebKit2", "4.1")
-        from gi.repository import Gdk, GLib, Gtk, WebKit2  # noqa: PLC0415
+        from gi.repository import (  # noqa: PLC0415
+            Gdk,
+            GdkX11,  # noqa: F401
+            GLib,
+            Gtk,
+            WebKit2,
+        )
     except (ImportError, ValueError) as error:
         raise GuiUnavailable(str(error)) from error
     return Gdk, GLib, Gtk, WebKit2
@@ -98,25 +140,16 @@ def _make_view(webkit: Any, gdk: Any) -> Any:
 
 
 def _position_window(win: Any, gdk: Any) -> None:
-    """Show the window and move it to the top-centred, bottom slot."""
+    """Show the window, move it to the top-centred, bottom slot, and make it click-through."""
     display = gdk.Display.get_default()
     monitor = display.get_primary_monitor() or display.get_monitor(0)
     area = monitor.get_workarea()
     win.show_all()
     x, y = placement((area.x, area.y, area.width, area.height), WINDOW_WIDTH, WINDOW_HEIGHT)
     win.move(x, y)
-    win.get_window().set_pass_through(True)
-
-
-def _on_title(view: Any, win: Any) -> None:
-    """Toggle click-through based on the page title visibility flag."""
-    flag = visible_from_title(view.get_title())
-    if flag is None:
-        return
-    window = win.get_window()
-    if window is None:
-        return
-    window.set_pass_through(not flag)
+    xid = win.get_window().get_xid()
+    if not set_empty_input_shape(xid):
+        print("jarvis hud: could not make the window click-through", file=sys.stderr)
 
 
 def _run(url: str, token: str, gui: tuple[Any, Any, Any, Any]) -> int:
@@ -137,7 +170,6 @@ def _run(url: str, token: str, gui: tuple[Any, Any, Any, Any]) -> int:
             return bool(glib.SOURCE_CONTINUE)
         return quit_loop()
 
-    view.connect("notify::title", lambda v, _param: _on_title(v, win))
     win.connect("destroy", lambda *_: gtk.main_quit())
     glib.unix_signal_add(glib.PRIORITY_DEFAULT, signal.SIGTERM, quit_loop)
     glib.unix_signal_add(glib.PRIORITY_DEFAULT, signal.SIGINT, quit_loop)

@@ -5,6 +5,7 @@ import os
 import sys
 import types
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -55,25 +56,6 @@ def test_should_exit_when_parsing_args_without_url() -> None:
     module = _load_window()
     with pytest.raises(SystemExit):
         module.parse_args([])
-
-
-@pytest.mark.parametrize(
-    ("title", "expected"),
-    [
-        ("Jarvis HUD:visible", True),
-        ("Jarvis HUD:hidden", False),
-        (None, None),
-        ("", None),
-        ("Jarvis HUD:other", None),
-        ("x", None),
-    ],
-)
-def test_should_map_title_to_visibility_when_given_title(
-    title: str | None,
-    expected: bool | None,
-) -> None:
-    module = _load_window()
-    assert module.visible_from_title(title) is expected
 
 
 def test_should_centre_window_on_bottom_edge_when_given_main_area() -> None:
@@ -136,6 +118,7 @@ def test_should_stream_events_when_live_desktop_is_available() -> None:
         )
         try:
             await until(lambda: server.client_count == 1)  # the fragment token authenticated
+            await asyncio.to_thread(_assert_click_through)
             await server.publish(HudEvent("listening", "Listening..."))
             await server.publish(HudEvent("speaking", "Teams is open."))
             process.terminate()
@@ -147,3 +130,26 @@ def test_should_stream_events_when_live_desktop_is_available() -> None:
             await server.close()
 
     asyncio.run(scenario())
+
+
+def _assert_click_through() -> None:
+    """The HUD's X window has an empty input shape: every click falls through it."""
+    from Xlib import display  # noqa: PLC0415 - only the live test needs an X connection
+    from Xlib.ext import shape  # noqa: PLC0415
+
+    def find(window: Any) -> Any:
+        if (window.get_wm_name() or "") == "Jarvis HUD":
+            return window
+        for child in window.query_tree().children:
+            found = find(child)
+            if found is not None:
+                return found
+        return None
+
+    conn = display.Display()
+    try:
+        hud = find(conn.screen().root)
+        assert hud is not None
+        assert hud.shape_get_rectangles(shape.SK.Input).rectangles == []
+    finally:
+        conn.close()
