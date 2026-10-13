@@ -308,3 +308,49 @@ def test_should_raise_when_response_body_has_no_text() -> None:
 
     with pytest.raises(SttUnavailable, match="malformed"):
         server.transcribe(np.zeros(1600, dtype=np.int16))
+
+
+def test_should_refuse_to_start_again_when_closed() -> None:
+    popen = FakePopen()
+    transport, _ = make_transport()
+    server = make_server(popen, transport)
+    server.start()
+    server.close()
+
+    with pytest.raises(SttUnavailable, match="closed"):
+        server.start()
+
+    assert len(popen.procs) == 1
+
+
+def test_should_refuse_to_transcribe_without_spawning_when_closed() -> None:
+    popen = FakePopen()
+    transport, _ = make_transport(texts=["hi"])
+    server = make_server(popen, transport)
+    server.start()
+    server.close()
+
+    with pytest.raises(SttUnavailable, match="closed"):
+        server.transcribe(np.zeros(1600, dtype=np.int16))
+
+    assert len(popen.procs) == 1
+
+
+def test_should_not_restart_when_closed_while_a_request_was_in_flight() -> None:
+    popen = FakePopen()
+    holder: list[WhisperServer] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"status": "ok"})
+        holder[0].close()  # shutdown lands while the POST is in flight; the child dies
+        raise httpx.ConnectError("connection refused")
+
+    server = make_server(popen, httpx.MockTransport(handler))
+    holder.append(server)
+
+    with pytest.raises(SttUnavailable):
+        server.transcribe(np.zeros(1600, dtype=np.int16))
+
+    assert len(popen.procs) == 1
+    assert server.pid is None

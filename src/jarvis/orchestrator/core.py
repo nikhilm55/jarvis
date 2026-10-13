@@ -19,6 +19,8 @@ __all__ = ["Orchestrator"]
 
 logger = get_logger(__name__)
 
+_DRAIN_S = 5.0  # longest shutdown waits for an in-flight transcription
+
 
 class Orchestrator:
     """Runs the capture loop, the listener and the serial turn worker."""
@@ -227,4 +229,6 @@ class Orchestrator:
         if self._capture is not None:
             self._capture.stop()
             await asyncio.to_thread(self._capture.join, 5.0)
+        # whisper-server must not be closed under a request still in flight (R30)
+        await self._listener.drain(_DRAIN_S)
         await close_components(self._parts)

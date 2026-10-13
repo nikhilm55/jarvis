@@ -138,3 +138,30 @@ def test_should_purge_old_activity_files_when_it_starts(tmp_path: Path) -> None:
     asyncio.run(asyncio.wait_for(rig.orchestrator.run(), 10))
 
     assert not old.exists()
+
+
+def test_should_let_an_in_flight_transcription_finish_before_closing_the_transcriber(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> CoreRig:
+        rig = CoreRig(tmp_path, ["Jarvis, open it"])
+        gate = threading.Event()
+        rig.transcriber.gate = gate
+        run = asyncio.create_task(rig.orchestrator.run())
+        try:
+            rig.feed.push(seg())
+            await until(lambda: "transcribe.start" in rig.events)
+            rig.orchestrator.request_stop()
+            await asyncio.sleep(0.05)  # shutdown is now waiting on the blocked thread
+            assert "transcriber.close" not in rig.events
+            gate.set()
+            await asyncio.wait_for(run, 10)
+        finally:
+            gate.set()
+            run.cancel()
+        return rig
+
+    rig = asyncio.run(scenario())
+
+    assert rig.events.index("transcribe.end") < rig.events.index("transcriber.close")
+    assert rig.events.count("transcriber.start") == 1

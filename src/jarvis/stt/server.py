@@ -2,6 +2,7 @@
 
 import socket
 import subprocess
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -60,6 +61,8 @@ class WhisperServer:
         self._proc: _Process | None = None
         self._client: httpx.Client | None = None
         self._port: int | None = None
+        self._closed = False  # set by close(): a closed server never launches a child again
+        self._lock = threading.RLock()  # close() may race a worker thread's restart
 
     @property
     def pid(self) -> int | None:
@@ -74,12 +77,13 @@ class WhisperServer:
             if self._proc.poll() is None:
                 return
             # Process is dead, clean up old resources before starting new one
-            self.close()
+            self._release()
         self._launch()
         self._wait_ready()
 
     def transcribe(self, pcm: Pcm, prompt: str | None = None) -> Transcript:
         """Transcribe PCM audio, lazily starting the server if needed."""
+        self._check_open()
         if self._proc is None or self._proc.poll() is not None:
             self.start()
         start = time.perf_counter()
@@ -100,7 +104,21 @@ class WhisperServer:
         return Transcript(text=text, engine=self._engine_name(), seconds=elapsed)
 
     def close(self) -> None:
-        """Stop the child process and client; safe to call repeatedly."""
+        """Stop the child process and client for good; safe to call repeatedly (R30)."""
+        with self._lock:
+            self._closed = True
+            self._release()
+
+    def _check_open(self) -> None:
+        if self._closed:
+            raise SttUnavailable("whisper-server was closed", RESTART_REMEDY)
+
+    def _release(self) -> None:
+        """Stop the child and client; the server may be started again afterwards."""
+        with self._lock:
+            self._release_locked()
+
+    def _release_locked(self) -> None:
         if self._client is not None:
             self._client.close()
             self._client = None
@@ -124,6 +142,11 @@ class WhisperServer:
 
     def _launch(self) -> None:
         """Pick a free port and spawn the whisper-server child process."""
+        with self._lock:
+            self._check_open()
+            self._spawn()
+
+    def _spawn(self) -> None:
         self._port = self._pick_port()
         cmd = [
             str(self._server_bin),
@@ -154,9 +177,10 @@ class WhisperServer:
         """Poll the health endpoint until ready or the timeout elapses."""
         deadline = time.monotonic() + self.startup_timeout_s
         while True:
+            self._check_open()
             if self._proc is not None and self._proc.poll() is not None:
                 code = self._proc.returncode
-                self.close()
+                self._release()
                 raise SttUnavailable(
                     f"whisper-server exited during startup (code {code})",
                     STARTUP_REMEDY,
@@ -164,7 +188,7 @@ class WhisperServer:
             if self._health_ok():
                 return
             if time.monotonic() >= deadline:
-                self.close()
+                self._release()
                 raise SttUnavailable(
                     f"whisper-server did not become ready within {self.startup_timeout_s:g} s",
                     STARTUP_REMEDY,
@@ -205,7 +229,8 @@ class WhisperServer:
             return self._post(pcm, prompt)
         except httpx.TransportError:
             logger.warning("whisper-server unreachable; restarting once")
-        self.close()
+        self._check_open()  # a close() during the request is shutdown, not a crash
+        self._release()
         self.start()
         try:
             return self._post(pcm, prompt)
