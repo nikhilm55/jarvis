@@ -7,6 +7,7 @@ and the MCP handlers) must call ``jarvis.policy.gate`` first.
 import asyncio
 import contextlib
 import json
+import os
 import sys
 from collections.abc import Sequence
 
@@ -205,6 +206,9 @@ class DesktopClient:
                 *self._command,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
+                # Own session: a Ctrl-C aimed at Jarvis must not reach the worker before
+                # Jarvis closes it (R30). Windows has no sessions to start.
+                start_new_session=os.name == "posix",
             )
         except OSError:
             raise DesktopError("INTERNAL", "could not start the desktop worker") from None

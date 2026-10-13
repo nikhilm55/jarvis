@@ -321,3 +321,17 @@ def test_should_not_orphan_worker_when_closed_during_spawn(
             await c.close()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX-only")
+def test_should_start_the_worker_in_its_own_session_when_spawning(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        c = _client(tmp_path, "ok")
+        try:
+            pid = int((await c.volume_get())["pid"])  # type: ignore[call-overload]
+            assert os.getpgid(pid) == pid  # a session leader: Ctrl-C aimed at Jarvis misses it
+            assert os.getpgid(pid) != os.getpgrp()
+        finally:
+            await c.close()
+
+    asyncio.run(scenario())
