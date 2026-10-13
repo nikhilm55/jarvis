@@ -47,6 +47,7 @@ class BrainSettings(_Section):
     max_steps: int = Field(default=25, ge=1)
     turn_timeout_s: int = Field(default=120, ge=1)
     claude_bin: str | None = None
+    address_as: str | None = None  # how Jarvis addresses the user; None = the OS user's first name
 
 
 class LogSettings(_Section):
