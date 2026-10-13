@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import os
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Protocol
 
@@ -147,6 +147,33 @@ class HudSupervisor:
             await proc.wait()
 
 
+_ENV_NAMES = frozenset(
+    {
+        "DISPLAY",
+        "XAUTHORITY",
+        "WAYLAND_DISPLAY",
+        "HOME",
+        "USER",
+        "LANG",
+        "PATH",
+        "DBUS_SESSION_BUS_ADDRESS",
+    }
+)
+_ENV_PREFIXES = ("LC_", "XDG_")
+
+
+def window_env(token: str, environ: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Return a minimal env for the HUD window child so no API keys or stale token leak."""
+    source = os.environ if environ is None else environ
+    env = {
+        name: value
+        for name, value in source.items()
+        if name in _ENV_NAMES or name.startswith(_ENV_PREFIXES)
+    }
+    env[TOKEN_ENV] = token
+    return env
+
+
 def window_spawner(
     python: str,
     url: str,
@@ -163,7 +190,7 @@ def window_spawner(
             str(WINDOW_PATH),
             "--url",
             url,
-            env={**os.environ, TOKEN_ENV: token},
+            env=window_env(token),
             stdin=asyncio.subprocess.DEVNULL,
         )
 

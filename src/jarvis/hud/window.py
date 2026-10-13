@@ -150,7 +150,7 @@ def _run(url: str, token: str, gui: tuple[Any, Any, Any, Any]) -> int:
 def main(argv: list[str] | None = None) -> int:
     """Entry point: validate token, load GTK, then run the HUD window."""
     args = parse_args(sys.argv[1:] if argv is None else argv)
-    token = os.environ.get(TOKEN_ENV, "")
+    token = os.environ.pop(TOKEN_ENV, "")  # WebKit helper processes must not inherit it
     if not token:
         print("jarvis hud: JARVIS_HUD_TOKEN is not set", file=sys.stderr)
         return EXIT_USAGE
