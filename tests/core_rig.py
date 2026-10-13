@@ -61,6 +61,7 @@ class CoreRig:
             activity=ActivityLog(directory=self.activity_dir),
             timing=the_timing,
         )
+        self.windows = self.orchestrator._windows  # test seam: when is the window open?
 
     async def _hud(self, event: HudEvent) -> None:
         self.hud_events.append(event)

@@ -10,6 +10,7 @@ from jarvis.orchestrator.capture import Capture, CaptureItem, SourceEnded, Sourc
 from jarvis.orchestrator.components import Components, close_components, start_components
 from jarvis.orchestrator.hud import HudEvent, HudSink, null_sink, safe_sink
 from jarvis.orchestrator.listener import Listener, ListenerServices
+from jarvis.orchestrator.segmenter import Segment, SpeechStarted
 from jarvis.orchestrator.timing import Timing
 from jarvis.orchestrator.turns import Command, TurnRunner, TurnServices
 from jarvis.orchestrator.windows import Windows
@@ -44,7 +45,7 @@ class Orchestrator:
         self._timing = timing or Timing.from_settings(settings)
         self._windows = Windows()
         self._commands: asyncio.Queue[Command] = asyncio.Queue()
-        self._items: asyncio.Queue[CaptureItem] = asyncio.Queue()
+        self._items: asyncio.Queue[Segment | SourceEnded | SourceFailed] = asyncio.Queue()
         self._stopping = asyncio.Event()
         self._touched = asyncio.Event()
         self._current: asyncio.Task[None] | None = None
@@ -86,7 +87,7 @@ class Orchestrator:
                 self._parts.source,
                 self._parts.segmenter,
                 loop,
-                self._items.put_nowait,
+                self._on_capture,
             )
             self._capture = capture
             capture.start()
@@ -153,6 +154,14 @@ class Orchestrator:
                 await self._listener.handle(item)
             except Exception:
                 logger.exception("segment handling failed")
+
+    def _on_capture(self, item: CaptureItem) -> None:
+        """Take one item from the capture thread, on the loop (via call_soon_threadsafe)."""
+        if isinstance(item, SpeechStarted):
+            # Speech that began inside an open window keeps it open until that speech ends.
+            self._windows.hold_if_open(item.at)
+        else:
+            self._items.put_nowait(item)
 
     def _submit(self, command: Command) -> None:
         """Queue a command for the serial turn worker."""

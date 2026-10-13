@@ -8,15 +8,15 @@ import numpy as np
 
 from jarvis.audio import FRAME_SAMPLES
 from jarvis.audio.sources import Pcm
-from jarvis.orchestrator.segmenter import Segment
+from jarvis.orchestrator.segmenter import Segment, SegmentEvent, SpeechStarted
 
 
 class Feed:
     """An AudioSource and a Segmenter in one: the test pushes segments, the capture thread reads."""
 
     def __init__(self) -> None:
-        self._items: queue.Queue[Segment | Exception | None] = queue.Queue()
-        self._current: Segment | None = None
+        self._items: queue.Queue[SegmentEvent | Exception | None] = queue.Queue()
+        self._current: SegmentEvent | None = None
         self.closed = threading.Event()
 
     def push(self, segment: Segment) -> None:
@@ -24,6 +24,10 @@ class Feed:
 
     def end(self) -> None:
         self._items.put(None)
+
+    def start(self, at: float) -> None:
+        """The VAD saw speech begin at monotonic time `at`."""
+        self._items.put(SpeechStarted(at))
 
     def fail(self, error: Exception) -> None:
         self._items.put(error)
@@ -42,7 +46,7 @@ class Feed:
         self.closed.set()
         self._items.put(None)
 
-    def feed(self, frame: Pcm) -> list[Segment]:
+    def feed(self, frame: Pcm) -> list[SegmentEvent]:
         segment, self._current = self._current, None
         return [] if segment is None else [segment]
 
