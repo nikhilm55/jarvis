@@ -3,7 +3,7 @@
 import asyncio
 import json
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -53,8 +53,13 @@ class FakeSpeaker:
 class FakeBrain:
     """A BrainPort whose turn can be held open, made to fail, or answered at once."""
 
-    def __init__(self, final: FinalResponse | None = None) -> None:
+    def __init__(
+        self,
+        final: FinalResponse | None = None,
+        script: Callable[[OnSay, OnAsk], Awaitable[FinalResponse]] | None = None,
+    ) -> None:
         self.final = final or FinalResponse(status="success", spoken="Handled by the brain.")
+        self.script = script
         self.envelopes: list[TurnEnvelope] = []
         self.entered = asyncio.Event()
         self.release: asyncio.Event | None = None
@@ -75,6 +80,8 @@ class FakeBrain:
     async def turn(self, envelope: TurnEnvelope, on_say: OnSay, on_ask: OnAsk) -> FinalResponse:
         self.envelopes.append(envelope)
         self.entered.set()
+        if self.script is not None:
+            return await self.script(on_say, on_ask)
         if self.release is not None:
             await self.release.wait()
         if self.error is not None:
@@ -96,6 +103,7 @@ class Rig:
         self.hud_events: list[HudEvent] = []
         self.desktop_events: list[str] = []
         self.windows = Windows()
+        self.trace = ToolTrace()
         self.tmp_path = tmp_path
         services = TurnServices(
             settings=Settings(),
@@ -107,7 +115,7 @@ class Rig:
             activity=ActivityLog(directory=tmp_path),
             timing=timing,
             windows=self.windows,
-            trace=ToolTrace(),
+            trace=self.trace,
         )
         self.runner = TurnRunner(services)
 
