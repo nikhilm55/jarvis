@@ -57,9 +57,11 @@ class FakeBrain:
         self,
         final: FinalResponse | None = None,
         script: Callable[[OnSay, OnAsk], Awaitable[FinalResponse]] | None = None,
+        finals: list[FinalResponse] | None = None,
     ) -> None:
         self.final = final or FinalResponse(status="success", spoken="Handled by the brain.")
         self.script = script
+        self.finals = list(finals or [])  # served first, one per turn, then `final`
         self.envelopes: list[TurnEnvelope] = []
         self.entered = asyncio.Event()
         self.release: asyncio.Event | None = None
@@ -86,7 +88,7 @@ class FakeBrain:
             await self.release.wait()
         if self.error is not None:
             raise self.error
-        return self.final
+        return self.finals.pop(0) if self.finals else self.final
 
 
 class Rig:

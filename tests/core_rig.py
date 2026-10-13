@@ -6,6 +6,7 @@ from typing import Any
 
 from jarvis.activity import ActivityLog
 from jarvis.config import Settings
+from jarvis.contract import FinalResponse
 from jarvis.orchestrator.components import Components
 from jarvis.orchestrator.core import Orchestrator
 from jarvis.orchestrator.hud import HudEvent
@@ -30,6 +31,7 @@ class CoreRig:
         texts: list[str | Exception],
         *,
         with_brain: bool = True,
+        finals: list[FinalResponse] | None = None,
         timing: Timing | None = None,
     ) -> None:
         self.events: list[str] = []
@@ -37,7 +39,7 @@ class CoreRig:
         self.speaker = RecordingSpeaker(self.events)
         self.transcriber = RecordingTranscriber(texts, self.events)
         self.desktop = RecordingDesktop(self.events)
-        self.brain = RecordingBrain(self.events) if with_brain else None
+        self.brain = RecordingBrain(self.events, finals=finals) if with_brain else None
         self.hud_events: list[HudEvent] = []
         self.activity_dir = tmp_path / "activity"
         the_timing = timing or Timing(deaf_tail_s=0.0)

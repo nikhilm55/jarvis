@@ -83,6 +83,7 @@ def build_envelope(  # noqa: PLR0913 - keyword-only; now/environ/turn_id are tes
     now: datetime | None = None,
     environ: Mapping[str, str] | None = None,
     turn_id: str | None = None,
+    pending_question: str | None = None,
 ) -> TurnEnvelope:
     """Build the TurnEnvelope the brain receives."""
     now = now or datetime.now(UTC)
@@ -101,6 +102,7 @@ def build_envelope(  # noqa: PLR0913 - keyword-only; now/environ/turn_id are tes
             locale=locale_tag(environ),
             local_time=now.astimezone().isoformat(timespec="seconds"),
             user=user_info(settings.brain.address_as, gecos, login),
+            pending_question=pending_question,
         ),
         policy=TurnPolicy(mode=mode, max_steps=settings.brain.max_steps),
     )
