@@ -51,6 +51,18 @@ Principle (ADR-0004): **the model decides, deterministic code executes and prese
 
 A turn is one JSON envelope in; the model acts through MCP tools and ends with `respond`. jarvisd's MCP server calls `ClaudeCodeBrain.dispatch(policy_name, args)`: `say`/`ask` go to the turn's callbacks, desktop tools to the validated `DesktopClient`, `respond` to the contract gate (one repair, then the spoken fallback). The turn resolves the moment `respond` validates; the model's closing round trip is drained before the next turn. A timeout, a cancelled turn or a dead process drops the session and the next turn starts a fresh one.
 
+## Orchestrator (M1: the voice loop)
+
+`jarvis.orchestrator.Orchestrator` joins the pieces in `jarvis run`. Threading, on purpose:
+
+- **One capture thread** (`capture.Capture`) runs the frame loop: mic frame → `Endpointer` (Silero VAD, 1.5 s pre-roll) → `WakeDetector.score` (about 2.6 % of a core). Only finished `Segment`s (utterance, silence before, peak wake score, "tainted" flag) cross to asyncio, through `call_soon_threadsafe`; the event loop never sees frames.
+- **Event loop:** a consumer awaits `Listener.handle(segment)` one segment at a time (STT runs in a worker thread). A wake needs score ≥ `wake.threshold`, ≥ 400 ms of silence before the speech, and the first-word gate (R48). "Jarvis" alone opens a 5 s listen window, `jarvis.ask` an 8 s reply window (R49). Empty transcript → "Sorry, I didn't catch that." (R51).
+- **Turn worker:** commands run one at a time as `TurnRunner.run` tasks (fast path, `FastPathDeclined` → brain, speech, activity record). The Stop intent cancels the running turn and speech from the consumer while the loop keeps listening (R21).
+- **Deaf while speaking** (R47): `Voice.is_deaf()` is read by the capture thread; segments that overlap Jarvis's own voice plus a 300 ms tail are tainted and ignored. No barge-in in M1.
+- **Children** (whisper-server in its own process group, the desktop worker, the claude session, the MCP server) are warmed at start and closed in `components.close_components` on every exit path: end of source, `request_stop`, SIGINT/SIGTERM, a failure.
+
+Every turn (and every dropped trigger) appends one redacted line to `data_dir()/activity/YYYY-MM-DD.jsonl`; files older than `log.retention_days` are purged at start.
+
 ## Platform split
 
 Platform-specific code sits beside its interface and is imported only inside its platform branch (the beyondMeetings pattern). Everything above the tool and audio backends is shared. See FRS §9.3 for the capability matrix (Windows, X11, Wayland).
