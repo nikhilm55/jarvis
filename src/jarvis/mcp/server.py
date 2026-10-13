@@ -39,7 +39,7 @@ def _error(text: str) -> types.CallToolResult:
     )
 
 
-class _EmbeddedServer(uvicorn.Server):
+class EmbeddedServer(uvicorn.Server):
     """uvicorn server that leaves the host process's signal handlers alone."""
 
     @contextlib.contextmanager
@@ -109,7 +109,7 @@ class JarvisMcpServer:
             lifespan="on",
             timeout_graceful_shutdown=2,
         )
-        server = _EmbeddedServer(config)
+        server = EmbeddedServer(config)
         self._server = server
         self._task = asyncio.create_task(server.serve(sockets=[sock]))
         try:
