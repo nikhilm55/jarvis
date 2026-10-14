@@ -43,6 +43,10 @@ class TtsSettings(_Section):
 
 class BrainSettings(_Section):
     inactivity_reset_s: int = 600
+    model: str = "sonnet"  # M0b measured warm Sonnet
+    max_steps: int = Field(default=25, ge=1)
+    turn_timeout_s: int = Field(default=120, ge=1)
+    claude_bin: str | None = None
 
 
 class LogSettings(_Section):
