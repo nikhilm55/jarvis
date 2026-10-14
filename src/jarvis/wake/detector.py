@@ -5,6 +5,7 @@ Reproduces the upstream streaming path (``AudioFeatures._streaming_features`` +
 Scores match upstream to ~1e-3 (checked by scripts/check_wake_parity.py).
 """
 
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -31,6 +32,10 @@ _FEATURE_MAX_ROWS = 120
 _WARMUP_FRAMES = 5
 _PRIME_SAMPLES = 64000
 _PRIME_SEED = 0
+# A deferred stretch is replayed from raw audio when speech starts. The newest 16 embeddings each
+# need 76 mel rows (about 10 frames) behind them, so 28 frames reproduce them exactly.
+_REPLAY_FRAMES = 28
+_LOOK_BACK = 2  # the segmenter's peak counts the frame before and the frame of a segment's start
 
 
 @dataclass(frozen=True)
@@ -79,12 +84,24 @@ def _onnx_backends(model_name: str) -> Backends:
 
 
 class WakeDetector:
-    """Streaming wake-word detector scoring 80 ms frames with a 5-frame warm-up."""
+    """Streaming wake-word detector scoring 80 ms frames with a 5-frame warm-up.
 
-    def __init__(self, model_name: str | None = None, *, backends: Backends | None = None) -> None:
+    With `hot`, a frame is only remembered (no model runs) while `hot()` is false; the first hot
+    frame replays the remembered ones, so the scores of hot frames are the same as without it.
+    The wake score is only read while the VAD hears speech, and the models are the idle CPU cost.
+    """
+
+    def __init__(
+        self,
+        model_name: str | None = None,
+        *,
+        backends: Backends | None = None,
+        hot: Callable[[], bool] | None = None,
+    ) -> None:
         self._backends = (
             backends if backends is not None else _onnx_backends(model_name or WakeSettings().model)
         )
+        self._hot = hot
         self._primed = self._prime()
         self.reset()
 
@@ -112,6 +129,8 @@ class WakeDetector:
         self._mel: npt.NDArray[Any] = np.ones((_WINDOW, _MEL_BINS))
         self._features = self._primed.copy()
         self._frames_scored = 0
+        self._deferred: deque[Pcm] = deque(maxlen=_REPLAY_FRAMES)
+        self._deferred_total = 0
 
     def score(self, frame: Pcm) -> float:
         """Score one 80 ms frame; returns 0.0 during the first 5 warm-up frames."""
@@ -119,12 +138,45 @@ class WakeDetector:
             raise ValueError(
                 f"expected {FRAME_SAMPLES} int16 samples, got {frame.dtype} {frame.shape}"
             )
+        if self._hot is not None and not self._hot():
+            self._deferred.append(frame)
+            self._deferred_total += 1
+            self._frames_scored += 1
+            return 0.0
+        frames = self._take_deferred()
+        look_back = min(_LOOK_BACK, len(frames))
+        frames.append(frame)
+        windows = [self._ingest(f) for f in frames]
+        embeddings = self._backends.embed(
+            np.stack(windows[-(self._backends.n_features + look_back) :])
+        )
+        self._features = np.vstack((self._features, embeddings))[-_FEATURE_MAX_ROWS:]
+        self._frames_scored += 1
+        # The newest frames come first. The ones before this were not scored, and the segmenter
+        # counts the two just before a segment opens, so their scores are returned (as a max).
+        return max(self._value(back) for back in range(look_back + 1))
+
+    def _value(self, back: int) -> float:
+        """The score of the frame `back` frames before the newest one (0.0 while warming up)."""
+        end = len(self._features) - back
+        features = self._features[end - self._backends.n_features : end]
+        value = self._backends.classify(features.astype(np.float32)[None, :, :])
+        return 0.0 if self._frames_scored - back <= _WARMUP_FRAMES else value
+
+    def _take_deferred(self) -> list[Pcm]:
+        """Take the remembered frames to replay; a stretch longer than the memory starts over."""
+        frames = list(self._deferred)
+        if self._deferred_total > len(frames):
+            # The older frames are gone, so the mel rows are rebuilt from the oldest one kept.
+            self._mel = np.ones((_WINDOW, _MEL_BINS))
+            self._history = frames[0]
+            frames = frames[1:]
+        self._deferred.clear()
+        self._deferred_total = 0
+        return frames
+
+    def _ingest(self, frame: Pcm) -> npt.NDArray[np.float32]:
+        """Add one frame to the mel buffer; returns the newest 76-row window to embed."""
         self._history = np.concatenate((self._history, frame))[-(FRAME_SAMPLES + _MEL_CONTEXT) :]
         self._mel = np.vstack((self._mel, self._melspec(self._history)))[-_MEL_MAX_ROWS:]
-        window = self._mel[-_WINDOW:].astype(np.float32)[None, :, :, None]
-        embedding = self._backends.embed(window)
-        self._features = np.vstack((self._features, embedding))[-_FEATURE_MAX_ROWS:]
-        features = self._features[-self._backends.n_features :].astype(np.float32)[None, :, :]
-        value = self._backends.classify(features)
-        self._frames_scored += 1
-        return 0.0 if self._frames_scored <= _WARMUP_FRAMES else value
+        return self._mel[-_WINDOW:].astype(np.float32)[:, :, None]

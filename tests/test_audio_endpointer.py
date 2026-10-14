@@ -164,3 +164,11 @@ def test_should_pin_the_silero_model_to_a_commit_and_a_sha256() -> None:
     assert "/snakers4/silero-vad/" in spec.url and spec.url.endswith("/silero_vad.onnx")
     assert len(spec.sha256) == 64
     assert len(spec.url.split("/silero-vad/")[1].split("/")[0]) == 40  # a commit, not a branch
+
+
+def test_should_report_speaking_only_while_an_utterance_is_open() -> None:
+    quiet, _, _ = _run([0.0] * 10)
+    speaking, _, _ = _run([0.0] * 10 + [0.9] * 20)
+    ended, _, _ = _run([0.0] * 10 + [0.9] * 20 + [0.0] * 22)
+
+    assert (quiet.speaking, speaking.speaking, ended.speaking) == (False, True, False)

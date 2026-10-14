@@ -46,20 +46,18 @@ from acceptance_report import (
 )
 
 from jarvis.activity import TurnRecord
-from jarvis.audio import Endpointer, SileroVad, WavFileSource
+from jarvis.audio import WavFileSource
 from jarvis.audio.sources import SAMPLE_RATE
 from jarvis.config import load_settings
 from jarvis.desktop.volume import VolumeState, set_mute, volume_get, volume_set
 from jarvis.desktop.x11 import close_window
 from jarvis.fastpath import execute
 from jarvis.orchestrator import assemble, turns
-from jarvis.orchestrator.assemble import build_components
+from jarvis.orchestrator.assemble import build_components, build_segmenter
 from jarvis.orchestrator.core import Orchestrator
 from jarvis.orchestrator.hud import HudEvent
-from jarvis.orchestrator.segmenter import Segmenter
 from jarvis.tts import Speaker
 from jarvis.tts.sink import SoundDeviceSink
-from jarvis.wake import WakeDetector
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -145,9 +143,7 @@ async def run_window_cases(h: Harness) -> None:
 def idle_runs(seconds: float) -> list[IdleResult]:
     """Capture + VAD + wake scoring on silence and on noise, in real time, per FRS 7.1."""
     settings = load_settings()
-    audio = settings.audio
-    endpointer = Endpointer(SileroVad(), trailing_ms=audio.trailing_ms, cap_s=audio.cap_s)
-    segmenter = Segmenter(endpointer, WakeDetector(settings.wake.model), lambda: False)
+    segmenter = build_segmenter(settings, lambda: False)
     scratch = Path(os.environ["JARVIS_HOME"]) / "idle"
     scratch.mkdir(parents=True, exist_ok=True)
     results = []
