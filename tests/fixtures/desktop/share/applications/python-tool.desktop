@@ -1,0 +1,4 @@
+[Desktop Entry]
+Type=Application
+Name=Python Tool
+Exec=env PYTHONPATH=/opt/tool python3 /opt/tool/main.py %F
