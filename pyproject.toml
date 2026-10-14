@@ -8,6 +8,7 @@ authors = [{ name = "Nikhil Malhotra", email = "nikhil.malhotra@fiftyfivetech.io
 dependencies = [
     "httpx>=0.28.1",
     "kokoro-onnx>=0.6.1",
+    "mcp>=2.3.0",
     "numpy>=2.4.6",
     "onnxruntime>=1.30.0",
     "platformdirs>=4.12.3",
