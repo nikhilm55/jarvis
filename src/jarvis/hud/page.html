@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Jarvis HUD</title>
+<style>
+:root{
+  --canvas:#07080a; --surface:#0d0d0d; --elevated:#101111; --card:#121212;
+  --hairline:#242728; --hairline-soft:rgba(255,255,255,.08); --hairline-strong:rgba(255,255,255,.16);
+  --ink:#f4f4f6; --body:#cdcdcd; --mute:#9c9c9d; --ash:#6a6b6c;
+  --primary:#ffffff; --primary-pressed:#e8e8e8; --on-primary:#000000;
+  --blue:#57c1ff;   --blue-soft:rgba(87,193,255,.15);
+  --green:#59d499;  --green-soft:rgba(89,212,153,.15);
+  --yellow:#ffc533; --yellow-soft:rgba(255,197,51,.15);
+  --red:#ff6161;    --red-soft:rgba(255,97,97,.15);
+  --think:rgba(255,255,255,.72);
+  --r-xs:4px; --r-sm:6px; --r-md:8px; --r-lg:10px; --r-xl:16px; --r-full:9999px;
+}
+*{box-sizing:border-box}
+.orb{position:relative;width:32px;height:32px;flex-shrink:0;display:flex;align-items:center;justify-content:center}
+.orb::before{content:"";position:absolute;inset:0;border-radius:var(--r-full);border:1px solid var(--orb-ring)}
+.orb::after{content:"";width:18px;height:18px;border-radius:var(--r-full);background:var(--orb)}
+.orb.listen{--orb:var(--blue);--orb-ring:rgba(87,193,255,.4)}
+.orb.think{--orb:var(--think);--orb-ring:var(--hairline-strong)}
+.orb.confirm{--orb:var(--yellow);--orb-ring:rgba(255,197,51,.4)}
+.orb.error{--orb:var(--red);--orb-ring:rgba(255,97,97,.4)}
+.orb.idle{--orb:var(--ash);--orb-ring:transparent;width:10px;height:10px}
+.orb.idle::after{width:8px;height:8px}
+.orb.listen::before{animation:ring 1.6s ease-out infinite}
+.orb.think::after{animation:breathe 1.2s ease-in-out infinite}
+@keyframes ring{0%{transform:scale(.8);opacity:1}100%{transform:scale(1.35);opacity:0}}
+@keyframes breathe{0%,100%{opacity:.45}50%{opacity:1}}
+.wave{display:flex;align-items:center;gap:3px;height:24px}
+.wave i{display:block;width:3px;border-radius:2px;background:var(--blue);animation:wave 1.1s ease-in-out infinite;transform-origin:center}
+.wave i:nth-child(1){height:10px}.wave i:nth-child(2){height:18px;animation-delay:.1s}.wave i:nth-child(3){height:24px;animation-delay:.2s}
+.wave i:nth-child(4){height:14px;animation-delay:.3s}.wave i:nth-child(5){height:20px;animation-delay:.4s}.wave i:nth-child(6){height:8px;animation-delay:.5s}
+@keyframes wave{0%,100%{transform:scaleY(.45)}50%{transform:scaleY(1)}}
+.pill{display:flex;align-items:center;gap:14px;padding:10px 20px 10px 12px;background:var(--surface);border:1px solid var(--hairline);border-radius:var(--r-full)}
+.pill .text{flex:1;font-size:15px;line-height:1.4;min-width:0}
+.pill .label{font-size:12px;color:var(--mute);white-space:nowrap}
+.hud-zone{position:absolute;left:0;right:0;bottom:32px;display:flex;flex-direction:column;align-items:center;gap:10px;padding:0 16px;z-index:2}
+.hud-zone > *{width:100%;max-width:580px}
+html,body{margin:0;height:100%;background:transparent;color:var(--ink);overflow:hidden}
+body{font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;font-feature-settings:"calt","kern","liga","ss03";font-size:14px;line-height:1.6;-webkit-font-smoothing:antialiased}
+.hud-zone{opacity:0;transform:translateY(8px);transition:opacity .18s ease-out,transform .18s ease-out;pointer-events:none}
+.hud-zone.on{opacity:1;transform:none}
+.hud-zone > .pill.compact{width:auto;padding:6px 12px;gap:8px}
+.pill .text:empty{display:none}
+.pill #pill-text{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.wave.live i{animation:none;transform:scaleY(calc(.25 + var(--lvl,0) * .75))}
+.pill .label.pulse{animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.45}50%{opacity:1}}
+@media (prefers-reduced-motion:reduce){.orb::before,.orb::after,.wave i,.pill .label.pulse{animation:none!important}.hud-zone{transition:none}.wave.live i{transform:scaleY(calc(.25 + var(--lvl,0) * .75))}}
+</style>
+</head>
+<body>
+<div class="hud-zone" id="zone">
+  <div class="pill compact" id="pill" role="status" aria-live="polite">
+    <div class="orb idle" id="pill-orb" aria-hidden="true"></div>
+    <div class="wave" id="pill-wave" aria-hidden="true" style="display:none"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <span class="text" id="pill-text"></span>
+    <span class="label" id="pill-label"></span>
+  </div>
+</div>
+<script>
+const HIDE_MS = 4000;          // FR-UI-01: hide 4 s after the turn ends
+const WATCHDOG_MS = 30000;     // a state that never ends is hidden anyway
+/* LOOKS */
+const LOOKS = {
+  idle:       { orb: 'idle',    wave: false, label: 'Say “Jarvis…”', compact: true, hide: true },
+  listening:  { orb: 'listen',  wave: true,  label: 'Listening' },
+  transcript: { orb: 'listen',  wave: true,  label: 'Listening', quote: true },
+  thinking:   { orb: 'think',   wave: false, label: 'Thinking…' },
+  acting:     { orb: 'think',   wave: false, label: 'Working…' },
+  speaking:   { orb: 'listen',  wave: true,  label: 'Speaking' },
+  error:      { orb: 'error',   wave: false, label: 'Something went wrong', hide: true },
+  reply:      { orb: 'confirm', wave: false, label: 'Reply…', pulse: true, hide: true }
+};
+/* END LOOKS */
+const zone = document.getElementById('zone');
+const pill = document.getElementById('pill');
+const orb = document.getElementById('pill-orb');
+const wave = document.getElementById('pill-wave');
+const text = document.getElementById('pill-text');
+const label = document.getElementById('pill-label');
+let timer = 0;
+function hide() {
+  zone.classList.remove('on');
+  announce(false);
+}
+function announce(visible) {
+  document.title = visible ? 'Jarvis HUD:visible' : 'Jarvis HUD:hidden';
+}
+function render(ev) {
+  const look = LOOKS[ev.state];
+  if (!look) return;
+  const extra = ev.extra || {};
+  orb.className = 'orb ' + look.orb;
+  wave.style.display = look.wave ? 'flex' : 'none';
+  pill.classList.toggle('compact', !!look.compact);
+  const raw = ev.state === 'idle' ? '' : (ev.text || '');
+  text.textContent = look.quote && raw ? '“' + raw + '”' : raw;
+  let lbl = look.label;
+  let pulse = !!look.pulse;
+  if (extra.window === 'reply') { lbl = 'Reply…'; pulse = true; }
+  else if (ev.state === 'acting' && typeof extra.step === 'number' && typeof extra.steps === 'number') {
+    lbl = 'Step ' + extra.step + ' of ' + extra.steps;
+  }
+  else if (ev.state === 'error' && typeof extra.remedy === 'string' && extra.remedy) {
+    lbl = extra.remedy;
+  }
+  label.textContent = lbl;
+  label.classList.toggle('pulse', pulse);
+  if (look.wave && typeof extra.level === 'number') {
+    const level = Math.max(0, Math.min(1, extra.level));
+    wave.classList.add('live');
+    wave.style.setProperty('--lvl', String(level));
+  } else {
+    wave.classList.remove('live');
+  }
+  zone.classList.add('on');
+  announce(true);
+  clearTimeout(timer);
+  timer = setTimeout(hide, look.hide ? HIDE_MS : WATCHDOG_MS);
+}
+const token = decodeURIComponent(location.hash.slice(1));
+let delay = 500;
+async function connect() {
+  for (;;) {
+    try {
+      const res = await fetch('/events', {
+        headers: { Authorization: 'Bearer ' + token, Accept: 'text/event-stream' }
+      });
+      if (res.status === 401 || res.status === 403) return;
+      delay = 500;
+      const reader = res.body.getReader();
+      const dec = new TextDecoder('utf-8');
+      let buf = '';
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        buf += dec.decode(chunk.value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf('\n\n')) !== -1) {
+          const msg = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          const data = msg.split('\n').filter(function (l) {
+            return l.indexOf('data:') === 0;
+          }).map(function (l) {
+            return l.slice(5).replace(/^ /, '');
+          }).join('');
+          if (!data) continue;
+          try {
+            render(JSON.parse(data));
+          } catch (e) {
+            // skip malformed payloads
+          }
+        }
+      }
+    } catch (e) {
+      // stream ended or fetch threw; fall through to reconnect
+    }
+    await new Promise(function (r) { setTimeout(r, delay); });
+    delay = Math.min(5000, delay * 2);
+  }
+}
+announce(false);
+connect();
+</script>
+</body>
+</html>

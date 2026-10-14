@@ -20,15 +20,24 @@ class GuardMiddleware:
     """Auth + DNS-rebinding guard in front of the MCP app.
 
     Host is checked first, then the bearer token; every HTTP method is covered.
+    Paths in open_paths skip the token check only; the Host check still applies.
     """
 
-    def __init__(self, app: ASGIApp, *, token: str, allowed_hosts: frozenset[str]) -> None:
-        """Store the app, expected token bytes, allowed hosts, and logger."""
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        token: str,
+        allowed_hosts: frozenset[str],
+        open_paths: frozenset[str] = frozenset(),
+    ) -> None:
+        """Store the app, expected token bytes, allowed hosts, open paths, and logger."""
         if not token:
             raise ValueError("token must be non-empty")
         self._app = app
         self._expected = token.encode("utf-8")
         self._allowed_hosts = frozenset(h.lower() for h in allowed_hosts)
+        self._open_paths = open_paths
         self._log = get_logger("mcp.guard")
 
     def _token_ok(self, value: bytes | None) -> bool:
@@ -54,6 +63,9 @@ class GuardMiddleware:
         if host is None or host.decode("latin-1").lower() not in self._allowed_hosts:
             self._log.warning("rejected request: bad host")
             await PlainTextResponse("Forbidden", status_code=403)(scope, receive, send)
+            return
+        if scope["path"] in self._open_paths:
+            await self._app(scope, receive, send)
             return
         auth = _single_header(scope, b"authorization")
         if not self._token_ok(auth):

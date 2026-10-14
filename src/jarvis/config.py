@@ -50,6 +50,11 @@ class BrainSettings(_Section):
     address_as: str | None = None  # how Jarvis addresses the user; None = the OS user's first name
 
 
+class HudSettings(_Section):
+    python: str = "/usr/bin/python3"  # the system interpreter that has gi (GTK 3 + WebKit2 4.1)
+    enabled: bool = True
+
+
 class LogSettings(_Section):
     retention_days: int = 30
 
@@ -61,6 +66,7 @@ class Settings(_Section):
     tts: TtsSettings = Field(default_factory=TtsSettings)
     brain: BrainSettings = Field(default_factory=BrainSettings)
     log: LogSettings = Field(default_factory=LogSettings)
+    hud: HudSettings = Field(default_factory=HudSettings)
 
 
 def load_settings(path: Path | None = None) -> Settings:
