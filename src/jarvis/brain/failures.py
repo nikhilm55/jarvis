@@ -8,7 +8,11 @@ from jarvis.contract import (
     sanitise_spoken,
 )
 
-__all__ = ["BrainUnavailable", "failed_response"]
+__all__ = ["BrainUnavailable", "ToolError", "failed_response"]
+
+
+class ToolError(Exception):
+    """A tool call the model should see as an error; the message is shown to the model."""
 
 
 def failed_response(
