@@ -32,10 +32,16 @@ _FEATURE_MAX_ROWS = 120
 _WARMUP_FRAMES = 5
 _PRIME_SAMPLES = 64000
 _PRIME_SEED = 0
-# A deferred stretch is replayed from raw audio when speech starts. The newest 16 embeddings each
-# need 76 mel rows (about 10 frames) behind them, so 28 frames reproduce them exactly.
-_REPLAY_FRAMES = 28
+# A deferred stretch is replayed from raw audio when speech starts. The classifier reads the newest
+# `n_features` embeddings (plus the look-back frames), each needing 76 mel rows (about 10 frames)
+# behind it, so `n_features + 12` frames reproduce them exactly; 28 is that for the usual 16.
+_MIN_REPLAY_FRAMES = 28
 _LOOK_BACK = 2  # the segmenter's peak counts the frame before and the frame of a segment's start
+
+
+def _replay_frames(n_features: int) -> int:
+    """Frames of raw audio that rebuild the newest `n_features` + look-back embeddings."""
+    return max(_MIN_REPLAY_FRAMES, n_features + _LOOK_BACK + -(-_WINDOW // _STRIDE))
 
 
 @dataclass(frozen=True)
@@ -102,6 +108,7 @@ class WakeDetector:
             backends if backends is not None else _onnx_backends(model_name or WakeSettings().model)
         )
         self._hot = hot
+        self._replay = _replay_frames(self._backends.n_features)
         self._primed = self._prime()
         self.reset()
 
@@ -129,7 +136,7 @@ class WakeDetector:
         self._mel: npt.NDArray[Any] = np.ones((_WINDOW, _MEL_BINS))
         self._features = self._primed.copy()
         self._frames_scored = 0
-        self._deferred: deque[Pcm] = deque(maxlen=_REPLAY_FRAMES)
+        self._deferred: deque[Pcm] = deque(maxlen=self._replay)
         self._deferred_total = 0
 
     def score(self, frame: Pcm) -> float:

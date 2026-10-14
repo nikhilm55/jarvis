@@ -9,12 +9,13 @@ from jarvis.wake.detector import Backends, WakeDetector
 class ContentBackends:
     """Deterministic fake backends whose outputs depend on input content."""
 
-    def __init__(self) -> None:
+    def __init__(self, n_features: int = 16) -> None:
+        self.n_features = n_features
         self.mel_calls = 0
         self.embed_calls = 0
         self.classify_calls = 0
         self._proj = np.random.default_rng(0).standard_normal((76 * 32, 96)) / 50.0
-        self._coeff = np.random.default_rng(1).standard_normal((16, 96)) / 20.0
+        self._coeff = np.random.default_rng(1).standard_normal((n_features, 96)) / 20.0
 
     def mel(self, x: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
         self.mel_calls += 1
@@ -38,7 +39,9 @@ class ContentBackends:
         return float(np.tanh((features * self._coeff).sum()))
 
     def backends(self) -> Backends:
-        return Backends(mel=self.mel, embed=self.embed, classify=self.classify, n_features=16)
+        return Backends(
+            mel=self.mel, embed=self.embed, classify=self.classify, n_features=self.n_features
+        )
 
 
 def frames(count: int, seed: int) -> list[npt.NDArray[np.int16]]:
@@ -189,3 +192,28 @@ def test_should_score_every_frame_when_hot_is_none() -> None:
 
     # Assert
     assert backends.mel_calls - mel_before == 5
+
+
+@pytest.mark.parametrize("n_features", [8, 16, 32, 40])
+def test_should_match_an_always_hot_detector_when_the_classifier_reads_more_rows(
+    n_features: int,
+) -> None:
+    full = WakeDetector(backends=ContentBackends(n_features).backends())
+    state = State(True)
+    lazy = WakeDetector(backends=ContentBackends(n_features).backends(), hot=lambda: state.hot)
+    stream = frames(20 + 200 + 6, 7)
+    for f in stream[:20]:
+        full.score(f)
+        lazy.score(f)
+    state.hot = False
+    cold_scores = [full.score(f) for f in stream[20:220]]
+    for f in stream[20:220]:
+        lazy.score(f)
+    state.hot = True
+
+    first = lazy.score(stream[220])
+    expected = max([*cold_scores[-2:], full.score(stream[220])])
+    rest = [(lazy.score(f), full.score(f)) for f in stream[221:]]
+
+    assert first == pytest.approx(expected, abs=1e-6)
+    assert [a for a, _ in rest] == pytest.approx([b for _, b in rest], abs=1e-6)
