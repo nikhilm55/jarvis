@@ -7,11 +7,12 @@ import socket
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from pathlib import Path
 
 import uvicorn
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, StreamingResponse
+from starlette.responses import HTMLResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from jarvis.hud.page import read_page
@@ -21,6 +22,9 @@ from jarvis.mcp.server import EmbeddedServer
 from jarvis.orchestrator.hud import HudEvent
 
 logger = get_logger("hud")
+
+FONT_ROUTE = "/fonts/InterVariable.woff2"
+FONT_PATH = Path(__file__).with_name("fonts") / "InterVariable.woff2"
 
 
 @dataclass(eq=False)
@@ -78,13 +82,14 @@ class HudServer:
             routes=[
                 Route("/hud", self._page),
                 Route("/events", self._events),
+                Route(FONT_ROUTE, self._font),
             ]
         )
         guarded = GuardMiddleware(
             app,
             token=token,
             allowed_hosts=frozenset(hosts),
-            open_paths=frozenset({"/hud"}),
+            open_paths=frozenset({"/hud", FONT_ROUTE}),
         )
         config = uvicorn.Config(
             guarded,
@@ -193,8 +198,19 @@ class HudServer:
                 "Content-Security-Policy": (
                     "default-src 'none'; style-src 'unsafe-inline'; "
                     "script-src 'unsafe-inline'; connect-src 'self'; "
-                    "base-uri 'none'; frame-ancestors 'none'"
+                    "font-src 'self'; base-uri 'none'; frame-ancestors 'none'"
                 ),
+            },
+        )
+
+    async def _font(self, request: Request) -> Response:
+        """Serve the bundled Inter font with immutable cache headers."""
+        return Response(
+            await asyncio.to_thread(FONT_PATH.read_bytes),
+            media_type="font/woff2",
+            headers={
+                "Cache-Control": "public, max-age=31536000, immutable",
+                "X-Content-Type-Options": "nosniff",
             },
         )
 
