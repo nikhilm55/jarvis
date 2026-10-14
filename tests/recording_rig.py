@@ -1,8 +1,11 @@
 """Recording doubles for the children the orchestrator starts and closes."""
 
 import asyncio
+import threading
 
+from jarvis.audio.sources import Pcm
 from jarvis.contract import FinalResponse
+from jarvis.stt import Transcript
 from tests.fastpath_fakes import FakeDesktop
 from tests.listener_rig import FakeTranscriber
 from tests.orchestrator_rig import FakeBrain, FakeSpeaker
@@ -15,6 +18,16 @@ class RecordingTranscriber(FakeTranscriber):
         super().__init__(texts)
         self.events = events
         self.fail_start: Exception | None = None
+        self.gate: threading.Event | None = None  # when set, transcribe() blocks on it
+
+    def transcribe(self, pcm: Pcm, prompt: str | None = None) -> Transcript:
+        self.events.append("transcribe.start")
+        if self.gate is not None:
+            self.gate.wait(5)
+        try:
+            return super().transcribe(pcm, prompt)
+        finally:
+            self.events.append("transcribe.end")
 
     def start(self) -> None:
         self.events.append("transcriber.start")

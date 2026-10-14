@@ -41,6 +41,7 @@ class CoreRig:
         self.desktop = RecordingDesktop(self.events)
         self.brain = RecordingBrain(self.events, finals=finals) if with_brain else None
         self.hud_events: list[HudEvent] = []
+        self.hud_fails = False  # when True the HUD sink raises after recording the event
         self.activity_dir = tmp_path / "activity"
         the_timing = timing or Timing(deaf_tail_s=0.0)
         self.parts = parts = Components(
@@ -63,6 +64,8 @@ class CoreRig:
 
     async def _hud(self, event: HudEvent) -> None:
         self.hud_events.append(event)
+        if self.hud_fails:
+            raise RuntimeError("hud down")
 
     @property
     def states(self) -> list[str]:

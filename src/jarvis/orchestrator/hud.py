@@ -4,6 +4,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
+from jarvis.log import get_logger
+
 HudState = Literal[
     "idle",
     "listening",
@@ -33,4 +35,18 @@ async def null_sink(event: HudEvent) -> None:
     return None
 
 
-__all__ = ["HudEvent", "HudSink", "HudState", "null_sink"]
+def safe_sink(sink: HudSink) -> HudSink:
+    """Wrap a sink so failures are logged but never propagate."""
+    logger = get_logger("hud")
+
+    async def guarded(event: HudEvent) -> None:
+        try:
+            await sink(event)
+        except Exception:
+            # A broken HUD must never stop start-up or a timer.
+            logger.warning("HUD sink failed", exc_info=True)
+
+    return guarded
+
+
+__all__ = ["HudEvent", "HudSink", "HudState", "null_sink", "safe_sink"]

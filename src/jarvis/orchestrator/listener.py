@@ -62,6 +62,13 @@ class Listener:
     def __init__(self, services: ListenerServices) -> None:
         """Store the services for later use."""
         self._s = services
+        self._inflight: asyncio.Future[Transcript] | None = None
+
+    async def drain(self, timeout: float) -> None:
+        """Wait (up to `timeout`) for a transcription still running on its thread (R30)."""
+        pending = self._inflight
+        if pending is not None and not pending.done():
+            await asyncio.wait({pending}, timeout=timeout)
 
     async def handle(self, segment: Segment) -> None:
         """Dispatch a segment by window kind, ignoring tainted audio."""
@@ -154,14 +161,21 @@ class Listener:
             )
         )
 
+    async def _transcribe(self, segment: Segment, prompt: str | None) -> Transcript:
+        """Run the engine on a thread; it is shielded so shutdown can wait for it."""
+        work = asyncio.ensure_future(
+            asyncio.to_thread(self._s.transcriber.transcribe, segment.utterance.pcm, prompt)
+        )
+        work.add_done_callback(_ignore_result)
+        self._inflight = work
+        return await asyncio.shield(work)
+
     async def _hear(self, segment: Segment, prompt: str | None) -> Heard | None:
         """Transcribe the segment, degrading gracefully on engine failure."""
         s = self._s
         started = s.clock()
         try:
-            transcript = await asyncio.to_thread(
-                s.transcriber.transcribe, segment.utterance.pcm, prompt
-            )
+            transcript = await self._transcribe(segment, prompt)
         except Exception:
             logger.exception("transcription failed")
             await s.hud(HudEvent("error", "Speech recognition failed"))
@@ -207,3 +221,9 @@ class Listener:
                 drop_reason=reason,
             )
         )
+
+
+def _ignore_result(work: asyncio.Future[Transcript]) -> None:
+    """Mark a shielded transcription's outcome as seen, so an orphaned one does not warn."""
+    if not work.cancelled():
+        work.exception()

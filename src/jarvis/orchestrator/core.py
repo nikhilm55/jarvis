@@ -8,7 +8,7 @@ from jarvis.config import Settings
 from jarvis.log import get_logger
 from jarvis.orchestrator.capture import Capture, CaptureItem, SourceEnded, SourceFailed
 from jarvis.orchestrator.components import Components, close_components, start_components
-from jarvis.orchestrator.hud import HudEvent, HudSink, null_sink
+from jarvis.orchestrator.hud import HudEvent, HudSink, null_sink, safe_sink
 from jarvis.orchestrator.listener import Listener, ListenerServices
 from jarvis.orchestrator.timing import Timing
 from jarvis.orchestrator.turns import Command, TurnRunner, TurnServices
@@ -18,6 +18,8 @@ from jarvis.policy import Mode
 __all__ = ["Orchestrator"]
 
 logger = get_logger(__name__)
+
+_DRAIN_S = 5.0  # longest shutdown waits for an in-flight transcription
 
 
 class Orchestrator:
@@ -37,7 +39,7 @@ class Orchestrator:
         self._settings = settings
         self._parts = parts
         self._mode = mode
-        self._hud = hud
+        hud = self._hud = safe_sink(hud)  # a broken HUD never stops start-up or a timer
         self._activity = activity or ActivityLog()
         self._timing = timing or Timing.from_settings(settings)
         self._windows = Windows()
@@ -227,4 +229,6 @@ class Orchestrator:
         if self._capture is not None:
             self._capture.stop()
             await asyncio.to_thread(self._capture.join, 5.0)
+        # whisper-server must not be closed under a request still in flight (R30)
+        await self._listener.drain(_DRAIN_S)
         await close_components(self._parts)
