@@ -92,8 +92,8 @@ function announce(visible) {
   document.title = visible ? 'Jarvis HUD:visible' : 'Jarvis HUD:hidden';
 }
 function render(ev) {
+  if (!Object.hasOwn(LOOKS, ev.state)) return;
   const look = LOOKS[ev.state];
-  if (!look) return;
   const extra = ev.extra || {};
   orb.className = 'orb ' + look.orb;
   wave.style.display = look.wave ? 'flex' : 'none';
@@ -132,6 +132,7 @@ async function connect() {
         headers: { Authorization: 'Bearer ' + token, Accept: 'text/event-stream' }
       });
       if (res.status === 401 || res.status === 403) return;
+      if (!res.ok) throw new Error('HTTP ' + res.status);
       delay = 500;
       const reader = res.body.getReader();
       const dec = new TextDecoder('utf-8');

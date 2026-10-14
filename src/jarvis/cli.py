@@ -21,9 +21,10 @@ from jarvis.audio import (
     WavFileSource,
 )
 from jarvis.config import ConfigError, Settings, load_settings
+from jarvis.hud.runtime import running_hud
 from jarvis.orchestrator.assemble import build_components
 from jarvis.orchestrator.core import Orchestrator
-from jarvis.orchestrator.hud import HudEvent
+from jarvis.orchestrator.hud import HudEvent, HudSink
 from jarvis.policy import Mode
 from jarvis.stt import SttUnavailable
 from jarvis.tts import Speaker
@@ -34,10 +35,24 @@ async def _print_hud(event: HudEvent) -> None:
     print(f"[{event.state}] {event.text}".rstrip(), flush=True)
 
 
-async def _run_loop(settings: Settings, source: AudioSource, mode: Mode, with_brain: bool) -> None:
+def _tee(first: HudSink, second: HudSink | None) -> HudSink:
+    if second is None:
+        return first
+
+    async def both(event: HudEvent) -> None:
+        await first(event)
+        await second(event)
+
+    return both
+
+
+async def _run_loop(
+    settings: Settings, source: AudioSource, mode: Mode, with_brain: bool, hud: bool
+) -> None:
     # `build_components` is looked up in this module's globals, so tests can replace it.
     parts = await build_components(settings, source, mode=mode, with_brain=with_brain)
-    await Orchestrator(settings, parts, mode=mode, hud=_print_hud).run()
+    async with running_hud(settings.hud, enabled=hud) as sink:
+        await Orchestrator(settings, parts, mode=mode, hud=_tee(_print_hud, sink)).run()
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -49,7 +64,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
             if args.source
             else MicSource(settings.audio.device)
         )
-        asyncio.run(_run_loop(settings, source, args.mode, not args.no_brain))
+        asyncio.run(_run_loop(settings, source, args.mode, not args.no_brain, not args.no_hud))
     except (
         ConfigError,
         AudioDeviceError,
@@ -161,6 +176,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--source", type=Path, metavar="FILE.wav", help="read a WAV, not the mic")
     run.add_argument("--mode", choices=("safe", "balanced", "yolo"), default="balanced")
     run.add_argument("--no-brain", action="store_true", help="fast path only; no Claude Code")
+    run.add_argument("--no-hud", action="store_true", help="no on-screen HUD pill")
     run.set_defaults(handler=_cmd_run)
     say = commands.add_parser("say", help="speak a line of text")
     say.add_argument("text", nargs="?", default=None)

@@ -44,6 +44,7 @@ class HudServer:
         self._token: str | None = None
         self._url: str | None = None
         self._closed = False
+        self._warned_unencodable = False
 
     @property
     def url(self) -> str:
@@ -137,10 +138,14 @@ class HudServer:
             return
         try:
             payload = json.dumps(
-                {"state": event.state, "text": event.text, "extra": event.extra}, default=str
+                {"state": event.state, "text": event.text, "extra": event.extra},
+                default=str,
+                allow_nan=False,
             )
         except (TypeError, ValueError):
-            logger.warning("HUD event is not JSON-serialisable", exc_info=True)
+            if not self._warned_unencodable:
+                self._warned_unencodable = True
+                logger.warning("HUD event is not JSON-serialisable; dropped")
             return
         message = b"data: " + payload.encode("utf-8") + b"\n\n"
         for subscriber in list(self._subscribers):

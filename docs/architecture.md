@@ -29,7 +29,8 @@ Principle (ADR-0004): **the model decides, deterministic code executes and prese
 | jarvis-desktop MCP | OS control tools (apps, windows, input, screen, files), served by jarvisd over loopback | `jarvis/tools` |
 | Brain | Warm Claude Code headless session, or jarvisd's own agent loop for API/URL brains | `jarvis/brain` |
 | User MCP servers | Child processes or remote URLs from the catalog | `jarvis/mcp` |
-| UI | HUD overlay, palette, main window (pywebview + local web UI) | `jarvis/ui` |
+| HUD window | The always-on-top pill (M1: GTK 3 + WebKit2 under the system Python, spawned and supervised by jarvisd) | `jarvis/hud` |
+| UI (later) | Palette, main window (local web UI) | `jarvis/ui` |
 
 ## Component map (planned packages)
 
@@ -42,7 +43,8 @@ Principle (ADR-0004): **the model decides, deterministic code executes and prese
 | `jarvis.policy` | Risk tiers, modes, guardrails, consent grants | §5.10–5.11 |
 | `jarvis.tools` | jarvis-desktop MCP tools, per-OS backends | §5.8 |
 | `jarvis.tts` | Speech output, earcons, captions | §5.7 |
-| `jarvis.ui` | HUD, palette, main window (frozen design) | §5.16, §8 |
+| `jarvis.hud` | HUD events server, pill page, window process and its supervisor (frozen design) | §5.16, §8 |
+| `jarvis.ui` | Palette, main window (frozen design) | §5.16, §8 |
 | `jarvis.setup` | Doctor checks and wizard (ported from beyondMeetings) | §5.17 |
 
 ## Brain session (M1: Claude Code)
@@ -62,6 +64,15 @@ A turn is one JSON envelope in; the model acts through MCP tools and ends with `
 - **Children** (whisper-server in its own process group, the desktop worker, the claude session, the MCP server) are warmed at start and closed in `components.close_components` on every exit path: end of source, `request_stop`, SIGINT/SIGTERM, a failure.
 
 Every turn (and every dropped trigger) appends one redacted line to `data_dir()/activity/YYYY-MM-DD.jsonl`; files older than `log.retention_days` are purged at start.
+
+## HUD (M1)
+
+`jarvis.hud` shows what the loop is doing. Four parts, deliberately separated so a HUD fault can never touch a turn (ADR-0008 spirit, R56-R58):
+
+- **`HudServer`** (in jarvisd): a Starlette app on `127.0.0.1:<ephemeral>` behind the same `GuardMiddleware` as the MCP server (Host check, plus the bearer token everywhere except `GET /hud`, which holds nothing secret). `GET /events` is Server-Sent Events. `publish` is the orchestrator's HUD sink: it fans each `HudEvent` out, in order, to a bounded queue per client and drops a client whose queue is full, so a slow window can never delay a turn.
+- **`page.html`**: one self-contained page (the frozen mockup's tokens, orb, waveform and pill; no external requests). The token comes in the URL fragment (never sent to a server) and the page streams `/events` with `fetch` + `Authorization`, because `EventSource` cannot send headers. Event text only reaches the DOM through `textContent`. It hides itself 4 s after a turn ends and announces visible/hidden through `document.title`.
+- **`window.py`**: a separate process under `/usr/bin/python3` (`Settings.hud.python`), stdlib + `gi` only: a frameless, transparent, always-on-top, non-focusable GTK 3 window with a WebKit2 view, bottom-centre of the primary monitor's work area, click-through while the page is hidden. It exits on SIGTERM or when its parent dies. Exit code 78 means GTK/WebKit/a display is missing.
+- **`HudSupervisor`** (in jarvisd): spawns the window (token in its environment, never argv), restarts a crash after 0.5/1/2 s, gives up after more than three crashes in a minute, and on exit 78 or a missing interpreter logs once and carries on headless. `jarvis run --no-hud` or `hud.enabled = false` skips all of it.
 
 ## Platform split
 
