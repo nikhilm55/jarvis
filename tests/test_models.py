@@ -81,11 +81,12 @@ def test_should_list_known_names_when_model_is_unknown() -> None:
         models.ensure("nope")
 
 
-def test_should_register_exactly_the_five_m1_models() -> None:
+def test_should_register_exactly_the_six_m1_models() -> None:
     assert sorted(models.REGISTRY) == [
         "hey_jarvis_v0.1",
         "oww-embedding",
         "oww-melspectrogram",
+        "silero-vad",
         "whisper-base.en",
         "whisper-tiny.en",
     ]
