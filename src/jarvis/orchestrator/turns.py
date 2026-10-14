@@ -80,7 +80,7 @@ class TurnRunner:
             return None
         await self._hud(HudEvent("listening", "Reply...", {"window": "reply"}))
         answer = await self._s.windows.ask(self._s.timing.reply_window_s)
-        if answer == "timeout":
+        if answer is None:
             await self._hud(HudEvent("idle"))
             return None
         transcript = Transcript(answer, command.transcript.engine, 0.0)
@@ -183,7 +183,9 @@ class TurnRunner:
         handle = self._s.voice.say(question)
         await self._s.voice.wait(handle)
         await self._hud(HudEvent("listening", "Reply...", {"window": "reply"}))
-        return await self._s.windows.ask(self._s.timing.reply_window_s)
+        seconds = self._s.timing.reply_window_s
+        reply = await self._s.windows.ask(seconds)
+        return f"(no reply from the user within {seconds:g} seconds)" if reply is None else reply
 
     async def _finish(self, final: FinalResponse) -> None:
         """Speak the final answer, update the HUD and wait for the audio."""

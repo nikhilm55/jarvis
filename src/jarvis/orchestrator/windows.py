@@ -18,7 +18,7 @@ class Windows:
         self._clock = clock
         self._kind: WindowKind | None = None
         self._timer: asyncio.Task[None] | None = None
-        self._answer: asyncio.Future[str] | None = None
+        self._answer: asyncio.Future[str | None] | None = None
         self._on_timeout: Callable[[], Awaitable[None]] | None = None
         self._held: bool = False
         self._deadline: float = 0.0
@@ -60,12 +60,15 @@ class Windows:
         self._held = False
         await on_timeout()
 
-    async def ask(self, seconds: float) -> str:
-        """Open a reply window and await the answer or a timeout."""
+    async def ask(self, seconds: float) -> str | None:
+        """Open a reply window; the answer, or None when it expired or was closed unanswered.
+
+        None is not text the user could say, so a spoken "timeout" is just an answer.
+        """
         self.close()
         self._kind = "reply"
         loop = asyncio.get_running_loop()
-        future: asyncio.Future[str] = loop.create_future()
+        future: asyncio.Future[str | None] = loop.create_future()
         self._answer = future
         self._deadline = self._clock() + seconds
         self._arm(seconds)
@@ -74,13 +77,13 @@ class Windows:
         finally:
             self._finish(future)
 
-    async def _expire_reply(self, seconds: float, future: asyncio.Future[str]) -> None:
-        """Wait for the reply window to expire and resolve with timeout."""
+    async def _expire_reply(self, seconds: float, future: asyncio.Future[str | None]) -> None:
+        """Wait for the reply window to expire and resolve with no answer."""
         await asyncio.sleep(seconds)
         if not future.done():
-            future.set_result("timeout")
+            future.set_result(None)
 
-    def _finish(self, future: asyncio.Future[str]) -> None:
+    def _finish(self, future: asyncio.Future[str | None]) -> None:
         """Clean up the reply window state if it has not been replaced."""
         if self._answer is future:
             if self._timer is not None:
@@ -114,12 +117,12 @@ class Windows:
         return False
 
     def close(self) -> None:
-        """Close the current window, resolving any pending reply with timeout."""
+        """Close the current window, resolving any pending reply with no answer."""
         if self._timer is not None:
             self._timer.cancel()
             self._timer = None
         if self._answer is not None and not self._answer.done():
-            self._answer.set_result("timeout")
+            self._answer.set_result(None)
         self._answer = None
         self._kind = None
         self._on_timeout = None
