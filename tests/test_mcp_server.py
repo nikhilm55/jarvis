@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -14,6 +15,7 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp_types import CallToolResult, TextContent
 
 from jarvis import policy
+from jarvis.brain.failures import ToolError
 from jarvis.mcp.server import Dispatch, JarvisMcpServer
 from jarvis.mcp.tools import TOOLS
 
@@ -203,6 +205,55 @@ def test_should_keep_serving_when_dispatch_raises() -> None:
             assert _text(res2) == "ok"
 
     asyncio.run(scenario())
+
+
+def test_should_return_the_plain_message_when_dispatch_raises_a_tool_error() -> None:
+    async def scenario() -> None:
+        async with (
+            _serving(_Recorder(error=ToolError("no window titled 'Calc'"))) as server,
+            _connected(server) as client,
+        ):
+            res = await client.call_tool("volume_get", {})
+            assert res.is_error is True
+            assert _text(res) == "no window titled 'Calc'"
+
+    asyncio.run(scenario())
+
+
+def test_should_log_a_warning_without_a_traceback_when_dispatch_raises_a_tool_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def scenario() -> None:
+        async with (
+            _serving(_Recorder(error=ToolError("step limit reached"))) as server,
+            _connected(server) as client,
+        ):
+            await client.call_tool("volume_get", {})
+
+    with caplog.at_level(logging.DEBUG, logger="jarvis"):
+        asyncio.run(scenario())
+
+    [record] = [r for r in caplog.records if "step limit reached" in r.getMessage()]
+    assert record.levelno == logging.WARNING
+    assert record.exc_info is None
+
+
+def test_should_still_log_an_error_when_dispatch_raises_something_else(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def scenario() -> None:
+        async with (
+            _serving(_Recorder(error=RuntimeError("boom"))) as server,
+            _connected(server) as client,
+        ):
+            await client.call_tool("volume_get", {})
+
+    with caplog.at_level(logging.DEBUG, logger="jarvis"):
+        asyncio.run(scenario())
+
+    [record] = [r for r in caplog.records if r.getMessage() == "tool dispatch failed"]
+    assert record.levelno == logging.ERROR
+    assert record.exc_info is not None
 
 
 def test_should_mask_secrets_when_dispatch_raises() -> None:
