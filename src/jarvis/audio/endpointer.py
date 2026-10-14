@@ -45,6 +45,11 @@ class Endpointer:
         self._silent = 0  # trailing non-speech samples inside the open utterance
         self._begun = 0  # stream position of the open utterance's first sample
 
+    @property
+    def speaking(self) -> bool:
+        """True while an utterance is open (the VAD heard speech and the trailing wait is on)."""
+        return self._speaking
+
     def feed(self, frame: Pcm) -> list[Event]:
         if frame.ndim != 1 or frame.dtype != np.int16:
             raise ValueError(f"expected a 1-D int16 frame, got {frame.dtype} {frame.shape}")

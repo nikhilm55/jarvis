@@ -4,6 +4,7 @@ import asyncio
 import functools
 import os
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 from jarvis import models
@@ -90,6 +91,12 @@ def _warm_engine(settings: Settings) -> Engine:
 
 def _segmenter(settings: Settings, voice: Voice) -> Segmenter:
     """Endpointer plus wake detector, deaf while Jarvis speaks."""
+    return build_segmenter(settings, voice.is_deaf)
+
+
+def build_segmenter(settings: Settings, is_deaf: Callable[[], bool]) -> Segmenter:
+    """The product's capture chain; the wake models only run while the VAD hears speech."""
     audio = settings.audio
     endpointer = Endpointer(SileroVad(), trailing_ms=audio.trailing_ms, cap_s=audio.cap_s)
-    return Segmenter(endpointer, WakeDetector(settings.wake.model), voice.is_deaf)
+    detector = WakeDetector(settings.wake.model, hot=lambda: endpointer.speaking)
+    return Segmenter(endpointer, detector, is_deaf)
