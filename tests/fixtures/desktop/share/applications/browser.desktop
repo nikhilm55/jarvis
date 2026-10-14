@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Browser
+Name[fr]=Navigateur
+Exec=browse
+Actions=private;
+
+[Desktop Action private]
+Name=New Private Window
+Exec=browse --private

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Calculator
+GenericName=Calculator
+Keywords=calculation;arithmetic;
+Exec=examplecalc %U
+StartupWMClass=ExampleCalc
