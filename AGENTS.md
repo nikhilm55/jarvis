@@ -4,7 +4,7 @@ Single source of truth for every AI coding agent in this repo. `CLAUDE.md` impor
 
 ## Project
 
-Jarvis is a Windows + Linux desktop app: say "Jarvis, …", Whisper transcribes it, an AI "brain" (default: the user's Claude Code, headless) acts on the PC through tools/MCP servers, and Jarvis speaks back. Spec: `docs/FRS.md`. **Current stage: M0 — feasibility spikes** (FRS §11). No product code exists beyond the CLI stub; do not build ahead of the milestone.
+Jarvis is a Windows + Linux desktop app: say "Jarvis, …", Whisper transcribes it, an AI "brain" (default: the user's Claude Code, headless) acts on the PC through tools/MCP servers, and Jarvis speaks back. Spec: `docs/FRS.md`. **Current stage: M1 — the voice loop on Linux X11** (FRS §11, plan `docs/plans/2026-10-07-m1-voice-loop.md`, stack ADR-0010). Build only your assigned plan task; do not build ahead of the milestone.
 
 ## Stack (actual, not aspirational)
 

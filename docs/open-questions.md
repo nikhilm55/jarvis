@@ -28,7 +28,7 @@ Unresolved decisions, tracked instead of guessed. Agents: check this file at ses
 **Owner:** @nikhilm55
 **Context:** beyondMeetings is MIT; Jarvis has no LICENSE yet. docs/ai/policy.md §Licence.
 **Question:** MIT, proprietary (FiftyFive Technologies) or other?
-**Impact:** Which third-party code and models can be bundled; how AI-generated code is licensed.
+**Impact:** Which third-party code and models can be bundled; how AI-generated code is licensed. Known M1 items (ADR-0010): the stock openWakeWord models are CC BY-NC-SA 4.0 (dev only; replaced by our own model), Kokoro's phonemizer bundles espeak-ng (GPL-3.0), Piper is GPL-3.0.
 
 ## OQ-005 — Is Hindi/Hinglish a Must for v1?
 **Status:** open

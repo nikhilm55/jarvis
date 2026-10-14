@@ -47,3 +47,14 @@ Interrupt → ask for a revert → new session with the lesson in the prompt. If
 ## Prompts
 
 Context · Task · Constraints · "Done when". One objective per prompt. For bugs: symptom + file + expected vs actual. For refactors: name the smell, say "behaviour must not change", and say how to verify.
+
+## Orchestrated work (milestones)
+
+For a milestone, one **orchestrator** session (Opus) owns the plan in `docs/plans/`, `docs/handoff.md` and the order of work. It never writes product code. It hands each plan task to a fresh **worker** session with a prompt in this shape:
+
+- **Context:** the plan task number, the files to read (only those), and the interfaces it must honour.
+- **Task:** one plan task, one branch from `main`, one PR.
+- **Constraints:** stay inside the task's files; don't edit the plan, `docs/handoff.md` or interfaces owned by the orchestrator. If a requirement is unclear, add an OQ and stop.
+- **Done when:** the task's verify line passes, with real output.
+
+Parallel workers use separate git worktrees (`git worktree add ../jarvis-t<N> -b <branch> origin/main`). Each worker ends with a REPORT block for the orchestrator: PR link, verify output, deviations from the plan, new OQs, follow-ups. The owner pastes the REPORT into the orchestrator session, reviews and merges the PR. The orchestrator then updates the plan status and the hand-off and issues the next prompts.
