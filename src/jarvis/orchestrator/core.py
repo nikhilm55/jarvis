@@ -106,9 +106,12 @@ class Orchestrator:
         self._stopping.set()
 
     def _install_signals(self, loop: asyncio.AbstractEventLoop) -> list[int]:
-        """Install SIGINT and SIGTERM handlers, skipping unsupported platforms."""
+        """Install SIGINT, SIGTERM and SIGHUP (terminal closed) handlers where supported."""
         installed: list[int] = []
-        for sig in (signal.SIGINT, signal.SIGTERM):
+        for name in ("SIGINT", "SIGTERM", "SIGHUP"):  # SIGHUP does not exist on Windows
+            sig = getattr(signal, name, None)
+            if sig is None:
+                continue
             try:
                 loop.add_signal_handler(sig, self.request_stop)
             except (NotImplementedError, ValueError, RuntimeError):

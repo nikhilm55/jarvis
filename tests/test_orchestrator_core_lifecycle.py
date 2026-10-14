@@ -49,7 +49,7 @@ def test_should_cancel_the_running_turn_and_record_it_when_the_user_says_stop(
     assert rig.speaker.said == []
 
 
-@pytest.mark.parametrize("trigger", ["request_stop", "sigint", "sigterm"])
+@pytest.mark.parametrize("trigger", ["request_stop", "sigint", "sigterm", "sighup"])
 def test_should_close_every_child_when_asked_to_stop_mid_run(tmp_path: Path, trigger: str) -> None:
     async def scenario() -> CoreRig:
         rig = CoreRig(tmp_path, [])
@@ -59,7 +59,8 @@ def test_should_close_every_child_when_asked_to_stop_mid_run(tmp_path: Path, tri
             if trigger == "request_stop":
                 rig.orchestrator.request_stop()
             else:
-                os.kill(os.getpid(), signal.SIGINT if trigger == "sigint" else signal.SIGTERM)
+                sig = {"sigint": "SIGINT", "sigterm": "SIGTERM", "sighup": "SIGHUP"}[trigger]
+                os.kill(os.getpid(), getattr(signal, sig))
             await asyncio.wait_for(run, 10)
         finally:
             run.cancel()
