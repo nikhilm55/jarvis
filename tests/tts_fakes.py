@@ -7,7 +7,7 @@ from collections.abc import Callable
 import numpy as np
 import numpy.typing as npt
 
-from jarvis.tts.engines import AudioEngine
+from jarvis.tts.engines import AudioEngine, DirectEngine
 from jarvis.tts.speaker import Speaker
 
 WriteCallback = Callable[[npt.NDArray[np.float32], int], None]
@@ -83,6 +83,27 @@ class FakeSink:
         self.closed = True
 
 
+class FakeDirect:
+    """DirectEngine fake: records spoken texts, cancellable blocking speak."""
+
+    def __init__(self, *, block: bool = False) -> None:
+        self.spoken: list[str] = []
+        self._block = block
+        self._cancel = threading.Event()
+        self.entered = threading.Event()
+        self.cancelled = threading.Event()
+
+    def speak(self, text: str) -> None:
+        self.entered.set()
+        self.spoken.append(text)
+        if self._block:
+            self._cancel.wait(5.0)
+
+    def cancel(self) -> None:
+        self.cancelled.set()
+        self._cancel.set()
+
+
 class MutableClock:
     """Tiny clock object with a settable `now`."""
 
@@ -94,7 +115,7 @@ class MutableClock:
 
 
 def make_speaker(
-    engine: AudioEngine,
+    engine: AudioEngine | DirectEngine,
     sinks: list[FakeSink],
     clock: Callable[[], float] | None = None,
 ) -> Speaker:
