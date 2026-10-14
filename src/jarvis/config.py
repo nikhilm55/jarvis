@@ -30,7 +30,7 @@ class WakeSettings(_Section):
 
 class SttSettings(_Section):
     engine: Literal["whisper-server"] = "whisper-server"
-    model: str = "base.en"
+    model: str = "tiny.en"
     server_bin: str | None = None
     threads: int = Field(default=4, ge=1)
 
