@@ -86,10 +86,6 @@ const label = document.getElementById('pill-label');
 let timer = 0;
 function hide() {
   zone.classList.remove('on');
-  announce(false);
-}
-function announce(visible) {
-  document.title = visible ? 'Jarvis HUD:visible' : 'Jarvis HUD:hidden';
 }
 function render(ev) {
   if (!Object.hasOwn(LOOKS, ev.state)) return;
@@ -119,7 +115,6 @@ function render(ev) {
     wave.classList.remove('live');
   }
   zone.classList.add('on');
-  announce(true);
   clearTimeout(timer);
   timer = setTimeout(hide, look.hide ? HIDE_MS : WATCHDOG_MS);
 }
@@ -165,7 +160,6 @@ async function connect() {
     delay = Math.min(5000, delay * 2);
   }
 }
-announce(false);
 connect();
 </script>
 </body>
