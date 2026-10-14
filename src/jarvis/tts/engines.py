@@ -53,34 +53,50 @@ class SpdSayEngine:
         self._popen = popen
         self._run = run
         self._proc: Any = None
+        self._speaking = False
+        self._cancelled = False
         self._lock = threading.Lock()
 
     def speak(self, text: str) -> None:
-        proc = self._popen(
-            [self._binary, "-w", "--", text],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
         with self._lock:
-            self._proc = proc
+            self._speaking = True
+            self._cancelled = False
         try:
+            proc = self._popen(
+                [self._binary, "-w", "--", text],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            with self._lock:
+                self._proc = proc
+                cancelled = self._cancelled
+            if cancelled:
+                proc.terminate()
             proc.wait()
         finally:
             with self._lock:
                 self._proc = None
+                self._speaking = False
 
     def cancel(self) -> None:
         with self._lock:
+            if not self._speaking:
+                return
+            self._cancelled = True
             proc = self._proc
         if proc is None:
             return
-        self._run(
-            [self._binary, "-C"],
-            check=False,
-            timeout=2,
-            capture_output=True,
-        )
-        proc.terminate()
+        try:
+            self._run(
+                [self._binary, "-C"],
+                check=False,
+                timeout=2,
+                capture_output=True,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            logger.warning("spd-say -C failed: %s", error)
+        finally:
+            proc.terminate()
 
 
 class KokoroEngine:

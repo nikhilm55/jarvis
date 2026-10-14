@@ -59,6 +59,7 @@ class Speaker:
         self._synth: threading.Thread | None = None
         self._current: SpeechHandle | None = None
         self._lock = threading.Lock()
+        self._synth_lock = threading.Lock()
         self._closed = False
 
     def say(self, text: str) -> SpeechHandle:
@@ -126,8 +127,6 @@ class Speaker:
                     self._current = job.handle
             if skip:
                 continue
-            if self._synth is not None and self._synth.is_alive():
-                self._synth.join(timeout=5)
             try:
                 self._run(job)
             except Exception:
@@ -170,7 +169,12 @@ class Speaker:
         stop = threading.Event()
         self._synth = threading.Thread(
             target=_synthesise_into,
-            args=(engine.synthesize, split_sentences(job.text), clips, stop),
+            args=(
+                _locked(self._synth_lock, engine.synthesize),
+                split_sentences(job.text),
+                clips,
+                stop,
+            ),
             name="jarvis-tts-synth",
             daemon=True,
         )
@@ -180,8 +184,6 @@ class Speaker:
             self._play_clips(clips, sink, engine.sample_rate, handle)
         finally:
             stop.set()
-            self._synth.join(timeout=5)
-            self._synth = None
 
     def _play_clips(
         self,
@@ -270,3 +272,16 @@ def _synthesise_into(
 
 def _chunks(clip: Pcm, size: int) -> list[Pcm]:
     return [clip[i : i + size] for i in range(0, len(clip), size)]
+
+
+def _locked(
+    lock: threading.Lock,
+    synthesize: Callable[[str], Pcm],
+) -> Callable[[str], Pcm]:
+    """Return a wrapper that serialises calls to `synthesize` under `lock`."""
+
+    def _call(text: str) -> Pcm:
+        with lock:
+            return synthesize(text)
+
+    return _call
