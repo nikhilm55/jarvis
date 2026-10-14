@@ -97,3 +97,22 @@ def test_should_reject_a_non_positive_brain_limit(tmp_path: Path, key: str) -> N
     path = write_toml(tmp_path / "c.toml", f"[brain]\n{key} = 0\n")
     with pytest.raises(ConfigError, match=rf"brain\.{key}"):
         load_settings(path)
+
+
+def test_should_default_the_output_latency_to_high() -> None:
+    assert Settings().tts.output_latency == "high"
+
+
+@pytest.mark.parametrize(("literal", "expected"), [("'low'", "low"), ("0.05", 0.05)])
+def test_should_read_the_output_latency(
+    tmp_path: Path, literal: str, expected: str | float
+) -> None:
+    path = write_toml(tmp_path / "c.toml", f"[tts]\noutput_latency = {literal}\n")
+    assert load_settings(path).tts.output_latency == expected
+
+
+@pytest.mark.parametrize("literal", ["'medium'", "0", "-1.0", "5.0"])
+def test_should_reject_a_bad_output_latency(tmp_path: Path, literal: str) -> None:
+    path = write_toml(tmp_path / "c.toml", f"[tts]\noutput_latency = {literal}\n")
+    with pytest.raises(ConfigError, match=r"tts\.output_latency"):
+        load_settings(path)
