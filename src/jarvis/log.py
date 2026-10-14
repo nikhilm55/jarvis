@@ -6,7 +6,9 @@ import os
 import re
 import sys
 from datetime import UTC, datetime
+from io import TextIOWrapper
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from jarvis.paths import data_dir, ensure
 
@@ -55,7 +57,22 @@ class _JsonFormatter(logging.Formatter):
         return json.dumps(entry, ensure_ascii=False)
 
 
-class _AuditHandler(RotatingFileHandler):
+class _PrivateFileHandler(RotatingFileHandler):
+    """A rotating file only its owner can read (0600), like the activity log."""
+
+    def _open(self) -> TextIOWrapper:
+        fd = os.open(self.baseFilename, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        os.chmod(self.baseFilename, 0o600)  # a file made by an older run keeps no looser bits
+        return open(fd, "a", encoding=self.encoding, errors=self.errors)
+
+
+def _logs_dir() -> Path:
+    directory = ensure(data_dir() / "logs")
+    os.chmod(directory, 0o700)
+    return directory
+
+
+class _AuditHandler(_PrivateFileHandler):
     """Unlike the app handler, write, rollover and format errors propagate to the caller."""
 
     def handleError(self, record: logging.LogRecord) -> None:
@@ -65,14 +82,14 @@ class _AuditHandler(RotatingFileHandler):
 
 
 def _attach_handler(root: logging.Logger) -> None:
-    target = os.path.abspath(ensure(data_dir() / "logs") / _FILE)
+    target = os.path.abspath(_logs_dir() / _FILE)
     for handler in root.handlers:
         if isinstance(handler, RotatingFileHandler):
             if handler.baseFilename == target:
                 return
             handler.close()  # JARVIS_HOME moved: follow it
             root.removeHandler(handler)
-    handler = RotatingFileHandler(target, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8")
+    handler = _PrivateFileHandler(target, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8")
     handler.setFormatter(_JsonFormatter())
     root.addHandler(handler)
 
@@ -80,7 +97,7 @@ def _attach_handler(root: logging.Logger) -> None:
 def _audit_handler() -> _AuditHandler:
     logger = logging.getLogger(_AUDIT_LOGGER)
     logger.propagate = False
-    target = os.path.abspath(ensure(data_dir() / "logs") / _AUDIT_FILE)
+    target = os.path.abspath(_logs_dir() / _AUDIT_FILE)
     for handler in logger.handlers:
         if isinstance(handler, _AuditHandler):
             if handler.baseFilename == target:
