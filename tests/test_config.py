@@ -77,16 +77,19 @@ def test_should_default_the_brain_session_settings_when_file_is_missing() -> Non
     brain = load_settings().brain
     assert (brain.model, brain.max_steps, brain.turn_timeout_s) == ("sonnet", 25, 120)
     assert brain.claude_bin is None
+    assert brain.address_as is None
 
 
 def test_should_read_brain_overrides_from_toml(tmp_path: Path) -> None:
     path = write_toml(
         tmp_path / "c.toml",
-        "[brain]\nmodel = 'opus'\nmax_steps = 5\nturn_timeout_s = 30\nclaude_bin = '/opt/claude'\n",
+        "[brain]\nmodel = 'opus'\nmax_steps = 5\nturn_timeout_s = 30\n"
+        "claude_bin = '/opt/claude'\naddress_as = 'Nik'\n",
     )
     brain = load_settings(path).brain
     assert (brain.model, brain.max_steps, brain.turn_timeout_s) == ("opus", 5, 30)
     assert brain.claude_bin == "/opt/claude"
+    assert brain.address_as == "Nik"
 
 
 @pytest.mark.parametrize("key", ["max_steps", "turn_timeout_s"])
