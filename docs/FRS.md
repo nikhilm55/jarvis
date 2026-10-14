@@ -978,7 +978,7 @@ Raycast's rules are kept, with one deliberate change: Raycast keeps saturated ac
 | **jarvis-desktop MCP** | OS control tools, served by jarvisd over loopback streamable HTTP (shares state with the policy gate and HUD) | Python, per-OS backends |
 | **Brain** | Warm Claude Code headless session, or jarvisd's own agent loop for API/URL brains | `claude` CLI stream-json; MCP Python SDK for the API loop |
 | **User MCP servers** | Child processes (stdio) or remote URLs | npx / uvx / docker / binaries |
-| **UI** | HUD overlay, palette, main window | Web UI (HTML/CSS/vanilla JS like beyondMeetings) in pywebview windows: frameless, transparent, on-top for the HUD |
+| **UI** | HUD overlay, palette, main window | Web UI (HTML/CSS/vanilla JS like beyondMeetings). HUD: a separate GTK3/WebKit2 process under the system Python, frameless, transparent, on-top, click-through (ADR-0011); main window/palette: pywebview or the same approach (M4) |
 
 ### 9.2 Component choices (recommended, to be confirmed in the M0 spike)
 
@@ -994,7 +994,7 @@ Raycast's rules are kept, with one deliberate change: Raycast keeps saturated ac
 | Windows control | UI Automation (`uiautomation` / `pywinauto`), Win32 APIs, PowerShell, URI schemes | Windows-MCP (open source) worth benchmarking against our own |
 | Linux control | AT-SPI2 (`pyatspi`), xdotool/wmctrl (X11), ydotool + portals + GNOME extension / KWin D-Bus (Wayland) | |
 | Hotkeys | Windows `RegisterHotKey`; X11 key grab; Wayland GlobalShortcuts portal or DE custom shortcut → `jarvis ptt` CLI | |
-| Overlay | pywebview frameless/transparent/on-top window | Tauri overlay if pywebview transparency fails on Wayland/Qt |
+| Overlay | Separate GTK3 + WebKit2 window process (ADR-0011) | pywebview/Tauri for the main window (M4); Wayland later (ADR-0009) |
 | Config | pydantic + TOML (reuse) | |
 | Secrets | `keyring` + 0600 fallback (reuse) | |
 | Packaging | `install.sh`, `install.ps1`, Inno Setup offline `setup.exe`, `build_payload.py` (reuse) | Code signing for Windows (SmartScreen) — **S** |

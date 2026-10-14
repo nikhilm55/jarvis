@@ -50,3 +50,10 @@ Unresolved decisions, tracked instead of guessed. Agents: check this file at ses
 **Context:** docs/ai/policy.md §Ownership; `.github/CODEOWNERS`.
 **Question:** Which second person can review changes to `.claude/`, `AGENTS.md` and the CI config?
 **Impact:** Two-person review of agent config; a single point of failure until resolved.
+
+## OQ-008 — May Jarvis's brain session touch the user's Claude Code state files?
+**Status:** open
+**Owner:** @nikhilm55
+**Context:** FRS FR-BRN-02 says the user's `~/.claude.json` is never modified. Jarvis's own code never writes there, and the brain runs isolated (`--setting-sources ""`, own settings, allowlisted env). But Claude Code itself updates `~/.claude.json`, `~/.claude/sessions/` and `~/.claude/backups/` on every run (seen with strace in M1 task 10).
+**Question:** Accept that (and soften FR-BRN-02's wording to "Jarvis never writes the user's Claude Code config"), or give Jarvis its own `CLAUDE_CONFIG_DIR`, which needs a separate Claude Code login just for Jarvis?
+**Impact:** Setup flow (an extra sign-in in the wizard) vs a small footprint in the user's Claude Code state.
