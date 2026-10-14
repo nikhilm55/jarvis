@@ -73,3 +73,15 @@ def test_should_launch_claude_isolated_when_a_turn_runs(
     assert argv[argv.index("--tools") + 1] == ""
     assert argv[argv.index("--allowedTools") + 1] == "mcp__jarvis__*"
     assert all(".claude" not in arg for arg in argv)
+
+
+def test_should_start_claude_with_an_allowlisted_environment_when_a_turn_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDE_CONFIG_DIR", "CLAUDECODE"):
+        monkeypatch.setenv(name, "x")
+    monkeypatch.setenv("MCP_TIMEOUT", "1")
+    _, _, fake = play(tmp_path, monkeypatch, [finish(respond())])
+    names = set(fake.records()[0]["env"])
+    assert not [n for n in names if n.startswith(("ANTHROPIC_", "CLAUDE", "MCP_", "OTEL_"))]
+    assert {"PATH", "HOME", "JARVIS_MCP_TOKEN", "FAKE_CLAUDE_SCENARIO"} <= names

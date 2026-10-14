@@ -122,13 +122,14 @@ class JarvisMcpServer:
         self._token = token
         self._url = f"http://127.0.0.1:{port}/mcp"
 
-    def write_client_config(self, path: Path) -> None:
-        """Write the Claude Code `--mcp-config` file (mode 0600) that points at this server."""
-        server = {
-            "type": "http",
-            "url": self.url,
-            "headers": {"Authorization": f"Bearer {self.token}"},
-        }
+    def write_client_config(self, path: Path, *, token_env: str | None = None) -> None:
+        """Write the Claude Code `--mcp-config` file (mode 0600) that points at this server.
+
+        With `token_env` the file holds `Bearer ${token_env}` (Claude Code expands it from the
+        child's environment), so the secret is never written to disk (FR-MCP-06).
+        """
+        bearer = f"Bearer ${{{token_env}}}" if token_env else f"Bearer {self.token}"
+        server = {"type": "http", "url": self.url, "headers": {"Authorization": bearer}}
         write_private_json(path, {"mcpServers": {SERVER_NAME: server}})
 
     async def _wait_started(self, server: uvicorn.Server, task: asyncio.Task[None]) -> None:

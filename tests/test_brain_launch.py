@@ -4,6 +4,8 @@ import json
 import stat
 from pathlib import Path
 
+import pytest
+
 from jarvis.brain.launch import prepare_launch
 from jarvis.brain.rules import build_rules
 from jarvis.config import BrainSettings
@@ -13,14 +15,22 @@ from jarvis.paths import runtime_dir
 class FakeMcp:
     """Fake MCP client that records config paths and writes a stub file."""
 
+    token = "tok-0123456789"  # noqa: S105
+
     def __init__(self) -> None:
         self.paths: list[Path] = []
+        self.token_envs: list[str | None] = []
 
-    def write_client_config(self, path: Path) -> None:
-        """Record the path and write an empty mcpServers object to it."""
+    def write_client_config(self, path: Path, *, token_env: str | None = None) -> None:
+        """Record the call and write an Authorization header like the real server does."""
         self.paths.append(path)
+        self.token_envs.append(token_env)
+        bearer = f"Bearer ${{{token_env}}}" if token_env else f"Bearer {self.token}"
+        headers = {"Authorization": bearer}
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+        path.write_text(
+            json.dumps({"mcpServers": {"jarvis": {"headers": headers}}}), encoding="utf-8"
+        )
 
 
 def value_after(argv: list[str], flag: str) -> str:
@@ -131,3 +141,31 @@ def test_should_rewrite_files_and_keep_cwd_empty_when_called_twice(tmp_path: Pat
     spec2 = prepare_launch("claude", BrainSettings(), mcp, root=root)
     assert spec2.cwd == spec1.cwd
     assert list(spec2.cwd.iterdir()) == []
+
+
+def test_should_keep_the_token_out_of_the_mcp_file_and_in_the_child_env(tmp_path: Path) -> None:
+    mcp = FakeMcp()
+    spec = prepare_launch("claude", BrainSettings(), mcp, root=tmp_path / "brain")
+    assert mcp.token_envs == ["JARVIS_MCP_TOKEN"]
+    text = Path(value_after(spec.argv, "--mcp-config")).read_text(encoding="utf-8")
+    assert mcp.token not in text
+    assert "${JARVIS_MCP_TOKEN}" in text
+    assert spec.env["JARVIS_MCP_TOKEN"] == mcp.token
+
+
+def test_should_not_inherit_the_callers_environment_when_launching(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ("ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR", "CLAUDECODE", "MCP_TIMEOUT"):
+        monkeypatch.setenv(name, "x")
+    monkeypatch.setenv("HOME", "/home/someone")
+    spec = prepare_launch("claude", BrainSettings(), FakeMcp(), root=tmp_path / "brain")
+    assert spec.env["HOME"] == "/home/someone"
+    assert not [n for n in spec.env if n.startswith(("ANTHROPIC_", "CLAUDE", "MCP_", "OTEL_"))]
+
+
+def test_should_add_the_callers_extra_env_when_launching(tmp_path: Path) -> None:
+    spec = prepare_launch(
+        "claude", BrainSettings(), FakeMcp(), root=tmp_path / "brain", extra_env={"FAKE_X": "1"}
+    )
+    assert spec.env["FAKE_X"] == "1"

@@ -1,6 +1,7 @@
 """Tests for jarvis.brain.process.ClaudeProcess against a fake claude executable."""
 
 import asyncio
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -20,7 +21,9 @@ Events = asyncio.Queue[dict[str, Any] | None]
 async def running(fake: FakeClaude, cwd: Path) -> AsyncIterator[tuple[ClaudeProcess, Events]]:
     """A spawned fake claude and the queue its events land in; always killed on exit."""
     events: Events = asyncio.Queue()
-    proc = await ClaudeProcess.spawn(LaunchSpec([fake.bin, "-p"], cwd), events.put_nowait)
+    proc = await ClaudeProcess.spawn(
+        LaunchSpec([fake.bin, "-p"], cwd, dict(os.environ)), events.put_nowait
+    )
     try:
         yield proc, events
     finally:
@@ -130,6 +133,6 @@ def test_should_not_raise_when_kill_is_called_twice(
 def test_should_raise_brain_unavailable_when_the_executable_is_missing(tmp_path: Path) -> None:
     async def main() -> None:
         with pytest.raises(BrainUnavailable):
-            await ClaudeProcess.spawn(LaunchSpec(["/nonexistent/claude"], tmp_path), print)
+            await ClaudeProcess.spawn(LaunchSpec(["/nonexistent/claude"], tmp_path, {}), print)
 
     asyncio.run(main())

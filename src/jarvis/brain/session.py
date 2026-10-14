@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+from collections.abc import Mapping
 from typing import Any
 
 from jarvis.brain.agent_bin import resolve_claude
@@ -37,12 +38,18 @@ class ClaudeCodeBrain:
     """
 
     def __init__(
-        self, settings: Settings, mcp_server: McpConfigWriter, desktop: DesktopLike
+        self,
+        settings: Settings,
+        mcp_server: McpConfigWriter,
+        desktop: DesktopLike,
+        *,
+        extra_env: Mapping[str, str] | None = None,
     ) -> None:
         """Initialise the brain with settings, an MCP writer and a desktop."""
         self._brain = settings.brain
         self._mcp = mcp_server
         self._desktop = desktop
+        self._extra_env = extra_env  # tests only: variables the fake claude needs
         self._proc: ClaudeProcess | None = None
         self._queue: asyncio.Queue[_Item] = asyncio.Queue()
         self._lock = asyncio.Lock()
@@ -158,7 +165,7 @@ class ClaudeCodeBrain:
         if self._proc is not None:
             await self._drop_process("claude exited")
         binary = resolve_claude(self._brain.claude_bin)
-        spec = prepare_launch(binary, self._brain, self._mcp)
+        spec = prepare_launch(binary, self._brain, self._mcp, extra_env=self._extra_env)
         self._queue = asyncio.Queue()
         self._pending_result = False
         proc = await ClaudeProcess.spawn(spec, self._queue.put_nowait)
