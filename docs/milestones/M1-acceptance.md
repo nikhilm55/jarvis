@@ -100,7 +100,7 @@ Budget: ≤ 3 % of one core. **Met, with a thin margin on silence** (two other 6
 | `0.05` | ok (3.0 s) |
 | `"high"` (34.7 ms) | ok (3.0 s); also at 16, 22.05, 24 and 44.1 kHz, three runs each |
 
-Fix: `[tts] output_latency` (default `"high"`, or a number of seconds) is passed to the stream, and every stream call runs behind a timeout, so a write that does not return in 2 s aborts the stream and fails the speech handle (`audio output stalled`) instead of hanging the speaker thread; the next utterance opens a new stream. Measured on this machine with the real device (`Speaker` plus `SoundDeviceSink`, a 2 s quiet tone, six runs): cancel to the sink's `abort()` returning is a median 19 ms (max 23 ms), and the device holds 35 ms, so cancel to silence is about 55 ms against the 300 ms target. First audio (first write) is about 25 ms after `say()` with a tone engine; `high` adds 26 ms of device latency over `low` (8.7 ms) to when it is heard. The acceptance run now uses the product default with nothing patched.
+Fix: `[tts] output_latency` (default `"high"`, or a number of seconds) is passed to the stream, and every stream call runs behind a timeout, so a write that does not return in 2 s aborts the stream and fails the speech handle (`audio output stalled`) instead of hanging the speaker thread; the next utterance opens a new stream. Measured on this machine with the real device (`Speaker` plus `SoundDeviceSink`, a 2 s quiet tone, six runs): cancel to the sink's `abort()` returning is a median 19 ms (max 23 ms), and the device holds 35 ms, so cancel to silence is estimated at about 55 ms (the sum of the two; the moment the sound stops was not recorded) against the 300 ms target. First audio (first write) is about 25 ms after `say()` with a tone engine; `high` adds 26 ms of device latency over `low` (8.7 ms) to when it is heard. The acceptance run now uses the product default with nothing patched.
 
 **F2 (fixed, Task 13F): idle CPU was 9 % of a core.** The cause, with the numbers behind it:
 
@@ -130,7 +130,7 @@ Smaller notes:
 - A real microphone and room: levels, noise, accents, distance, the 400 ms silence rule with real speakers.
 - Echo and self-trigger (FR-ACT-10): Jarvis's own voice is never played into the pipeline here, because the source is a file.
 - Real human voices; synthetic voices are cleaner than people.
-- Barge-in ("Jarvis, stop") while speech plays (FR-ACT-09) through the whole pipeline. Only the sink's cancel-to-silence time was measured (about 55 ms, finding F1).
+- Barge-in ("Jarvis, stop") while speech plays (FR-ACT-09) through the whole pipeline. Only the sink's cancel-to-silence time was measured (estimated at about 55 ms, finding F1).
 - The HUD window, and the custom wake model (R67): the stock `hey_jarvis` is dev-only; these cases get re-run when the custom model lands.
 - Latency percentiles; there are three runs per command.
 

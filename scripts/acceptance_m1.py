@@ -234,8 +234,10 @@ async def run_suite(
             for window in calculator_windows():
                 close_window(window.window_id)
             orchestrator.request_stop()
-            await asyncio.wait_for(task, 60.0)
-            calculator_left = not await harness.until(lambda: not calculator_windows(), 6.0)
+            try:
+                await asyncio.wait_for(task, 60.0)
+            finally:
+                calculator_left = not await harness.until(lambda: not calculator_windows(), 6.0)
     return harness.rows, suite_notes(harness, log, gate, calculator_left)
 
 
