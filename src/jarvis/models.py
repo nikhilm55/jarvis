@@ -9,6 +9,7 @@ import httpx
 from jarvis.paths import cache_dir
 from jarvis.paths import ensure as ensure_dir
 
+_KOKORO = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0"
 _OWW = "https://github.com/dscripka/openWakeWord/releases/download/v0.5.1"
 _WHISPER = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
 # snakers4/silero-vad v5.1.2, pinned by commit so the URL can never drift.
@@ -88,6 +89,20 @@ REGISTRY: dict[str, ModelSpec] = {
             # pragma: allowlist nextline secret
             "2623a2953f6ff3d2c1e61740c6cdb7168133479b267dfef114a4a3cc5bdd788f",
             "silero_vad.onnx",
+        ),
+        ModelSpec(
+            "kokoro-v1.0",
+            f"{_KOKORO}/kokoro-v1.0.onnx",
+            # pragma: allowlist nextline secret
+            "7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5",
+            "kokoro-v1.0.onnx",
+        ),
+        ModelSpec(
+            "kokoro-voices-v1.0",
+            f"{_KOKORO}/voices-v1.0.bin",
+            # pragma: allowlist nextline secret
+            "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d",
+            "voices-v1.0.bin",
         ),
     )
 }

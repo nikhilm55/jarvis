@@ -5,10 +5,15 @@ import threading
 from collections.abc import Callable
 from typing import Any, Protocol, runtime_checkable
 
+import httpx
 import numpy as np
 import numpy.typing as npt
 
+from jarvis import models
 from jarvis.config import TtsSettings
+from jarvis.log import get_logger
+
+logger = get_logger(__name__)
 
 Pcm = npt.NDArray[np.float32]
 
@@ -78,7 +83,54 @@ class SpdSayEngine:
         proc.terminate()
 
 
+class KokoroEngine:
+    """Audio engine that synthesizes speech via the Kokoro ONNX runtime."""
+
+    sample_rate: int = 24000
+
+    def __init__(self, kokoro: Any, voice: str, speed: float) -> None:
+        self._kokoro = kokoro
+        self._voice = voice
+        self._speed = speed
+        self._lang = "en-gb" if voice.startswith("b") else "en-us"
+
+    def synthesize(self, text: str) -> Pcm:
+        audio, _rate = self._kokoro.create(
+            text,
+            voice=self._voice,
+            speed=self._speed,
+            lang=self._lang,
+        )
+        return np.asarray(audio, dtype=np.float32)
+
+
+_KOKORO_FAILURES = (
+    ImportError,
+    OSError,
+    ValueError,
+    RuntimeError,
+    httpx.HTTPError,
+    models.ModelIntegrityError,
+)
+
+
+def _load_kokoro(settings: TtsSettings) -> KokoroEngine:
+    from kokoro_onnx import Kokoro  # noqa: PLC0415
+
+    model = models.ensure("kokoro-v1.0")
+    voices = models.ensure("kokoro-voices-v1.0")
+    return KokoroEngine(Kokoro(str(model), str(voices)), settings.voice, settings.speed)
+
+
 def default_engine(settings: TtsSettings) -> Engine:
-    """Return the engine selected by ``settings`` (spd-say for now)."""
-    # Kokoro is wired in with the KokoroEngine commit.
-    return SpdSayEngine()
+    """Return the engine selected by ``settings``.
+
+    Prefers Kokoro when requested, falling back to spd-say on failure.
+    """
+    if settings.engine == "spd-say":
+        return SpdSayEngine()
+    try:
+        return _load_kokoro(settings)
+    except _KOKORO_FAILURES as error:
+        logger.warning("Kokoro could not be loaded (%s); falling back to spd-say", error)
+        return SpdSayEngine()

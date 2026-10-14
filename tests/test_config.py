@@ -22,6 +22,7 @@ def test_should_return_documented_defaults_when_file_is_missing() -> None:
     assert (settings.stt.engine, settings.stt.model) == ("whisper-server", "tiny.en")
     assert (settings.stt.server_bin, settings.stt.threads) == (None, 4)
     assert settings.tts.engine == "kokoro"
+    assert (settings.tts.voice, settings.tts.speed) == ("bm_george", 1.0)
     assert settings.brain.inactivity_reset_s == 600
     assert settings.log.retention_days == 30
 

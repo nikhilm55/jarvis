@@ -37,6 +37,8 @@ class SttSettings(_Section):
 
 class TtsSettings(_Section):
     engine: Literal["kokoro", "spd-say"] = "kokoro"
+    voice: str = "bm_george"
+    speed: float = Field(default=1.0, ge=0.5, le=2.0)
 
 
 class BrainSettings(_Section):
