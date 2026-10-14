@@ -2,10 +2,24 @@
 
 import argparse
 import sys
+from pathlib import Path
 
 import httpx
 
 from jarvis import __version__, models
+from jarvis.audio import (
+    SAMPLE_RATE,
+    AudioDeviceError,
+    AudioFormatError,
+    AudioSource,
+    Endpointer,
+    MicSource,
+    SileroVad,
+    SpeechStart,
+    Utterance,
+    WavFileSource,
+)
+from jarvis.config import load_settings
 
 
 def _not_built(command: str, task: int) -> int:
@@ -21,8 +35,37 @@ def _cmd_say(_args: argparse.Namespace) -> int:
     return _not_built("say", 5)
 
 
-def _cmd_listen(_args: argparse.Namespace) -> int:
-    return _not_built("listen", 3)
+def _cmd_listen(args: argparse.Namespace) -> int:
+    audio = load_settings().audio
+    source: AudioSource = WavFileSource(args.source) if args.source else MicSource(audio.device)
+    try:
+        endpointer = Endpointer(SileroVad(), trailing_ms=audio.trailing_ms, cap_s=audio.cap_s)
+        silence_before_ms = 0
+        for frame in source.frames():
+            for event in endpointer.feed(frame):
+                if isinstance(event, SpeechStart):
+                    silence_before_ms = event.silence_before_ms
+                else:
+                    return _print_utterance(event, silence_before_ms)
+        for event in endpointer.flush():
+            if isinstance(event, Utterance):
+                return _print_utterance(event, silence_before_ms)
+    except (AudioFormatError, AudioDeviceError, httpx.HTTPError, models.ModelIntegrityError) as e:
+        print(f"jarvis listen: {e}", file=sys.stderr)
+        return 2
+    finally:
+        source.close()
+    print("jarvis listen: no speech heard", file=sys.stderr)
+    return 1
+
+
+def _print_utterance(utterance: Utterance, silence_before_ms: int) -> int:
+    length = len(utterance.pcm) / SAMPLE_RATE
+    print(
+        f"utterance length={length:.2f}s silence_before_ms={silence_before_ms} "
+        f"started_at={utterance.started_at:.2f}s ended_at={utterance.ended_at:.2f}s"
+    )
+    return 0
 
 
 def _human_size(size: int) -> str:
@@ -67,9 +110,12 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", metavar="{run,say,listen,models}")
     commands.add_parser("run", help="run the voice loop").set_defaults(handler=_cmd_run)
     commands.add_parser("say", help="speak a line of text").set_defaults(handler=_cmd_say)
-    commands.add_parser("listen", help="record and transcribe once").set_defaults(
-        handler=_cmd_listen
+    listen = commands.add_parser("listen", help="capture one utterance and report its timings")
+    listen.add_argument(
+        "--once", action="store_true", required=True, help="stop after one utterance"
     )
+    listen.add_argument("--source", type=Path, metavar="FILE.wav", help="read a WAV, not the mic")
+    listen.set_defaults(handler=_cmd_listen)
     models_parser = commands.add_parser("models", help="list or download model files")
     actions = models_parser.add_subparsers(dest="action", required=True)
     actions.add_parser("list", help="show known models and cached sizes").set_defaults(
