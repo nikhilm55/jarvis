@@ -74,11 +74,15 @@ class Listener:
         """Dispatch a segment by window kind, ignoring tainted audio."""
         s = self._s
         if segment.tainted:
+            s.windows.release()  # the speech that held a window was not the user's
             return
         arrived = s.clock()
         kind = s.windows.kind
         if kind == "reply":
-            await self._on_reply(segment)
+            try:
+                await self._on_reply(segment)
+            finally:
+                s.windows.release()  # a held reply window must not stay held for good
         elif kind == "listen":
             await self._on_listen(segment, arrived)
         else:

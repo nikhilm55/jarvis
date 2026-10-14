@@ -1,12 +1,14 @@
 """Doubles for the Segmenter tests: scripted endpointer, scorer, deaf flags and clock."""
 
+import time
+from collections.abc import Callable
 from typing import cast
 
 import numpy as np
 
 from jarvis.audio import FRAME_SAMPLES, Endpointer, SpeechStart, Utterance
 from jarvis.audio.sources import Pcm
-from jarvis.orchestrator.segmenter import Segment, Segmenter
+from jarvis.orchestrator.segmenter import Segment, Segmenter, SegmentEvent
 
 FRAME = np.zeros(FRAME_SAMPLES, dtype=np.int16)
 
@@ -39,6 +41,10 @@ class FakeScorer:
     def __init__(self, scores: list[float]) -> None:
         self.scores = scores
         self.calls: list[Pcm] = []
+        self.resets = 0
+
+    def reset(self) -> None:
+        self.resets += 1
 
     def score(self, frame: Pcm) -> float:
         self.calls.append(frame)
@@ -65,16 +71,21 @@ def make(
     scores: list[float],
     deaf: list[bool],
     flushed: list[SpeechStart | Utterance] | None = None,
+    clock: Callable[[], float] | None = None,
 ) -> tuple[Segmenter, FakeEndpointer, FakeScorer]:
     endpointer = FakeEndpointer(script, flushed)
     scorer = FakeScorer(scores)
     is_deaf = FakeDeaf(deaf)
-    segmenter = Segmenter(cast(Endpointer, endpointer), scorer, is_deaf)
+    segmenter = Segmenter(cast(Endpointer, endpointer), scorer, is_deaf, clock or time.monotonic)
     return segmenter, endpointer, scorer
 
 
-def run(segmenter: Segmenter, n: int) -> list[Segment]:
-    segments: list[Segment] = []
+def run_events(segmenter: Segmenter, n: int) -> list[SegmentEvent]:
+    events: list[SegmentEvent] = []
     for _ in range(n):
-        segments.extend(segmenter.feed(FRAME))
-    return segments
+        events.extend(segmenter.feed(FRAME))
+    return events
+
+
+def run(segmenter: Segmenter, n: int) -> list[Segment]:
+    return [e for e in run_events(segmenter, n) if isinstance(e, Segment)]

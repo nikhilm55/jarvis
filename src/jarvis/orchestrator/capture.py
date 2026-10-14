@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from jarvis.audio import AudioSource
 from jarvis.orchestrator.ports import SegmenterPort
-from jarvis.orchestrator.segmenter import Segment
+from jarvis.orchestrator.segmenter import Segment, SpeechStarted
 
 __all__ = ["Capture", "CaptureItem", "SourceEnded", "SourceFailed"]
 
@@ -24,7 +24,7 @@ class SourceFailed:
     error: Exception
 
 
-CaptureItem = Segment | SourceEnded | SourceFailed
+CaptureItem = Segment | SpeechStarted | SourceEnded | SourceFailed
 
 
 class Capture:

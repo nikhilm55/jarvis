@@ -5,7 +5,7 @@ from typing import Protocol
 from jarvis.audio.sources import Pcm
 from jarvis.brain.dispatch import OnAsk, OnSay
 from jarvis.contract import FinalResponse, TurnEnvelope
-from jarvis.orchestrator.segmenter import Segment
+from jarvis.orchestrator.segmenter import Segment, SegmentEvent
 from jarvis.stt import Transcript
 from jarvis.tts import SpeechHandle
 
@@ -63,6 +63,6 @@ class ServicePort(Protocol):
 class SegmenterPort(Protocol):
     """Interface for segmenting a PCM stream into discrete speech segments."""
 
-    def feed(self, frame: Pcm) -> list[Segment]: ...
+    def feed(self, frame: Pcm) -> list[SegmentEvent]: ...
 
     def flush(self) -> list[Segment]: ...

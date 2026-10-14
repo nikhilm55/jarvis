@@ -165,3 +165,26 @@ def test_should_let_an_in_flight_transcription_finish_before_closing_the_transcr
 
     assert rig.events.index("transcribe.end") < rig.events.index("transcriber.close")
     assert rig.events.count("transcriber.start") == 1
+
+
+def test_should_not_reset_the_brain_while_a_newer_turn_is_still_running(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        timing = Timing(deaf_tail_s=0.0, inactivity_reset_s=0.15)
+        rig = CoreRig(tmp_path, ["Jarvis, first thing", "Jarvis, second thing"], timing=timing)
+        assert rig.brain is not None
+        run = asyncio.create_task(rig.orchestrator.run())
+        try:
+            rig.feed.push(seg())
+            await until(lambda: len(rig.records()) == 1 and rig.states[-1] == "idle")
+            rig.brain.release = asyncio.Event()  # the second turn will run long
+            rig.feed.push(seg())
+            await until(lambda: rig.brain is not None and len(rig.brain.envelopes) == 2)
+            await asyncio.sleep(0.4)  # longer than the inactivity period, measured from turn one
+            assert not rig.brain.reset_called.is_set()
+            rig.brain.release.set()
+            rig.feed.end()
+            await asyncio.wait_for(run, 10)
+        finally:
+            run.cancel()
+
+    asyncio.run(scenario())

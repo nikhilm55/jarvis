@@ -9,7 +9,7 @@ import numpy as np
 from jarvis.audio import FRAME_SAMPLES, Utterance
 from jarvis.audio.sources import Pcm
 from jarvis.orchestrator.capture import Capture, CaptureItem, SourceEnded, SourceFailed
-from jarvis.orchestrator.segmenter import Segment
+from jarvis.orchestrator.segmenter import Segment, SegmentEvent, SpeechStarted
 
 
 def seg(tag: float) -> Segment:
@@ -54,7 +54,7 @@ class BlockingSource:
 class ScriptedSegmenter:
     def __init__(
         self,
-        per_frame: dict[int, list[Segment]],
+        per_frame: dict[int, list[SegmentEvent]],
         flushed: list[Segment] | None = None,
         fail_on_frame: int | None = None,
     ) -> None:
@@ -63,7 +63,7 @@ class ScriptedSegmenter:
         self.fail_on_frame = fail_on_frame
         self.counter = 0
 
-    def feed(self, frame: Pcm) -> list[Segment]:
+    def feed(self, frame: Pcm) -> list[SegmentEvent]:
         self.counter += 1
         if self.fail_on_frame is not None and self.counter == self.fail_on_frame:
             raise ValueError("bad frame")
@@ -214,6 +214,25 @@ def test_should_use_daemon_thread_named_jarvis_capture_when_started() -> None:
             threads = [t for t in threading.enumerate() if t.name == "jarvis-capture"]
             assert len(threads) == 1
             assert threads[0].daemon is True
+        finally:
+            capture.stop()
+            await asyncio.to_thread(capture.join, 2)
+
+    asyncio.run(scenario())
+
+
+def test_should_post_the_speech_started_marker_in_order_with_the_segments() -> None:
+    async def scenario() -> None:
+        queue: asyncio.Queue[CaptureItem] = asyncio.Queue()
+        marker = SpeechStarted(12.5)
+        segmenter = ScriptedSegmenter({0: [marker], 2: [seg(2.0)]})
+        capture = Capture(ListSource(3), segmenter, asyncio.get_running_loop(), queue.put_nowait)
+        try:
+            capture.start()
+            items = await collect(queue, 3)
+            assert items[0] is marker
+            assert isinstance(items[1], Segment)
+            assert isinstance(items[2], SourceEnded)
         finally:
             capture.stop()
             await asyncio.to_thread(capture.join, 2)
