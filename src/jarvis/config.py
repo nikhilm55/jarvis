@@ -2,7 +2,7 @@
 
 import tomllib
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -39,6 +39,8 @@ class TtsSettings(_Section):
     engine: Literal["kokoro", "spd-say"] = "kokoro"
     voice: str = "bm_george"
     speed: float = Field(default=1.0, ge=0.5, le=2.0)
+    # PortAudio output latency. "low" stalls forever on ALSA over PipeWire (M1 acceptance F1).
+    output_latency: Literal["low", "high"] | Annotated[float, Field(gt=0, le=2)] = "high"
 
 
 class BrainSettings(_Section):

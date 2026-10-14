@@ -74,7 +74,7 @@ def test_should_open_stream_with_exact_kwargs_and_start_when_constructed(
         "samplerate": 24000,
         "channels": 1,
         "dtype": "float32",
-        "latency": "low",
+        "latency": "high",
     }
     assert stream.calls == ["start"]
 

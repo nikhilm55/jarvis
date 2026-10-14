@@ -5,6 +5,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 
 from jarvis.config import TtsSettings
 from jarvis.log import get_logger
@@ -42,7 +43,7 @@ class Speaker:
         settings: TtsSettings | None = None,
         *,
         engine_factory: Callable[[], Engine] | None = None,
-        sink_factory: Callable[[int], Sink] = SoundDeviceSink,
+        sink_factory: Callable[[int], Sink] | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._settings = settings if settings is not None else TtsSettings()
@@ -51,7 +52,11 @@ class Speaker:
             if engine_factory is not None
             else (lambda: default_engine(self._settings))
         )
-        self._sink_factory = sink_factory
+        self._sink_factory: Callable[[int], Sink] = (
+            sink_factory
+            if sink_factory is not None
+            else partial(SoundDeviceSink, latency=self._settings.output_latency)
+        )
         self._clock = clock
         self._jobs: queue.Queue[_Job | None] = queue.Queue()
         self._thread: threading.Thread | None = None
