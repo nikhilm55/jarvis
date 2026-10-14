@@ -199,6 +199,8 @@ async def _play_turn(turn: list[dict[str, Any]], mcp: _Mcp, log_path: str | None
             os._exit(action["exit"])
         elif "noise" in action:
             print(action["noise"], flush=True)
+    if log_path:
+        _log(log_path, {"turn_done": True})
 
 
 def _next_turn(
