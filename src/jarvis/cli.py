@@ -20,6 +20,8 @@ from jarvis.audio import (
     WavFileSource,
 )
 from jarvis.config import load_settings
+from jarvis.tts import Speaker
+from jarvis.tts.earcons import EARCON_NAMES
 
 
 def _not_built(command: str, task: int) -> int:
@@ -31,8 +33,22 @@ def _cmd_run(_args: argparse.Namespace) -> int:
     return _not_built("run", 11)
 
 
-def _cmd_say(_args: argparse.Namespace) -> int:
-    return _not_built("say", 5)
+def _cmd_say(args: argparse.Namespace) -> int:
+    if bool(args.text) == bool(args.earcon):
+        print("jarvis say: give TEXT or --earcon NAME", file=sys.stderr)
+        return 2
+    speaker = Speaker(load_settings().tts)
+    try:
+        handle = speaker.earcon(args.earcon) if args.earcon else speaker.say(args.text)
+        handle.wait()
+        if handle.first_audio_s is None:
+            print("jarvis say: no audio was produced (see the log)", file=sys.stderr)
+            return 1
+        if not args.earcon:
+            print(f"first audio: {round(handle.first_audio_s * 1000)} ms")
+        return 0
+    finally:
+        speaker.close()
 
 
 def _cmd_listen(args: argparse.Namespace) -> int:
@@ -109,7 +125,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"jarvis {__version__}")
     commands = parser.add_subparsers(dest="command", metavar="{run,say,listen,models}")
     commands.add_parser("run", help="run the voice loop").set_defaults(handler=_cmd_run)
-    commands.add_parser("say", help="speak a line of text").set_defaults(handler=_cmd_say)
+    say = commands.add_parser("say", help="speak a line of text")
+    say.add_argument("text", nargs="?", default=None)
+    say.add_argument("--earcon", choices=EARCON_NAMES, metavar="NAME", default=None)
+    say.set_defaults(handler=_cmd_say)
     listen = commands.add_parser("listen", help="capture one utterance and report its timings")
     listen.add_argument(
         "--once", action="store_true", required=True, help="stop after one utterance"

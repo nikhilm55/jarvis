@@ -18,7 +18,7 @@ def test_should_list_the_four_subcommands_in_help(capsys: pytest.CaptureFixture[
         assert command in out
 
 
-@pytest.mark.parametrize(("command", "task"), [("run", 11), ("say", 5)])
+@pytest.mark.parametrize(("command", "task"), [("run", 11)])
 def test_should_exit_2_with_not_built_message_when_command_is_a_stub(
     command: str, task: int, capsys: pytest.CaptureFixture[str]
 ) -> None:
