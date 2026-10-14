@@ -56,7 +56,8 @@ def prepare_launch(
     settings_path = root / "settings.json"
 
     mcp.write_client_config(mcp_path)
-    write_private_json(settings_path, {"permissions": {"deny": list(_DENIED_BUILTINS)}})
+    settings = {"permissions": {"deny": list(_DENIED_BUILTINS)}, "disableAllHooks": True}
+    write_private_json(settings_path, settings)
 
     # setting-sources empty = no user/project/local settings or hooks
     # strict-mcp-config = only Jarvis's server

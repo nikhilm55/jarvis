@@ -45,6 +45,12 @@ Principle (ADR-0004): **the model decides, deterministic code executes and prese
 | `jarvis.ui` | HUD, palette, main window (frozen design) | §5.16, §8 |
 | `jarvis.setup` | Doctor checks and wizard (ported from beyondMeetings) | §5.17 |
 
+## Brain session (M1: Claude Code)
+
+`jarvis.brain.ClaudeCodeBrain` keeps one `claude -p` process warm over stream-json and starts it isolated from the user's Claude Code setup: no user/project/local settings or hooks (`--setting-sources ""`), only jarvisd's MCP server (`--strict-mcp-config`), no built-in tools (`--tools ""`), nothing that can prompt (`--allowedTools mcp__jarvis__*`, `--permission-mode dontAsk`), Jarvis's own `--settings` deny list, an empty working directory under the runtime dir, and `--system-prompt` (the generated rules) instead of Claude Code's coding prompt. Claude Code still keeps its own bookkeeping in `~/.claude*` and uses its login; Jarvis never writes there.
+
+A turn is one JSON envelope in; the model acts through MCP tools and ends with `respond`. jarvisd's MCP server calls `ClaudeCodeBrain.dispatch(policy_name, args)`: `say`/`ask` go to the turn's callbacks, desktop tools to the validated `DesktopClient`, `respond` to the contract gate (one repair, then the spoken fallback). The turn resolves the moment `respond` validates; the model's closing round trip is drained before the next turn. A timeout, a cancelled turn or a dead process drops the session and the next turn starts a fresh one.
+
 ## Platform split
 
 Platform-specific code sits beside its interface and is imported only inside its platform branch (the beyondMeetings pattern). Everything above the tool and audio backends is shared. See FRS §9.3 for the capability matrix (Windows, X11, Wayland).

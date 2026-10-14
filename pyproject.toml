@@ -72,4 +72,5 @@ addopts = "-q --strict-markers"
 markers = [
     "model: needs a cached model file (set JARVIS_HOME to a cache that holds it); skipped otherwise",
     "desktop: drives the real desktop (needs DISPLAY and JARVIS_LIVE_DESKTOP=1); skipped otherwise",
+    "live: drives the real claude CLI, MCP server and desktop (JARVIS_LIVE_BRAIN=1); skipped otherwise",
 ]

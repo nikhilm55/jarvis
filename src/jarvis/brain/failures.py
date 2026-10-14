@@ -13,6 +13,7 @@ __all__ = [
     "ToolError",
     "contract_fallback",
     "failed_response",
+    "internal_response",
     "mcp_unavailable_response",
     "process_exit_response",
     "result_error_response",
@@ -104,6 +105,17 @@ def result_error_response(result: str, assistant_error: str | None) -> FinalResp
     return BrainUnavailable(
         "Claude Code reported an error", ["Try again.", "The details are in the activity log."]
     ).to_response()
+
+
+def internal_response() -> FinalResponse:
+    """The failed response when the brain session itself hit an unexpected error."""
+    return failed_response(
+        "INTERNAL",
+        "Answer your request",
+        "The AI brain session hit an unexpected error.",
+        ["Ask again.", "The details are in the activity log."],
+        FALLBACK_SPOKEN,
+    )
 
 
 def timeout_response(timeout_s: int) -> FinalResponse:

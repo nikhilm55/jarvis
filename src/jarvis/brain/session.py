@@ -12,6 +12,7 @@ from jarvis.brain.events import mcp_down, result_response
 from jarvis.brain.failures import (
     BrainUnavailable,
     ToolError,
+    internal_response,
     mcp_unavailable_response,
     process_exit_response,
     timeout_response,
@@ -105,6 +106,10 @@ class ClaudeCodeBrain:
             except asyncio.CancelledError:
                 await self._drop_process("turn cancelled")
                 raise
+            except Exception:  # a bug here must not leave a half-driven session behind
+                self._log.exception("brain turn failed", extra={"turn_id": envelope.turn_id})
+                await self._drop_process("unexpected error")
+                response = internal_response()
             finally:
                 tools.close()
                 self._tools = None
@@ -156,7 +161,11 @@ class ClaudeCodeBrain:
         spec = prepare_launch(binary, self._brain, self._mcp)
         self._queue = asyncio.Queue()
         self._pending_result = False
-        self._proc = await ClaudeProcess.spawn(spec, self._queue.put_nowait)
+        proc = await ClaudeProcess.spawn(spec, self._queue.put_nowait)
+        if self._closed:  # close() ran while the process was starting
+            await proc.kill()
+            raise BrainUnavailable("Jarvis is shutting down", ["Start Jarvis again."])
+        self._proc = proc
         self._log.info("brain started", extra={"pid": self._proc.pid, "model": self._brain.model})
 
     async def _drain_tail(self) -> None:
