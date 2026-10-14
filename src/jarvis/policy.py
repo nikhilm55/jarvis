@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
-from jarvis.log import get_logger
+from jarvis.log import audit
 
 _MODES = ("safe", "balanced", "yolo")
 
@@ -124,19 +124,23 @@ def gate(tool: str, args: Mapping[str, object], mode: Mode) -> Decision:
     """Evaluate one tool call against the safety gate.
 
     Fails closed: any error, including an unwritable audit log, is a deny.
+    The audit record must be written (a raising audit path in jarvis.log)
+    before an allow is returned.
     """
     try:
         decision, tier = _decide(tool, mode)
-        get_logger("jarvis.policy").info(
-            "policy decision",
-            extra={
-                "tool": tool,
-                "tier": tier,
-                "mode": mode,
-                "decision": "allow" if decision.allowed else "deny",
-                "reason": decision.reason,
-            },
-        )
+        try:
+            audit(
+                "policy",
+                "policy decision",
+                tool=tool,
+                tier=tier,
+                mode=mode,
+                decision="allow" if decision.allowed else "deny",
+                reason=decision.reason,
+            )
+        except Exception:
+            return Decision(False, "policy error: audit unavailable")
         return decision
     except Exception as exc:
         return Decision(False, f"policy error: {type(exc).__name__}")
