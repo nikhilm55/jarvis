@@ -161,3 +161,16 @@ def test_should_generate_unique_default_turn_ids_when_no_turn_id_given() -> None
 def test_should_make_a_sortable_utc_id_when_given_a_time() -> None:
     now = datetime.datetime(2026, 10, 7, 9, 30, 15, 123456, tzinfo=datetime.UTC)
     assert new_turn_id(now).startswith("2026-10-07T09:30:15.123Z-")
+
+
+def test_should_carry_the_pending_question_into_the_context() -> None:
+    transcript = Transcript(text="x", engine="whisper.cpp/tiny.en", seconds=0.1)
+    envelope = build_envelope(
+        command="the second one",
+        raw_transcript="the second one",
+        transcript=transcript,
+        settings=Settings(),
+        mode="balanced",
+        pending_question="Which one?",
+    )
+    assert envelope.context.pending_question == "Which one?"

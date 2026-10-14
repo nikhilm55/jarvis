@@ -51,8 +51,13 @@ class RecordingDesktop(FakeDesktop):
 class RecordingBrain(FakeBrain):
     """A FakeBrain that logs its lifecycle; `reset_called` is set by reset()."""
 
-    def __init__(self, events: list[str], final: FinalResponse | None = None) -> None:
-        super().__init__(final)
+    def __init__(
+        self,
+        events: list[str],
+        final: FinalResponse | None = None,
+        finals: list[FinalResponse] | None = None,
+    ) -> None:
+        super().__init__(final, finals=finals)
         self.events = events
         self.reset_called = asyncio.Event()
         self.fail_start: Exception | None = None

@@ -18,14 +18,6 @@ def test_should_list_the_four_subcommands_in_help(capsys: pytest.CaptureFixture[
         assert command in out
 
 
-@pytest.mark.parametrize(("command", "task"), [("run", 11)])
-def test_should_exit_2_with_not_built_message_when_command_is_a_stub(
-    command: str, task: int, capsys: pytest.CaptureFixture[str]
-) -> None:
-    assert main([command]) == 2
-    assert capsys.readouterr().err.strip() == f"jarvis {command}: not built yet (M1 task {task})"
-
-
 def test_should_print_every_model_without_network_when_dry_run(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

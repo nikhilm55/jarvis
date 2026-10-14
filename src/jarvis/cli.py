@@ -1,6 +1,7 @@
 """Command-line entry point. Grows into `jarvis doctor`, `jarvis ptt`, … (FRS §5.17)."""
 
 import argparse
+import asyncio
 import sys
 from pathlib import Path
 
@@ -19,18 +20,50 @@ from jarvis.audio import (
     Utterance,
     WavFileSource,
 )
-from jarvis.config import load_settings
+from jarvis.config import ConfigError, Settings, load_settings
+from jarvis.orchestrator.assemble import build_components
+from jarvis.orchestrator.core import Orchestrator
+from jarvis.orchestrator.hud import HudEvent
+from jarvis.policy import Mode
+from jarvis.stt import SttUnavailable
 from jarvis.tts import Speaker
 from jarvis.tts.earcons import EARCON_NAMES
 
 
-def _not_built(command: str, task: int) -> int:
-    print(f"jarvis {command}: not built yet (M1 task {task})", file=sys.stderr)
-    return 2
+async def _print_hud(event: HudEvent) -> None:
+    print(f"[{event.state}] {event.text}".rstrip(), flush=True)
 
 
-def _cmd_run(_args: argparse.Namespace) -> int:
-    return _not_built("run", 11)
+async def _run_loop(settings: Settings, source: AudioSource, mode: Mode, with_brain: bool) -> None:
+    # `build_components` is looked up in this module's globals, so tests can replace it.
+    parts = await build_components(settings, source, mode=mode, with_brain=with_brain)
+    await Orchestrator(settings, parts, mode=mode, hud=_print_hud).run()
+
+
+def _cmd_run(args: argparse.Namespace) -> int:
+    source: AudioSource | None = None
+    try:
+        settings = load_settings()
+        source = (
+            WavFileSource(args.source, realtime=True)
+            if args.source
+            else MicSource(settings.audio.device)
+        )
+        asyncio.run(_run_loop(settings, source, args.mode, not args.no_brain))
+    except (
+        ConfigError,
+        AudioDeviceError,
+        AudioFormatError,
+        SttUnavailable,
+        httpx.HTTPError,
+        models.ModelIntegrityError,
+    ) as e:
+        print(f"jarvis run: {e}", file=sys.stderr)
+        return 2
+    finally:
+        if source is not None:
+            source.close()
+    return 0
 
 
 def _cmd_say(args: argparse.Namespace) -> int:
@@ -124,7 +157,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="jarvis", description="Voice control for your whole PC.")
     parser.add_argument("--version", action="version", version=f"jarvis {__version__}")
     commands = parser.add_subparsers(dest="command", metavar="{run,say,listen,models}")
-    commands.add_parser("run", help="run the voice loop").set_defaults(handler=_cmd_run)
+    run = commands.add_parser("run", help="run the voice loop")
+    run.add_argument("--source", type=Path, metavar="FILE.wav", help="read a WAV, not the mic")
+    run.add_argument("--mode", choices=("safe", "balanced", "yolo"), default="balanced")
+    run.add_argument("--no-brain", action="store_true", help="fast path only; no Claude Code")
+    run.set_defaults(handler=_cmd_run)
     say = commands.add_parser("say", help="speak a line of text")
     say.add_argument("text", nargs="?", default=None)
     say.add_argument("--earcon", choices=EARCON_NAMES, metavar="NAME", default=None)

@@ -39,6 +39,7 @@ class Command:
     intent: Intent | None
     speech_ended_at: float
     stt_ms: int
+    pending_question: str | None = None  # the question this command answers (R60)
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,25 @@ class TurnRunner:
         self._spoken = False
 
     async def run(self, command: Command) -> None:
+        """Run a command, then every follow-up answer its final response asks for (R60)."""
+        current: Command | None = command
+        while current is not None:
+            final = await self._turn(current)
+            current = await self._follow_up(current, final)
+
+    async def _follow_up(self, command: Command, final: FinalResponse) -> Command | None:
+        """Open the reply window when the final expects an answer; the answer is a new command."""
+        if not final.follow_up_expected or final.status == "failed":
+            return None
+        await self._hud(HudEvent("listening", "Reply...", {"window": "reply"}))
+        answer = await self._s.windows.ask(self._s.timing.reply_window_s)
+        if answer == "timeout":
+            await self._hud(HudEvent("idle"))
+            return None
+        transcript = Transcript(answer, command.transcript.engine, 0.0)
+        return Command(answer, answer, transcript, None, time.monotonic(), 0, final.spoken)
+
+    async def _turn(self, command: Command) -> FinalResponse:
         """Execute one turn: route, speak and log the outcome."""
         turn_id = new_turn_id()
         route: Route = "fastpath" if command.intent is not None else "brain"
@@ -104,6 +124,7 @@ class TurnRunner:
             timer.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await timer
+        return final
 
     async def _route(self, command: Command, record: TurnRecord, turn_id: str) -> FinalResponse:
         """Send the command to the fast path when possible, otherwise to the brain."""
@@ -140,6 +161,7 @@ class TurnRunner:
             settings=self._s.settings,
             mode=self._s.mode,
             turn_id=turn_id,
+            pending_question=command.pending_question,
         )
         self._s.trace.take()
         t0 = time.monotonic()
