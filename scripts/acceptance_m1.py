@@ -8,7 +8,6 @@ product's own PortAudio sink (wrapped only to time the first sound).
 
 import argparse
 import asyncio
-import contextlib
 import json
 import logging
 import os
@@ -16,8 +15,9 @@ import platform
 import sys
 import time
 import wave
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -30,11 +30,14 @@ from acceptance_audio import (
 from acceptance_harness import (
     EOS_SETTLE_S,
     FAST_TIMEOUT_S,
+    MAX_BRAIN_TURNS,
+    BrainGate,
     CapturingLog,
     Harness,
     calc_is,
     calculator_windows,
     judge,
+    judge_dropped,
     turn_case,
 )
 from acceptance_idle import IdleResult, measure_idle, noise_pcm, silence_pcm
@@ -134,7 +137,7 @@ async def run_window_cases(h: Harness) -> None:
     await asyncio.sleep(EOS_SETTLE_S + max(0.0, eos - time.monotonic()))
     ran = len(h.log.turns()) > seen_turns
     dropped = h.log.records[seen_records:]
-    problem = "a turn ran" if ran else ("Calculator opened" if calculator_windows() else None)
+    problem = judge_dropped(ran, bool(calculator_windows()), dropped)
     note = dropped[-1] if dropped else None
     outcome = "PASS" if problem is None else f"FAIL: {problem}"
     h.add("mid-sentence", 1, note, outcome, eos)
@@ -177,7 +180,7 @@ def idle_table(results: Sequence[IdleResult]) -> str:
 
 
 async def run_suite(
-    fixtures: Path, include_brain: bool, verbose: bool
+    fixtures: Path, include_brain: bool, verbose: bool, output_latency: str | float | None = None
 ) -> tuple[list[Row], list[str]]:
     """Build the real components, run every case, and always clean up."""
     manifest = json.loads((fixtures / "manifest.json").read_text(encoding="utf-8"))
@@ -186,7 +189,8 @@ async def run_suite(
     playback = PlaybackLog()
     log = CapturingLog()
     harness = Harness(source, log, playback, manifest, fixtures)
-    sink_factory = recording_sink_factory(SoundDeviceSink, playback)
+    latency = settings.tts.output_latency if output_latency is None else output_latency
+    sink_factory = recording_sink_factory(partial(SoundDeviceSink, latency=latency), playback)
 
     def make_speaker(tts: Any, engine_factory: Any) -> Speaker:
         return Speaker(tts, engine_factory=engine_factory, sink_factory=sink_factory)
@@ -203,59 +207,92 @@ async def run_suite(
         if verbose:
             print(f"  hud {time.monotonic():.2f} {event.state}: {event.text}", file=sys.stderr)
 
-    notes: list[str] = []
     with (
         mock.patch.object(assemble, "Speaker", make_speaker),
         mock.patch.object(turns, "execute", timed_execute),
     ):
         parts = await build_components(settings, source, mode="balanced", with_brain=include_brain)
+        gate = BrainGate(parts.brain) if parts.brain is not None else None
+        if gate is not None:
+            parts.brain = gate
         orchestrator = Orchestrator(settings, parts, mode="balanced", hud=hud, activity=log)
         task = asyncio.create_task(orchestrator.run())
+        calculator_left = False
         try:
             await asyncio.to_thread(source.started.wait, 120.0)
             for window in calculator_windows():
                 close_window(window.window_id)
             await run_fast_cases(harness)
-            if include_brain:
-                await run_brain_cases(harness)
+            if gate is not None:
+                gate.open = True
+                try:
+                    await run_brain_cases(harness)
+                finally:
+                    gate.open = False
             await run_window_cases(harness)
         finally:
             for window in calculator_windows():
                 close_window(window.window_id)
             orchestrator.request_stop()
             await asyncio.wait_for(task, 60.0)
-    notes.append(f"first sound was an earcon in {len(harness.earcon_first)} of {len(harness.rows)}")
-    notes.append(f"brain turns run: {sum(r.route == 'brain' for r in log.turns())}")
+            calculator_left = not await harness.until(lambda: not calculator_windows(), 6.0)
+    return harness.rows, suite_notes(harness, log, gate, calculator_left)
+
+
+def suite_notes(
+    harness: Harness, log: CapturingLog, gate: BrainGate | None, calculator_left: bool
+) -> list[str]:
+    """What the run saw besides the rows; a line starting PROBLEM fails the run."""
+    notes = [f"first sound was an earcon in {len(harness.earcon_first)} of {len(harness.rows)}"]
+    notes.append(
+        f"brain turns run: {sum(r.route == 'brain' for r in log.turns())} (cap {MAX_BRAIN_TURNS})"
+    )
+    if gate is not None and gate.refused:
+        notes.append(
+            f"{gate.refused} brain turn(s) refused outside the brain cases or over the cap"
+        )
+    if calculator_left:
+        notes.append("PROBLEM: Calculator was still open at the end")
     errors = [e.text for _, e in harness.hud if e.state == "error"]
-    notes += [f"HUD error: {text}" for text in dict.fromkeys(errors)]
-    return harness.rows, notes
+    return notes + [f"HUD error: {text}" for text in dict.fromkeys(errors)]
 
 
-@contextlib.contextmanager
-def with_output_latency(latency: str) -> Iterator[None]:
-    """Patch sounddevice.OutputStream to open with `latency`; "low" is the product's own."""
-    import sounddevice  # noqa: PLC0415 - lazy: PortAudio may be missing
+def restore_audio(start: VolumeState) -> list[str]:
+    """Put the volume and the mute back, each on its own, and read both back."""
+    problems: list[str] = []
+    try:
+        volume_set(start.percent)
+        now = volume_get().percent
+        if now != start.percent:
+            problems.append(f"volume is {now}% after restoring, expected {start.percent}%")
+    except Exception as error:  # a failed restore must not hide the mute restore
+        problems.append(f"volume could not be restored: {error}")
+    try:
+        set_mute(start.muted)
+        muted = volume_get().muted
+        if muted != start.muted:
+            problems.append(f"mute is {muted} after restoring, expected {start.muted}")
+    except Exception as error:
+        problems.append(f"mute could not be restored: {error}")
+    return problems
 
-    real = sounddevice.OutputStream
 
-    def opened(*args: Any, **kwargs: Any) -> Any:
-        kwargs["latency"] = latency
-        return real(*args, **kwargs)
-
-    with mock.patch.object(sounddevice, "OutputStream", opened):
-        yield
-
-
-def environment_lines(start: VolumeState, latency: str) -> list[str]:
+def environment_lines(start: VolumeState, latency: str | float | None) -> list[str]:
     """Where and with what this ran."""
+    chosen = "the product's own setting (tts.output_latency)" if latency is None else repr(latency)
     return [
         f"- Host: {platform.node()}, {platform.platform()}, Python {platform.python_version()}",
-        "- Playback: the product's PortAudio sink (SoundDeviceSink), first-write timing, "
-        f"output latency forced to {latency!r} (the product's own is 'low')",
+        f"- Playback: the product's PortAudio sink (SoundDeviceSink), first-write timing, "
+        f"output latency: {chosen}",
         f"- Starting volume (restored at the end): {start.percent}%"
         f"{' (muted)' if start.muted else ''}",
         f"- Run at: {datetime.now().astimezone().isoformat(timespec='seconds')}",
     ]
+
+
+def parse_latency(text: str) -> str | float:
+    """`low`, `high` or a number of seconds."""
+    return text if text in ("low", "high") else float(text)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -266,7 +303,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--no-suite", action="store_true", help="idle CPU only")
     parser.add_argument("--no-idle", action="store_true", help="skip idle CPU")
     parser.add_argument("--no-brain", action="store_true", help="skip the two brain turns")
-    parser.add_argument("--output-latency", default="high", help="PortAudio output latency")
+    parser.add_argument(
+        "--output-latency",
+        type=parse_latency,
+        default=None,
+        help="PortAudio output latency (low, high or seconds); default: the product's setting",
+    )
     parser.add_argument("--verbose", action="store_true", help="HUD events and logs on stderr")
     parser.add_argument("--out", type=Path, help="also write the report here")
     args = parser.parse_args(argv)
@@ -284,10 +326,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not args.no_idle:
             sections += ["", "## Idle CPU", idle_table(idle_runs(args.idle_s))]
         if not args.no_suite:
-            with with_output_latency(args.output_latency):
-                rows, notes = asyncio.run(run_suite(args.fixtures, not args.no_brain, args.verbose))
+            rows, notes = asyncio.run(
+                run_suite(args.fixtures, not args.no_brain, args.verbose, args.output_latency)
+            )
             failed = [r for r in rows if not r.passed]
-            code = 1 if failed else 0
+            code = 1 if failed or any(n.startswith("PROBLEM") for n in notes) else 0
             sections += [
                 "",
                 "## Results",
@@ -298,8 +341,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             ]
             sections += ["", f"{len(rows) - len(failed)}/{len(rows)} runs passed", *notes]
     finally:
-        volume_set(start.percent)
-        set_mute(start.muted)
+        problems = restore_audio(start)
+    for problem in problems:
+        sections.append(f"PROBLEM: {problem}")
+        code = 1
     report = "\n".join(sections)
     print(report)
     if args.out:
