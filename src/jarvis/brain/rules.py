@@ -37,6 +37,9 @@ RULES: str = textwrap.dedent(
     with at least one item),
     actions_taken [{tool, summary, undoable}],
     follow_up_expected (true when spoken ends with a question).
+    Keep respond minimal: for a simple action send only status and spoken
+    (a few words, e.g. "Calculator is open."); add actions_taken or display
+    only for multi-step work or content the user must read.
     Error codes come from this list:
     NOT_FOUND, AMBIGUOUS, APP_NOT_INSTALLED, AUTH_REQUIRED,
     PERMISSION_DENIED, INTEGRATION_NOT_CONNECTED, MCP_UNAVAILABLE,

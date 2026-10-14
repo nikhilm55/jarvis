@@ -8,10 +8,11 @@ from jarvis.brain.agent_bin import resolve_claude
 from jarvis.brain.clock import TurnClock
 from jarvis.brain.desktop_tools import DesktopLike
 from jarvis.brain.dispatch import OnAsk, OnSay, TurnHooks, TurnTools
-from jarvis.brain.events import result_response
+from jarvis.brain.events import mcp_down, result_response
 from jarvis.brain.failures import (
     BrainUnavailable,
     ToolError,
+    mcp_unavailable_response,
     process_exit_response,
     timeout_response,
 )
@@ -132,7 +133,11 @@ class ClaudeCodeBrain:
                 self._pending_result = True
                 return item
             kind = item.get("type")
-            if kind == "assistant":
+            if kind == "system" and item.get("subtype") == "init":
+                if mcp_down(item):
+                    await self._drop_process("jarvis MCP server not connected")
+                    return mcp_unavailable_response()
+            elif kind == "assistant":
                 err = item.get("error")
                 if isinstance(err, str):
                     assistant_error = err
@@ -181,6 +186,15 @@ class ClaudeCodeBrain:
         self._log.info("brain stopped", extra={"reason": reason})
         if proc is not None:
             await proc.kill()
+
+    async def reset(self) -> None:
+        """Reset the conversation by restarting the claude process."""
+        async with self._lock:
+            await self._drop_process("reset")
+            try:
+                await self._ensure_process()
+            except BrainUnavailable:
+                self._log.warning("brain restart failed after reset")
 
     async def close(self) -> None:
         """Close the brain and kill the claude process."""

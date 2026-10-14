@@ -124,4 +124,5 @@ class ClaudeProcess:
             self._signal_group(signal.SIGKILL)
             await self._proc.wait()
         self._signal_group(signal.SIGKILL)  # stray grandchildren outlive their leader
+        self._reader.cancel()  # a grandchild that escaped the group may still hold stdout open
         await asyncio.gather(self._reader, return_exceptions=True)
