@@ -2,7 +2,7 @@
 
 Rolling note so a fresh session (human or agent) picks up instantly. Overwrite it at the end of every working session; history lives in git.
 
-**Updated:** 2026-10-14 (M1 built; owner's live run and track W open)
+**Updated:** 2026-10-14 (M1 built; owner's first live run done; track W open)
 
 DONE:
 - M0 closed; FRS v0.3; frozen UI design; AI-assisted dev setup (ADRs 0001–0011).
@@ -12,7 +12,7 @@ DONE:
 - PR stack #16 → #112, then the final-fixes and M1-wrap PRs, in order. Merge in order; rebase the rest after each squash.
 
 NEXT:
-- **Owner:** Part B live-mic run (checklist at the end of `docs/milestones/M1-acceptance.md`); report what was heard/missed, self-triggers, idle CPU in `top`.
+- **Owner:** first live-mic run done (results and findings B1–B5 at the end of `docs/milestones/M1-acceptance.md`). Still untried live: checklist 1–5, "close it", "Jarvis, stop" while thinking, self-trigger.
 - **Track W:** custom single-word "Jarvis" wake model (brief in the orchestrator's SDD workspace; stops for owner approval before > 2 GB of downloads; licences decide shippability, OQ-004). Re-run the wake-related acceptance cases with it.
 - **Plan M2** (FRS §11 "Hands"): consent layer, confirmations (Safe mode T1 / T2+), more desktop tools, Windows backend. Fold in the M2 backlog below.
 
@@ -24,6 +24,8 @@ M2 BACKLOG (from M1 reviews; details in the PR descriptions):
 - Audit records carry `turn_id`; fill the activity log's `policy_decisions`.
 - Guard the wake detector for classifiers whose window doesn't fit the primed buffer (n_features ≥ 41) — needed before track W lands a different model.
 - Inject clocks in timing-sensitive orchestrator tests (CI flake risk).
+- From the live run (B1–B5): a "your name" setting so the brain stops using the account's full name; end silently on an empty transcript after a wake; a decline isn't an error in the HUD; idle CPU 3.7 % with a real mic; `tiny.en` vs `base.en` accuracy.
+- Owner's phrases as M2 acceptance cases: "open the terminal and check what I've been working on", "help me set up my project" (needs `run_shell` and files).
 
 OPEN:
 - OQ-008 (new): may Jarvis's brain touch the user's Claude Code state files (Claude Code writes `~/.claude*` even when isolated)?

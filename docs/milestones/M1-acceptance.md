@@ -174,3 +174,24 @@ uv run python scripts/acceptance_m1.py --out report.md
 ```
 
 Options: `--no-brain` (skip the two live brain turns), `--no-idle`, `--no-suite`, `--idle-s N`, `--output-latency low|high|SECONDS` (default: the product setting), `--verbose`. The run makes noise through the speakers and changes the system volume (it restores it), opens and closes Calculator, and uses two Claude Code turns (it refuses a third outside the brain cases and any after five).
+
+## Part B results (owner, live mic, 2026-10-14)
+
+A partial run: the owner talked to `jarvis run` freely for about an hour instead of working through the checklist in order. Product defaults, scratch `JARVIS_HOME`, stock `hey_jarvis` wake model.
+
+| What was tried | Result |
+|---|---|
+| Two-step wake (checklist 7): "Jarvis." → chime → "Open calculator." | **Pass.** Calculator opened, "Opening Calculator." |
+| Brain turns (6 of them): the time, an unclear request, "help me set up my project", "open the terminal and check what I've been working on", an off-task request | **Pass.** Each got a sensible short answer. The terminal opened; Jarvis said truthfully that it can't run commands or create files (M2 scope). The off-task request was declined politely. Brain time 1.5–3.6 s. |
+| Follow-up replies without "Jarvis" (reply window, R60) | **Pass.** Twice. |
+| Speech mid-sentence or not starting with "Jarvis" (checklist 8 behaviour) | **Pass.** 13 turns dropped silently: 11 "gate rejected the first word", 2 "silence_before_ms<400". |
+| Idle CPU of `jarvis run` with a real mic in a real room | **3.7 % of one core** over 60 s (budget 3 %; Part A, with a file source: 2.7 %). HUD and whisper-server ≈ 0 %. |
+| Checklist 1–5, 6's "close it", "Jarvis, stop" while thinking, self-trigger on a long answer | Not tried. |
+
+Findings (carried into the M2 backlog in `docs/handoff.md`):
+
+- **B1. The brain calls the owner by the Linux account's full name.** That field holds a placeholder ("55"), and every brain reply used it. Jarvis's code never reads it; Claude Code passes it to the model. Fix: a "your name" setting fed to the brain, and an instruction not to use the account name when none is set.
+- **B2. A possible false wake is apologised for out loud.** Twice the wake word fired, speech-to-text returned nothing, and Jarvis said "Sorry, I didn't catch that." to an empty room. An empty transcript straight after a wake should end silently (or with the soft chime).
+- **B3. A polite refusal shows as an error.** The off-task decline put the HUD in its error state. A decline is not a failure.
+- **B4. Idle CPU 3.7 % with a real mic** (over the 3 % budget). Likely room noise keeping the VAD busy, which runs the wake models (finding F2's lazy wake). Measure the share of frames the VAD marks as speech in a quiet room before tuning.
+- **B5. `tiny.en` mishears real speech** ("what time is it" became "what is the time rate now"; one longer sentence was garbled). The brain recovered both times, but the fast path missed. Levers: try `base.en` against the latency budget; the custom wake model (track W) changes what reaches STT.
