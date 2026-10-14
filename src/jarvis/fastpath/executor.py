@@ -147,9 +147,9 @@ async def _run_volume(
         )
     if isinstance(intent, VolumeStep):
         result = await desktop.volume_step(intent.delta)
-        pct = responses.percent_of(result, 0)
+        step_pct = responses.percent_of(result, None)
         return responses.ok(
-            f"Volume {pct} percent.",
+            "Volume changed." if step_pct is None else f"Volume {step_pct} percent.",
             "desktop.volume_step",
             "Changed the volume",
             undoable=True,

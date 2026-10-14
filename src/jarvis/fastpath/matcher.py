@@ -18,9 +18,11 @@ from jarvis.fastpath.intents import (
 _LEAD = re.compile(r"^(?:(?:can|could|would|will) you )?(?:please )?(?:, )?")
 _TRAIL = re.compile(r"(?:(?: ,)* (?:please|thanks|thank you))*(?: ,)*$")
 _CLAUSE_BREAK = re.compile(r"[,;:!?]|\.(?=\s)")
-# ASCII and typographic punctuation only: letters (and combining marks) must survive intact,
-# otherwise a non-Latin name would be silently mangled into a different one.
-_PUNCT = re.compile('[!"$&()*/<=>@\\[\\]^`{|}~\u2018\u201c\u201d\u2013\u2014\u2026]')
+# Wrapping quotes may go; every other symbol becomes a clause break (" , ") so a name that
+# contains one is rejected instead of being silently rewritten. Letters and combining marks
+# survive intact, otherwise a non-Latin name would be mangled into a different one.
+_QUOTES = re.compile('["\u2018\u201c\u201d]')
+_SYMBOLS = re.compile("[!$&()*/<=>@\\[\\]\\\\^`{|}~\u2013\u2014\u2026]")
 _WHATS = re.compile(r"\bwhat'?s\b")
 _TODAYS = re.compile(r"\btoday'?s\b")
 
@@ -44,8 +46,7 @@ _STEP = re.compile(
     r"(?:(?:turn )?(?:the )?volume (?P<a>up|down)"
     r"|turn (?P<b>up|down) the volume"
     r"|(?P<c>raise|increase|lower|decrease|reduce) (?:the )?volume"
-    r"|turn it (?P<d>up|down)"
-    r"|(?:make it )?(?P<e>louder|quieter))"
+    r"|turn it (?P<d>up|down))"
 )
 _SET = re.compile(
     r"(?:(?:set|change|put|make) )?(?:the )?volume (?:to |at |of )?(?P<n>\d{1,3})(?: percent)?"
@@ -66,6 +67,8 @@ _DENY = frozenset(
     remove
     app application program file folder directory document window windows tab tabs page link url
     website site email message messages chat chats call meeting
+    now later tomorrow today tonight yesterday soon smoking strategy process processes switch
+    bill jarvis screen fullscreen full
     """.split()  # noqa: SIM905  (a word list reads better than a quoted list)
 )
 
@@ -74,6 +77,8 @@ _DENY_START = frozenset(
     """
     timer stopwatch recording listening dictation dictating conversation meeting over again
     script test tests command routine
+    backup backups update updates scan build music video videos game games download downloads
+    install server service job task
     """.split()  # noqa: SIM905  (a word list reads better than a quoted list)
 )
 
@@ -87,20 +92,21 @@ _DIRECTION = {
     "up": 10,
     "raise": 10,
     "increase": 10,
-    "louder": 10,
     "down": -10,
     "lower": -10,
     "decrease": -10,
     "reduce": -10,
-    "quieter": -10,
 }
+
+_STRICT_VERBS = frozenset({"start", "run", "exit", "quit", "kill"})
 
 
 def _normalise(command: str) -> str:
     """Lowercase, strip punctuation, and remove polite lead/trail phrases."""
     text = command.casefold().replace("\u2019", "'").replace("%", " percent ")
     text = _CLAUSE_BREAK.sub(" , ", text)
-    text = _PUNCT.sub(" ", text)
+    text = _QUOTES.sub(" ", text)
+    text = _SYMBOLS.sub(" , ", text)
     tokens: list[str] = []
     for raw in text.split():
         tok = raw if raw == "," else raw.rstrip(".-'").lstrip("'")
@@ -132,7 +138,7 @@ def _match_volume_step(s: str) -> Intent | None:
     """Match a relative volume change."""
     m = _STEP.fullmatch(s)
     if m:
-        for group in ("a", "b", "c", "d", "e"):
+        for group in ("a", "b", "c", "d"):
             value = m.group(group)
             if value is not None:
                 return VolumeStep(delta=_DIRECTION[value])
@@ -149,26 +155,35 @@ def _match_volume_set(s: str) -> Intent | None:
     return None
 
 
+def _valid_tokens(tokens: list[str], verb: str) -> bool:
+    """Check if all tokens are valid app name components."""
+    for tok in tokens:
+        if not _NAME_TOKEN.fullmatch(tok):
+            return False
+        if tok in _DENY:
+            return False
+        if verb in {"start", "run"} and tok in _DENY_START:
+            return False
+    return True
+
+
 def _app_name(target: str, verb: str) -> str | None:
     """Extract and validate the app name from the target phrase."""
     tokens = target.split()
     if tokens and tokens[0] == "up" and verb in {"open", "launch", "start", "run"}:
         tokens = tokens[1:]
     if tokens and tokens[0] in {"the", "a", "an"}:
+        if verb in _STRICT_VERBS:
+            return None
         tokens = tokens[1:]
     if len(tokens) > 1 and tokens[-1] in {"app", "application"}:
         tokens = tokens[:-1]
     if not tokens or len(tokens) > 4:
         return None
-    for tok in tokens:
-        if not _NAME_TOKEN.fullmatch(tok):
-            return None
-        if tok in _DENY:
-            return None
-    if verb in {"start", "run"}:
-        for tok in tokens:
-            if tok in _DENY_START:
-                return None
+    if all(tok.isdigit() for tok in tokens):
+        return None
+    if not _valid_tokens(tokens, verb):
+        return None
     return " ".join(tokens)
 
 
