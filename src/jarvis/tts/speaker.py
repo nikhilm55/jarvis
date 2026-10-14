@@ -58,54 +58,52 @@ class Speaker:
         self._engine: Engine | None = None
         self._synth: threading.Thread | None = None
         self._current: SpeechHandle | None = None
-        self._start_lock = threading.Lock()
+        self._lock = threading.Lock()
         self._closed = False
 
     def say(self, text: str) -> SpeechHandle:
         """Queue a text-to-speech job and return its handle."""
-        if self._closed:
-            raise RuntimeError("speaker is closed")
         handle = SpeechHandle(text, self._clock)
         if not text.strip():
             handle._finish()
             return handle
-        self._jobs.put(_Job(handle, text, None))
-        self._ensure_worker()
+        self._enqueue(_Job(handle, text, None))
         return handle
 
     def earcon(self, name: str) -> SpeechHandle:
         """Queue an earcon (pre-rendered clip) and return its handle."""
-        if self._closed:
-            raise RuntimeError("speaker is closed")
         clip = earcon_samples(name)
         handle = SpeechHandle(name, self._clock)
-        self._jobs.put(_Job(handle, name, clip))
-        self._ensure_worker()
+        self._enqueue(_Job(handle, name, clip))
         return handle
 
     def close(self) -> None:
         """Stop the worker, cancel in-flight work, and release resources."""
-        self._closed = True
-        if self._current is not None:
-            self._current.cancel()
-            self._current = None
-        while True:
-            try:
-                job = self._jobs.get_nowait()
-            except queue.Empty:
-                break
-            if job is not None and job.handle is not None:
-                job.handle.cancel()
-        self._jobs.put(None)
-        if self._thread is not None:
-            self._thread.join(timeout=5)
-            self._thread = None
-        if self._synth is not None and self._synth.is_alive():
-            self._synth.join(timeout=5)
-            self._synth = None
+        with self._lock:
+            self._closed = True
+            while True:
+                try:
+                    job = self._jobs.get_nowait()
+                except queue.Empty:
+                    break
+                if job is not None:
+                    job.handle.cancel()
+            self._jobs.put(None)
+            current = self._current
+            thread = self._thread
+            synth = self._synth
+        if current is not None:
+            current.cancel()
+        if thread is not None:
+            thread.join(timeout=5)
+        if synth is not None:
+            synth.join(timeout=5)
 
-    def _ensure_worker(self) -> None:
-        with self._start_lock:
+    def _enqueue(self, job: _Job) -> None:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("speaker is closed")
+            self._jobs.put(job)
             if self._thread is None or not self._thread.is_alive():
                 self._thread = threading.Thread(
                     target=self._worker,
@@ -119,12 +117,17 @@ class Speaker:
             job = self._jobs.get()
             if job is None:
                 return
-            if job.handle.cancelled:
-                job.handle._finish()
+            skip = False
+            with self._lock:
+                if self._closed or job.handle.cancelled:
+                    job.handle.cancel()
+                    skip = True
+                else:
+                    self._current = job.handle
+            if skip:
                 continue
             if self._synth is not None and self._synth.is_alive():
                 self._synth.join(timeout=5)
-            self._current = job.handle
             try:
                 self._run(job)
             except Exception:
@@ -133,7 +136,8 @@ class Speaker:
             else:
                 job.handle._finish()
             finally:
-                self._current = None
+                with self._lock:
+                    self._current = None
 
     def _get_engine(self) -> Engine:
         if self._engine is None:
@@ -211,9 +215,10 @@ class Speaker:
                     aborted = True
                     break
         finally:
-            if aborted:
-                sink.abort()
-            else:
+            try:
+                if aborted:
+                    sink.abort()
+            finally:
                 sink.close()
 
     def _play_earcon(self, handle: SpeechHandle, clip: Pcm) -> None:
@@ -229,7 +234,9 @@ def _single_queue(clip: Pcm) -> queue.Queue[Pcm | Exception | None]:
 
 
 def _put(
-    clips: queue.Queue[Pcm | Exception | None], item: Pcm | Exception | None, stop: threading.Event
+    clips: queue.Queue[Pcm | Exception | None],
+    item: Pcm | Exception | None,
+    stop: threading.Event,
 ) -> bool:
     """Hand `item` to the player; False once `stop` is set (the player has gone away)."""
     while not stop.is_set():
