@@ -1,5 +1,6 @@
 """The sink's write guard: a stalled device fails the speech instead of hanging the speaker."""
 
+import logging
 import sys
 import threading
 import types
@@ -105,6 +106,21 @@ def test_should_raise_stalled_and_abort_when_a_write_does_not_return(
         sink.write(BLOCK)
 
     assert "abort" in streams[0].calls
+
+
+def test_should_log_a_warning_when_the_guard_fires(
+    install: Installer, release: threading.Event, caplog: pytest.LogCaptureFixture
+) -> None:
+    install(lambda **kw: HangingStream(release, **kw))
+    sink = SoundDeviceSink(24000, write_timeout_s=0.05)
+
+    with caplog.at_level(logging.WARNING), pytest.raises(AudioOutputError):
+        sink.write(BLOCK)
+
+    assert any(
+        r.levelno == logging.WARNING and "audio output stalled" in r.getMessage()
+        for r in caplog.records
+    )
 
 
 def test_should_close_without_stop_when_the_stream_stalled(

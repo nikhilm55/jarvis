@@ -4,7 +4,10 @@ import threading
 from collections.abc import Callable
 from typing import Any, Protocol, runtime_checkable
 
+from jarvis.log import get_logger
 from jarvis.tts.engines import Pcm
+
+logger = get_logger(__name__)
 
 BLOCK_S = 0.05
 
@@ -80,9 +83,11 @@ class SoundDeviceSink:
         if not self._guarded(lambda: self._stream.write(block), self._write_timeout_s):
             self._aborted = True
             self._guarded(self._stream.abort, 1.0)
-            raise AudioOutputError(
+            message = (
                 f"audio output stalled: a write did not return within {self._write_timeout_s} s"
             )
+            logger.warning(message)
+            raise AudioOutputError(message)
 
     def abort(self) -> None:
         """Abort the current playback immediately."""
