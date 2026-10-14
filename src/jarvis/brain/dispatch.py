@@ -1,13 +1,17 @@
 """Per-turn tool handler: routes the model's tool calls and enforces the step limit."""
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Any, TypeVar
 
 from jarvis.brain.clock import TurnClock
 from jarvis.brain.desktop_tools import DesktopLike, call_desktop
 from jarvis.brain.failures import ToolError, step_limit_response
 from jarvis.brain.respond import RespondGate
 from jarvis.contract import FinalResponse, sanitise_spoken
+
+_T = TypeVar("_T")
 
 OnSay = Callable[[str], Awaitable[None]]
 OnAsk = Callable[[str, list[str]], Awaitable[str]]
@@ -40,6 +44,7 @@ class TurnTools:
         self._max_steps = max_steps
         self._steps = 0
         self._closed = False
+        self._inflight: set[asyncio.Task[Any]] = set()
         self._gate = RespondGate(turn_id, hooks.finish)
 
     @property
@@ -60,6 +65,22 @@ class TurnTools:
     def close(self) -> None:
         """Mark the turn over so further tool calls are rejected."""
         self._closed = True
+        for task in self._inflight:
+            task.cancel()
+
+    async def _run(self, awaitable: Awaitable[_T]) -> _T:
+        """Run an awaitable, tracking it as in-flight and handling cancellation."""
+        task = asyncio.ensure_future(awaitable)
+        self._inflight.add(task)
+        try:
+            return await task
+        except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if task.cancelled() and current is not None and current.cancelling() == 0:
+                raise ToolError("the turn ended while this was running") from None
+            raise
+        finally:
+            self._inflight.discard(task)
 
     async def __call__(self, policy_name: str, args: dict[str, object]) -> object:
         """Route a single tool call for the current turn."""
@@ -89,7 +110,7 @@ class TurnTools:
         spoken = sanitise_spoken(text)
         if not spoken:
             raise ToolError("text has nothing speakable")
-        await self._hooks.on_say(spoken)
+        await self._run(self._hooks.on_say(spoken))
         return "ok"
 
     async def _ask(self, args: dict[str, object]) -> str:
@@ -100,7 +121,7 @@ class TurnTools:
         options = _options(args.get("options"))
         self._hooks.clock.pause()
         try:
-            return await self._hooks.on_ask(question, options)
+            return await self._run(self._hooks.on_ask(question, options))
         finally:
             self._hooks.clock.resume()
 
@@ -131,5 +152,8 @@ def _options(value: object) -> list[str]:
         stripped = item.strip()
         if not stripped or len(stripped) > _MAX_OPTION:
             raise ToolError("options must be a short list of short strings")
-        result.append(stripped)
+        cleaned = sanitise_spoken(stripped)
+        if not cleaned:
+            raise ToolError("options must be a short list of short strings")
+        result.append(cleaned)
     return result

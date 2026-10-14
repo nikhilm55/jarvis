@@ -56,3 +56,16 @@ def test_should_not_raise_when_pause_resume_without_scope() -> None:
     clock = TurnClock()
     clock.pause()
     clock.resume()
+
+
+def test_should_not_raise_when_pause_and_resume_straddle_the_scope_exit() -> None:
+    async def main() -> None:
+        clock = TurnClock()
+        async with asyncio.timeout(10) as scope:
+            clock.attach(scope)
+            clock.pause()
+        clock.resume()  # the turn is over; a late ask finishing must not crash
+        clock.pause()
+        clock.resume()
+
+    asyncio.run(main())
