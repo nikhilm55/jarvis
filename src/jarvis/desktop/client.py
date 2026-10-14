@@ -27,6 +27,14 @@ class _WorkerGone(Exception):
     """Internal: the worker process is gone or produced an unusable response."""
 
 
+async def _reap(proc: asyncio.subprocess.Process) -> None:
+    """Kill and wait for a process, suppressing expected errors."""
+    with contextlib.suppress(ProcessLookupError, OSError):
+        proc.kill()
+    with contextlib.suppress(ProcessLookupError, OSError):
+        await proc.wait()
+
+
 class DesktopClient:
     """Talks to the desktop worker process (JSON lines on stdin/stdout).
 
@@ -183,8 +191,15 @@ class DesktopClient:
     async def _spawn(self) -> tuple[asyncio.StreamWriter, asyncio.StreamReader]:
         if self._closed:
             raise DesktopError("INTERNAL", "desktop client is closed")
-        if self._proc is not None and self._stdin is not None and self._stdout is not None:
+        if (
+            self._proc is not None
+            and self._proc.returncode is None
+            and self._stdin is not None
+            and self._stdout is not None
+        ):
             return self._stdin, self._stdout
+        if self._proc is not None:
+            await self._kill()
         try:
             proc = await asyncio.create_subprocess_exec(
                 *self._command,
@@ -193,11 +208,11 @@ class DesktopClient:
             )
         except OSError:
             raise DesktopError("INTERNAL", "could not start the desktop worker") from None
+        if self._closed:
+            await _reap(proc)
+            raise DesktopError("INTERNAL", "desktop client is closed")
         if proc.stdin is None or proc.stdout is None:
-            with contextlib.suppress(ProcessLookupError, OSError):
-                proc.kill()
-            with contextlib.suppress(ProcessLookupError, OSError):
-                await proc.wait()
+            await _reap(proc)
             raise DesktopError("INTERNAL", "could not start the desktop worker")
         self._proc = proc
         self._stdin = proc.stdin

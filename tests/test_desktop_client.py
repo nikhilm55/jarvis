@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import signal
 import sys
 import time
 from pathlib import Path
@@ -249,6 +250,73 @@ def test_should_close_idempotently_and_kill_worker_when_closed(tmp_path: Path) -
                 await c.volume_get()
             assert exc.value.code == "INTERNAL"
             assert "closed" in exc.value.message
+        finally:
+            await c.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("name", "args"),
+    [
+        ("open_app", ("x",)),
+        ("volume_step", (5,)),
+    ],
+)
+def test_should_respawn_idle_worker_when_it_died_between_calls(
+    tmp_path: Path, name: str, args: tuple[object, ...]
+) -> None:
+    async def scenario() -> None:
+        c = _client(tmp_path, "ok")
+        try:
+            r = await c.volume_get()
+            pid = r["pid"]
+            assert isinstance(pid, int)
+            os.kill(pid, signal.SIGKILL)
+            for _ in range(50):
+                if c._proc is not None and c._proc.returncode is not None:
+                    break
+                await asyncio.sleep(0.1)
+            else:
+                pytest.fail("client never observed worker exit")
+            r2 = await getattr(c, name)(*args)
+            assert r2["op"] == name
+            assert r2["pid"] != pid
+            assert _starts(tmp_path) == 2
+            assert _requests(tmp_path) == ["volume_get", name]
+        finally:
+            await c.close()
+
+    asyncio.run(scenario())
+
+
+def test_should_not_orphan_worker_when_closed_during_spawn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def scenario() -> None:
+        c = _client(tmp_path, "ok")
+        real = asyncio.create_subprocess_exec
+        procs: list[asyncio.subprocess.Process] = []
+
+        async def racing_exec(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
+            proc = await real(*args, **kwargs)
+            procs.append(proc)
+            await c.close()
+            return proc
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", racing_exec)
+        try:
+            with pytest.raises(DesktopError) as exc:
+                await c.volume_get()
+            assert exc.value.code == "INTERNAL"
+            assert "closed" in exc.value.message
+            assert len(procs) == 1
+            for _ in range(50):
+                if procs[0].returncode is not None:
+                    break
+                await asyncio.sleep(0.1)
+            else:
+                pytest.fail("spawned worker was not killed")
         finally:
             await c.close()
 

@@ -1,6 +1,7 @@
 """Tests for the jarvis.policy safety gate."""
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -54,13 +55,32 @@ def test_should_deny_when_scoped_t0_in_every_mode(mode: Mode) -> None:
 
 
 @pytest.mark.parametrize("mode", MODES)
-@pytest.mark.parametrize("tier", [Tier.T0, Tier.T1])
-def test_should_allow_when_t0_or_t1_in_every_mode(mode: Mode, tier: Tier) -> None:
-    name = f"tool.{tier.value}"
-    register(ToolSpec(name=name, tier=tier))
+def test_should_allow_t0_in_every_mode(mode: Mode) -> None:
+    name = "tool.T0"
+    register(ToolSpec(name=name, tier=Tier.T0))
     d = gate(name, {}, mode)
     assert d.allowed is True
-    assert d.reason == f"allowed: {tier.value}"
+    assert d.reason == "allowed: T0"
+
+
+@pytest.mark.parametrize("mode", ["balanced", "yolo"])
+def test_should_allow_t1_when_balanced_or_yolo(mode: Mode) -> None:
+    name = "tool.T1"
+    register(ToolSpec(name=name, tier=Tier.T1))
+    d = gate(name, {}, mode)
+    assert d.allowed is True
+    assert d.reason == "allowed: T1"
+
+
+def test_should_deny_t1_when_safe_mode() -> None:
+    name = "tool.T1"
+    register(ToolSpec(name=name, tier=Tier.T1))
+    d = gate(name, {}, "safe")
+    assert d.allowed is False
+    assert d.reason == "needs confirmation (M2)"
+    rec = _last_policy_record()
+    assert rec["decision"] == "deny"
+    assert rec["tier"] == "T1"
 
 
 @pytest.mark.parametrize("mode", MODES)
@@ -131,6 +151,20 @@ def test_should_allow_desktop_tools_when_balanced(name: str) -> None:
     assert d.allowed is True
 
 
+def test_should_deny_open_and_close_app_when_safe() -> None:
+    for name in ("desktop.open_app", "desktop.close_app"):
+        d = gate(name, {}, "safe")
+        assert d.allowed is False
+    for name in (
+        "desktop.volume_get",
+        "desktop.volume_set",
+        "desktop.volume_step",
+        "desktop.mute",
+    ):
+        d = gate(name, {}, "safe")
+        assert d.allowed is True
+
+
 def test_should_not_mutate_args_when_gate_called() -> None:
     args: dict[str, object] = {"x": 1}
     gate("desktop.volume_get", args, "safe")
@@ -175,3 +209,114 @@ def test_should_deny_when_tool_unhashable() -> None:
 )
 def test_should_deny_when_tool_name_differs_only_by_case_or_whitespace(name: str) -> None:
     assert gate(name, {}, "yolo").allowed is False
+
+
+def test_should_coerce_tier_string_when_valid() -> None:
+    spec = ToolSpec("x.t", "T1")  # type: ignore[arg-type]
+    assert spec.tier is Tier.T1
+    register(spec)
+    d_safe = gate("x.t", {}, "safe")
+    assert d_safe.allowed is False
+    assert d_safe.reason == "needs confirmation (M2)"
+    d_balanced = gate("x.t", {}, "balanced")
+    assert d_balanced.allowed is True
+
+
+@pytest.mark.parametrize("bad_tier", ["T9", "t0", "", 0, None, 1.5])
+def test_should_reject_invalid_tier(bad_tier: object) -> None:
+    with pytest.raises(ValueError, match="tier"):
+        ToolSpec("x.t", bad_tier)  # type: ignore[arg-type]
+
+
+def test_should_coerce_scopes_list_to_tuple() -> None:
+    spec = ToolSpec(name="s.tool", tier=Tier.T0, scopes=["a", "b"])  # type: ignore[arg-type]
+    assert spec.scopes == ("a", "b")
+    assert isinstance(spec.scopes, tuple)
+    register(spec)
+    d = gate("s.tool", {}, "safe")
+    assert d.allowed is False
+    assert d.reason == "consent layer not built yet (M2)"
+
+
+@pytest.mark.parametrize("bad_scopes", ["file", 5, [1], ("a", 2), None])
+def test_should_reject_invalid_scopes(bad_scopes: object) -> None:
+    with pytest.raises(ValueError, match="scopes"):
+        ToolSpec(name="s.tool", tier=Tier.T0, scopes=bad_scopes)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("bad_name", ["", "  ", 5, None])
+def test_should_reject_invalid_name(bad_name: object) -> None:
+    with pytest.raises(ValueError, match="name"):
+        ToolSpec(name=bad_name, tier=Tier.T0)  # type: ignore[arg-type]
+
+
+def test_should_keep_valid_spec_equal_and_hashable() -> None:
+    a = ToolSpec("n", Tier.T0)
+    b = ToolSpec("n", "T0")  # type: ignore[arg-type]
+    assert a == b
+    assert hash(a) == hash(b)
+
+
+def test_should_deny_when_logger_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("secret-token-abc")
+
+    monkeypatch.setattr(policy, "get_logger", boom)
+    d = gate("desktop.volume_get", {}, "yolo")
+    assert d.allowed is False
+    assert d.reason == "policy error: RuntimeError"
+    assert "secret-token-abc" not in d.reason
+
+
+def test_should_deny_when_log_dir_unwritable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    blocker = tmp_path / "blocker"
+    blocker.write_text("x", encoding="utf-8")
+    monkeypatch.setenv("JARVIS_HOME", str(blocker / "home"))
+    d = gate("desktop.volume_get", {}, "balanced")
+    assert d.allowed is False
+    assert d.reason.startswith("policy error:")
+    monkeypatch.setenv("JARVIS_HOME", str(tmp_path / "ok"))
+    d2 = gate("desktop.volume_get", {}, "balanced")
+    assert d2.allowed is True
+
+
+def test_should_deny_when_decision_logic_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def boom(*args: object, **kwargs: object) -> None:
+        raise ValueError("boom")
+
+    monkeypatch.setattr(policy, "_decide", boom)
+    d = gate("desktop.volume_get", {}, "balanced")
+    assert d.allowed is False
+    assert d.reason == "policy error: ValueError"
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_should_deny_for_every_mode_when_logger_fails(
+    mode: Mode,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("x")
+
+    monkeypatch.setattr(policy, "get_logger", boom)
+    d = gate("desktop.volume_get", {}, mode)
+    assert d.allowed is False
+    assert d.reason == "policy error: RuntimeError"
+
+
+def test_should_not_swallow_keyboard_interrupt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def boom(*args: object, **kwargs: object) -> None:
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(policy, "get_logger", boom)
+    with pytest.raises(KeyboardInterrupt):
+        gate("desktop.volume_get", {}, "yolo")
