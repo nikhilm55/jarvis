@@ -1,6 +1,7 @@
 """No-wake-word windows: listen after a bare 'Jarvis' (FR-ACT-07), reply to ask (FR-ACT-08)."""
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable
 from typing import Literal
 
@@ -12,11 +13,15 @@ WindowKind = Literal["listen", "reply"]
 class Windows:
     """Manages the single active no-wake-word window (listen or reply)."""
 
-    def __init__(self) -> None:
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         """Initialise the window manager with no open window."""
+        self._clock = clock
         self._kind: WindowKind | None = None
         self._timer: asyncio.Task[None] | None = None
         self._answer: asyncio.Future[str] | None = None
+        self._on_timeout: Callable[[], Awaitable[None]] | None = None
+        self._held: bool = False
+        self._deadline: float = 0.0
 
     @property
     def kind(self) -> WindowKind | None:
@@ -31,8 +36,17 @@ class Windows:
         """Open a listen window that expires after the given seconds."""
         self.close()
         self._kind = "listen"
+        self._on_timeout = on_timeout
+        self._deadline = self._clock() + seconds
+        self._arm(seconds)
+
+    def _arm(self, delay: float) -> None:
+        """Create the timer task for the open window with the given delay."""
         loop = asyncio.get_running_loop()
-        self._timer = loop.create_task(self._expire_listen(seconds, on_timeout))
+        if self._kind == "listen" and self._on_timeout is not None:
+            self._timer = loop.create_task(self._expire_listen(delay, self._on_timeout))
+        elif self._kind == "reply" and self._answer is not None:
+            self._timer = loop.create_task(self._expire_reply(delay, self._answer))
 
     async def _expire_listen(
         self,
@@ -43,6 +57,7 @@ class Windows:
         await asyncio.sleep(seconds)
         self._kind = None
         self._timer = None
+        self._held = False
         await on_timeout()
 
     async def ask(self, seconds: float) -> str:
@@ -52,7 +67,8 @@ class Windows:
         loop = asyncio.get_running_loop()
         future: asyncio.Future[str] = loop.create_future()
         self._answer = future
-        self._timer = loop.create_task(self._expire_reply(seconds, future))
+        self._deadline = self._clock() + seconds
+        self._arm(seconds)
         try:
             return await future
         finally:
@@ -80,6 +96,7 @@ class Windows:
                 self._timer.cancel()
             self._kind = None
             self._timer = None
+            self._held = False
             return True
         return False
 
@@ -92,6 +109,7 @@ class Windows:
                 self._timer.cancel()
             self._timer = None
             self._answer = None
+            self._held = False
             return True
         return False
 
@@ -104,3 +122,21 @@ class Windows:
             self._answer.set_result("timeout")
         self._answer = None
         self._kind = None
+        self._on_timeout = None
+        self._held = False
+
+    def hold_if_open(self, at: float) -> bool:
+        """Hold the open window if speech started within the deadline."""
+        if self._kind is not None and not self._held and at <= self._deadline:
+            if self._timer is not None:
+                self._timer.cancel()
+            self._timer = None
+            self._held = True
+            return True
+        return False
+
+    def release(self) -> None:
+        """Re-arm the timer for the remaining time when the held window is released."""
+        if self._held:
+            self._held = False
+            self._arm(max(0.0, self._deadline - self._clock()))
