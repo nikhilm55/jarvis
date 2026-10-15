@@ -31,7 +31,7 @@ M2 BACKLOG (from M1 reviews; details in the PR descriptions):
 - Windows: kill the brain's whole process tree (taskkill /T or a Job Object); a second possible flake, `tests/test_desktop_client.py:211`; optionally start the turn clock after the brain's init.
 - Harness follow-ups: skip allowance from the skips round 0 actually reports (not from markers); `deselected` counts as not clean; read `tox.ini` addopts.
 - Dependabot PRs #115–#121: check each (onnxruntime first) before merging.
-- From the live run (B1–B5): a "your name" setting so the brain stops using the account's full name; end silently on an empty transcript after a wake; a decline isn't an error in the HUD; idle CPU 3.7 % with a real mic; `tiny.en` vs `base.en` accuracy.
+- From the live run (B2–B5; B1 done): end silently on an empty transcript after a wake; a decline isn't an error in the HUD; idle CPU 3.7 % with a real mic; `tiny.en` vs `base.en` accuracy.
 - Windows: the brain's env allowlist adds 13 OS variables on win32 (SYSTEMROOT, WINDIR, COMSPEC, PATHEXT, USERPROFILE, USERNAME, HOMEDRIVE, HOMEPATH, APPDATA, LOCALAPPDATA, PROGRAMDATA, TEMP, TMP); no secrets; extends R45 (PR #123).
 - Windows: kill() on a `.cmd`-launched brain leaves the real process running: use a Job Object; CI should fail on unclosed-transport warnings; CI runs pytest with a doubled -q, so no summary or skip list is printed (needs a .github change).
 - Owner's phrases as M2 acceptance cases: "open the terminal and check what I've been working on", "help me set up my project" (needs `run_shell` and files).
