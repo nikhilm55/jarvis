@@ -34,7 +34,7 @@
 ## Enforcement
 
 - **Delegation hook.** `.claude/hooks/guard_delegation.py` (PreToolUse on the subagent tool) rejects a dispatch whose prompt lacks the brief's required sections (`Goal`, `Context`, `Constraints`, `Done when`, `Report`) or leaves one empty or a placeholder. Read-only search agents are exempt.
-- **The local model loop** enforces plan → tests first → test lock → scope check → stall stop → self-review in code, and writes the result to `summary.json`. Its `status` is one of `green`, `red`, `stalled`, `scope_violation`, `test_weakened`, `test_error` (a test file's own lint/mypy error survived its one fix round) or `test_disputed` (stalled with a `TEST-DISPUTE:` line from the model: the test itself may be wrong, so a finisher decides).
+- **The local model loop** enforces plan → tests first → test lock → scope check → stall stop → self-review in code, and writes the result to `summary.json`. Its `status` is one of `green`, `red`, `stalled`, `scope_violation`, `test_weakened`, `sensor_tamper` (an implementation file imported pytest or unittest.mock, or assigned into an imported module: reverted), `test_error` (a test file's own lint/mypy error survived its one fix round) or `test_disputed` (stalled with a `TEST-DISPUTE:` line from the model: the test itself may be wrong, so a finisher decides).
 - **Reviewers** check the brief's requirement map against the tests and fail a task whose tests were weakened, whose scope grew, or whose CI is red.
 
 ## Files
