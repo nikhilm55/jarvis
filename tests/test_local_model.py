@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
+import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -87,6 +90,8 @@ class FakeModel:
         self.calls.append((system, user))
         if "JSON object" in system:
             return self.answer("plan", json.dumps(PLAN))
+        if system.startswith(local_model.REVIEW_SYSTEM):
+            return self.answer("review", "[]")
         match = re.search(r"(?:Write the \w+|Fix) .*?`([^`]+)`", user)
         rel = match.group(1) if match else ""
         default = fenced(TEST_SRC if rel.startswith("tests/") else IMPL_SRC)
@@ -99,13 +104,27 @@ class FakeModel:
 class FakeChecks:
     """Stands in for `check`: returns the scripted results in order, then the last one."""
 
-    def __init__(self, *results: tuple[bool, str]) -> None:
+    def __init__(self, *results: tuple[bool, str], effect: Callable[[Path], None] | None = None):
         self.results = list(results)
+        self.effect = effect
         self.runs = 0
 
     def __call__(self, repo: Path, files: list[str], tests: list[str], cache: Path) -> object:
+        if self.effect:
+            self.effect(repo)
         self.runs += 1
         return self.results[min(self.runs, len(self.results)) - 1]
+
+
+def git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+
+
+@pytest.fixture(autouse=True)
+def clean_git_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Under a git hook GIT_DIR points at the outer repo; the temp repos must not see it."""
+    for key in [k for k in os.environ if k.startswith("GIT_")]:
+        monkeypatch.delenv(key)
 
 
 @pytest.fixture
@@ -114,6 +133,9 @@ def repo(tmp_path: Path) -> Path:
     (root / "src").mkdir(parents=True)
     (root / "tests").mkdir()
     (root / "src" / "old.py").write_text("A = 1\nB = 2\n", encoding="utf-8")
+    git(root, "init", "-q")
+    git(root, "add", ".")
+    git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init")
     return root
 
 
@@ -148,7 +170,7 @@ def test_should_plan_first_with_the_system_prompt_from_the_harness_file(
     _, summary, log = implement(repo, monkeypatch, model, FakeChecks((True, "")))
     system_md = local_model.SYSTEM_FILE.read_text(encoding="utf-8")
     assert system_md.strip()
-    assert all(system.startswith(system_md) for system, _ in model.calls)
+    assert all(system.startswith(system_md) for system, _ in model.calls[:-1])  # not the review
     assert "JSON object" in model.calls[0][0]
     assert "ONE fenced" in model.calls[1][0]
     assert json.loads((log / "plan.json").read_text(encoding="utf-8")) == PLAN
@@ -247,3 +269,129 @@ def test_should_edit_a_file_over_150_lines_in_a_fix_round_even_when_the_run_crea
     [fix_system] = [system for system, user in model.calls if "Fix `src/new.py`" in user]
     assert "SEARCH/REPLACE" in fix_system
     assert "X5 = 50\n" in (repo / "src" / "new.py").read_text(encoding="utf-8")
+
+
+def test_should_stop_on_scope_violation_and_leave_the_stray_file(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def stray(root: Path) -> None:
+        (root / "stray.txt").write_text("oops", encoding="utf-8")
+
+    code, summary, _ = implement(
+        repo, monkeypatch, FakeModel(), FakeChecks((False, FAILED), effect=stray)
+    )
+    assert (code, summary["status"]) == (1, "scope_violation")
+    assert summary["scope_violations"] == ["stray.txt"]
+    assert (repo / "stray.txt").exists()
+    assert (repo / "src" / "new.py").exists()
+
+
+def test_should_ignore_files_dirty_before_the_run_and_the_log_dir_inside_the_repo(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (repo / "src" / "old.py").write_text("A = 9\n", encoding="utf-8")
+    code, summary, _ = implement(
+        repo, monkeypatch, FakeModel(), FakeChecks((True, "")), log=repo / ".runs" / "x"
+    )
+    assert (code, summary["status"]) == (0, "green")
+
+
+def test_should_stop_as_stalled_when_the_same_failure_repeats(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model = FakeModel()
+    code, summary, _ = implement(repo, monkeypatch, model, FakeChecks((False, FAILED)))
+    assert (code, summary["status"], summary["rounds"]) == (1, "stalled", 1)
+    assert len(model.prompts("src/new.py")) == 2
+
+
+def test_should_send_each_file_only_the_errors_that_mention_it(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report = "RUFF:\nsrc/a.py:1:1: F401 unused\nsrc/b.py:2:1: E501 long\n\n" + FAILED
+    model = FakeModel()
+    write = ["tests/test_new.py", "src/a.py", "src/b.py"]
+    implement(repo, monkeypatch, model, FakeChecks((False, report), (True, "")), write=write)
+    to_a, to_b = model.prompts("src/a.py")[1], model.prompts("src/b.py")[1]
+    assert "src/a.py:1:1" in to_a
+    assert "src/b.py:2:1" not in to_a
+    assert "src/b.py:2:1" in to_b
+    assert "FAILED tests/test_new.py::test_a" in to_a
+    assert "FAILED tests/test_new.py::test_a" in to_b
+
+
+def test_should_review_green_work_in_a_fresh_context_and_list_missing_requirements(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    items = [
+        {"requirement": "1", "status": "met", "note": "ok"},
+        {"requirement": "2", "status": "missing", "note": "no test"},
+    ]
+    model = FakeModel({"review": json.dumps(items)})
+    code, summary, log = implement(repo, monkeypatch, model, FakeChecks((True, "")))
+    system, user = model.calls[-1]
+    assert system.startswith(local_model.REVIEW_SYSTEM)
+    assert "def f() -> int" in user
+    assert "Write the" not in user
+    assert json.loads((log / "review.json").read_text(encoding="utf-8")) == items
+    assert summary["review_missing"] == ["2"]
+    assert (code, summary["status"]) == (1, "green")
+    assert (repo / "src" / "new.py").read_text(encoding="utf-8") == IMPL_SRC
+
+
+def test_should_exit_0_when_green_and_nothing_is_missing_and_skip_review_when_red(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    met = json.dumps([{"requirement": "1", "status": "met", "note": "ok"}])
+    code, summary, _ = implement(
+        repo, monkeypatch, FakeModel({"review": met}), FakeChecks((True, ""))
+    )
+    assert (code, summary["review_missing"]) == (0, [])
+    model = FakeModel()
+    _, red, log = implement(
+        repo, monkeypatch, model, FakeChecks((False, "RUFF:\nx.py:1:1: E1 a")), rounds=0
+    )
+    assert red["status"] == "red"
+    assert not (log / "review.json").exists() or red["review_missing"] == []
+    assert not any(system.startswith(local_model.REVIEW_SYSTEM) for system, _ in model.calls)
+
+
+def test_should_exit_2_when_the_repo_is_not_a_git_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    (tmp_path / "brief.md").write_text("x", encoding="utf-8")
+    monkeypatch.setattr(local_model, "chat", FakeModel())
+    argv = ["implement", "--repo", str(plain), "--spec", str(tmp_path / "brief.md")]
+    argv += ["--write", "a.py", "--test", "t", "--log-dir", str(tmp_path / "log")]
+    assert local_model.main(argv) == 2
+    assert "git repository" in capsys.readouterr().err
+
+
+def test_should_write_a_new_file_whole(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    model = FakeModel()
+    implement(repo, monkeypatch, model, FakeChecks((True, "")))
+    assert "SEARCH/REPLACE" not in model.calls[2][0]
+    assert (repo / "src" / "new.py").read_text(encoding="utf-8") == IMPL_SRC
+
+
+def test_should_write_every_summary_field(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _, summary, _ = implement(repo, monkeypatch, FakeModel(), FakeChecks((True, "")))
+    wanted = {"status", "plan", "tests_locked_counts", "weakening_events", "rounds"}
+    assert wanted <= summary.keys()
+
+
+def test_should_keep_ask_a_single_user_prompt_call(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    seen: list[list[dict[str, str]]] = []
+
+    def fake(messages: list[dict[str, str]], max_tokens: int, timeout: int) -> str:
+        seen.append(messages)
+        return " answer \n"
+
+    monkeypatch.setattr(local_model, "chat", fake)
+    assert local_model.main(["ask", "hello"]) == 0
+    assert capsys.readouterr().out == "answer\n"
+    assert seen == [[{"role": "user", "content": "hello"}]]

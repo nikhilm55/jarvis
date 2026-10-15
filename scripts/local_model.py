@@ -5,7 +5,8 @@ receives text and only returns text; this script writes its files and runs the c
 
   ask        one prompt in, one answer out (test-case lists, fixtures, docstrings, PR drafts)
   implement  the harness contract (harness/README.md): plan, tests first then locked,
-             search/replace edits, ruff + mypy + pytest every round
+             search/replace edits, ruff + mypy + pytest + scope check every round, stall
+             stop, then a fresh-context self-review
 
 Usage:
   export LOCAL_LLM_URL=http://<host>:8080/v1      # never commit the address
@@ -15,9 +16,10 @@ Usage:
       --test tests/test_x.py --rounds 5 --log-dir .superpowers/runs/x
 
 `implement` only writes the files named in --write (inside the repo) and never commits.
-Exit 0 when ruff, mypy and the tests pass; 1 when the rounds run out (the files keep the last
-attempt for a finisher to complete); 2 on a usage or connection error. Every prompt, reply and
-check output is saved in --log-dir, plus plan.json and summary.json. See harness/README.md.
+Exit 0 when ruff, mypy and the tests pass and the review finds nothing missing; 1 otherwise (the
+files keep the last attempt for a finisher to complete); 2 on a usage or connection error. Every
+prompt, reply and check output is saved in --log-dir, plus plan.json, review.json and
+summary.json. See harness/README.md.
 """
 
 from __future__ import annotations
@@ -40,6 +42,7 @@ import harness_checks as hc
 
 ROOT = Path(__file__).resolve().parent.parent
 SYSTEM_FILE = ROOT / "harness" / "qwen" / "system.md"
+REVIEW_STATUSES = ("met", "missing", "unsure")
 EDIT_LIMIT = 150  # lines; a bigger file is edited with SEARCH/REPLACE blocks, never rewritten
 
 WHOLE_FORMAT = (
@@ -58,6 +61,16 @@ PLAN_FORMAT = (
     '"tests": [{"requirement": "<number or short text from the brief>", '
     '"test": "<test function name>"}]}. '
     "Every file you will write gets an entry; every requirement maps to a named test."
+)
+
+REVIEW_SYSTEM = (
+    "You are a strict code reviewer. You did not write this code. Check the change against each "
+    "numbered requirement of the brief and judge only what the diff shows."
+)
+REVIEW_FORMAT = (
+    "Output format: ONLY a JSON list, one item per requirement: "
+    '{"requirement": "<number or text>", "status": "met" | "missing" | "unsure", '
+    '"note": "<one line>"}. Use "missing" only when the change plainly lacks it.'
 )
 
 CODE_BLOCK = re.compile(r"```(?:python|py)?\s*\n(.*?)```", re.S)
@@ -170,6 +183,8 @@ class Implementer:
         self.baseline: dict[str, hc.TestStats] = {}
         self.notes: dict[str, list[str]] = {}
         self.weakened: list[dict[str, Any]] = []
+        self.dirty: set[str] = set()
+        self.stray: list[str] = []
 
     def current(self, rel: str) -> str:
         path = self.repo / rel
@@ -243,15 +258,19 @@ class Implementer:
         (self.log / f"r{round_no}.checks.txt").write_text(report, encoding="utf-8")
         broken = hc.collection_errors(report)
         for i, rel in enumerate(self.impl + [t for t in self.tests if t in broken]):
+            routed = hc.errors_for_file(report, rel)
+            if not routed and not self.notes.get(rel):
+                continue
             files = "\n\n".join(
                 f"### {q}{' (locked tests)' if q in self.tests else ''}\n"
                 f"```python\n{self.current(q)}```"
                 for q in self.order
             )
+            errors = "\n\n".join(f"{k}:\n{trim(v, 60)}" for k, v in routed.items())
             notes = "\n".join(f"- {n}" for n in self.notes.get(rel, []))
             prompt = (
                 f"{self.brief()}\n\n## The files written for this task\n{files}\n\n"
-                f"## The checks failed\n```\n{trim(report)}\n```\n\n"
+                f"## The checks failed (the part that concerns `{rel}`)\n```\n{errors}\n```\n\n"
                 f"## Notes from the harness\n{notes or '(none)'}\n\nFix `{rel}`."
             )
             self.write(rel, prompt, f"r{round_no}-{i}-{Path(rel).name}")
@@ -269,33 +288,79 @@ class Implementer:
                 why = "; ".join(problems)
                 self.notes.setdefault(rel, []).append(f"reverted, tests may not shrink: {why}")
 
+    def porcelain(self) -> str:
+        code, out = run(["git", "status", "--porcelain", "--untracked-files=all"], self.repo)
+        if code:
+            raise LocalModelError(f"--repo must be a git repository:\n{trim(out, 5)}")
+        return out
+
+    def out_of_scope(self) -> bool:
+        log = os.path.relpath(self.log.resolve(), self.repo).replace(os.sep, "/")
+        self.stray = hc.scope_violations(
+            self.porcelain(), set(self.opts.write), self.dirty, (f"{log}/",)
+        )
+        return bool(self.stray)
+
     def iterate(self) -> tuple[str, int, str]:
         """Round 0 then fix rounds. Returns (status, fix rounds, last failing report)."""
         cache = self.log / "mypy-cache"
         self.lock_tests(0, {})
         ok, report = check(self.repo, self.opts.write, self.opts.test, cache)
+        seen: str | None = None
         rounds = 0
-        while not ok and rounds < self.opts.rounds:
-            rounds += 1
+        while True:
+            if self.out_of_scope():
+                return "scope_violation", rounds, report
+            if ok:
+                return "green", rounds, ""
+            if hc.fingerprint(report) == seen:
+                return "stalled", rounds, report
+            if rounds >= self.opts.rounds:
+                break
+            seen, rounds = hc.fingerprint(report), rounds + 1
             before = {t: self.current(t) for t in self.tests}
             self.fix(rounds, report)
             self.lock_tests(rounds, before)
             ok, report = check(self.repo, self.opts.write, self.opts.test, cache)
-        if ok:
-            return "green", rounds, ""
         return ("test_weakened" if self.weakened else "red"), rounds, report
+
+    def diff(self) -> str:
+        parts = []
+        for rel in self.opts.write:
+            if rel in self.existing:
+                parts.append(run(["git", "diff", "--", rel], self.repo)[1])
+            else:
+                parts.append(f"### new file {rel}\n```python\n{self.current(rel)}```")
+        return "\n\n".join(parts)
+
+    def review(self) -> tuple[list[dict[str, Any]], bool]:
+        """A fresh call with no generation history; it only reports, it never edits."""
+        prompt = f"{self.brief()}\n\n## The change\n{self.diff()}\n\nReview it."
+        reply = self.call(REVIEW_FORMAT, prompt, "review", REVIEW_SYSTEM)
+        items = next((v for v in json_values(reply) if isinstance(v, list)), None)
+        good = [
+            i for i in items or [] if isinstance(i, dict) and i.get("status") in REVIEW_STATUSES
+        ]
+        (self.log / "review.json").write_text(json.dumps(good, indent=2), encoding="utf-8")
+        return good, items is not None
 
     def run(self) -> int:
         start = time.time()
+        self.dirty = hc.porcelain_paths(self.porcelain())
         self.make_plan()
         self.draft()
         status, rounds, report = self.iterate()
+        review, reviewed = self.review() if status == "green" else ([], False)
+        missing = [str(i.get("requirement")) for i in review if i["status"] == "missing"]
         summary = {
             "status": status,
             "plan": self.plan is not None,
             "tests_locked_counts": {k: asdict(v) for k, v in self.baseline.items()},
             "weakening_events": self.weakened,
             "rounds": rounds,
+            "review_missing": missing,
+            "reviewed": reviewed,
+            "scope_violations": self.stray,
             "minutes": round((time.time() - start) / 60, 1),
             "files": self.opts.write,
             "remaining": report,
@@ -304,7 +369,7 @@ class Implementer:
         print(json.dumps({k: v for k, v in summary.items() if k != "remaining"}))
         if report:
             print(trim(report, 40))
-        return 0 if status == "green" else 1
+        return 0 if status == "green" and not missing else 1
 
 
 def parse(argv: list[str]) -> argparse.Namespace:
