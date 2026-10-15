@@ -1,4 +1,4 @@
-"""Builds the turn envelope the brain receives: STT info, OS facts, the user's name (R53)."""
+"""Builds the turn envelope the brain receives: STT info, OS facts, the user's chosen name (R53)."""
 
 import os
 import platform
@@ -44,35 +44,6 @@ def locale_tag(environ: Mapping[str, str]) -> str:
     return "en-US"
 
 
-def first_name(gecos: str) -> str:
-    """Return the first name from a gecos field."""
-    if not gecos:
-        return ""
-    part = gecos.split(",", 1)[0].strip()
-    if not part:
-        return ""
-    return part.split()[0]
-
-
-def user_info(address_as: str | None, gecos: str, login: str) -> UserInfo:
-    """Build the UserInfo from address_as, gecos and login."""
-    name = first_name(gecos) or login or "user"
-    return UserInfo(name=name, address_as=address_as or first_name(gecos))
-
-
-def _os_user() -> tuple[str, str]:
-    """Return the gecos and login name of the current user."""
-    try:
-        import pwd  # noqa: PLC0415
-    except ImportError:
-        return ("", "")
-    try:
-        pw = pwd.getpwuid(os.getuid())
-    except KeyError:
-        return ("", "")
-    return (pw.pw_gecos, pw.pw_name)
-
-
 def build_envelope(  # noqa: PLR0913 - keyword-only; now/environ/turn_id are test seams
     *,
     command: str,
@@ -88,7 +59,6 @@ def build_envelope(  # noqa: PLR0913 - keyword-only; now/environ/turn_id are tes
     """Build the TurnEnvelope the brain receives."""
     now = now or datetime.now(UTC)
     environ = os.environ if environ is None else environ
-    gecos, login = _os_user()
     return TurnEnvelope(
         turn_id=turn_id or new_turn_id(now),
         command=command,
@@ -101,7 +71,7 @@ def build_envelope(  # noqa: PLR0913 - keyword-only; now/environ/turn_id are tes
             display_server=display_server(environ),
             locale=locale_tag(environ),
             local_time=now.astimezone().isoformat(timespec="seconds"),
-            user=user_info(settings.brain.address_as, gecos, login),
+            user=UserInfo(name=settings.user.name, address_as=settings.user.name),
             pending_question=pending_question,
         ),
         policy=TurnPolicy(mode=mode, max_steps=settings.brain.max_steps),

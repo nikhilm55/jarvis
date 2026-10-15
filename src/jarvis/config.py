@@ -4,9 +4,10 @@ import tomllib
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from jarvis.paths import config_dir
+from jarvis.userconfig import InvalidNameError, clean_name
 
 
 class ConfigError(ValueError):
@@ -50,7 +51,21 @@ class BrainSettings(_Section):
     max_steps: int = Field(default=25, ge=1, le=200)
     turn_timeout_s: int = Field(default=120, ge=1, le=3600)
     claude_bin: str | None = None
-    address_as: str | None = None  # how Jarvis addresses the user; None = the OS user's first name
+
+
+class UserSettings(_Section):
+    # What Jarvis calls the user. Set in setup; never derived from the OS account. None = no name.
+    name: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _valid_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            return clean_name(value)
+        except InvalidNameError as error:
+            raise ValueError(str(error)) from error
 
 
 class HudSettings(_Section):
@@ -70,6 +85,7 @@ class Settings(_Section):
     brain: BrainSettings = Field(default_factory=BrainSettings)
     log: LogSettings = Field(default_factory=LogSettings)
     hud: HudSettings = Field(default_factory=HudSettings)
+    user: UserSettings = Field(default_factory=UserSettings)
 
 
 def load_settings(path: Path | None = None) -> Settings:
