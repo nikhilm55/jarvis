@@ -12,6 +12,7 @@ When an agent makes the same mistake twice, record it here. If it can happen aga
 | 2026-10-06 | A downloaded design reference and third-party text risk being committed wholesale | Third-party text stays out of the repo, linked instead | `docs/ai/policy.md` §6, `.gitignore` |
 | 2026-10-07 | Three times in one session, a scripted find-and-replace silently matched nothing after the formatter reflowed the code: an FRS edit never saved, a Whisper `--prompt` flag was never added (17 min of compute wasted), and a table change was lost | Scripted edits must assert they matched exactly once, or use the Edit tool, which fails loudly | `spikes/M0a-wake-word/`, this file |
 | 2026-10-07 | Under the Claude Code sandbox, 8 tests errored: a fixture copied whole folders, and the sandbox makes untracked agent-config paths under `.claude/` unreadable | Fixtures copy git-tracked files only (what CI sees) | `tests/test_ai_config.py` `repo` fixture |
+| 2026-10-15 | The Windows test jobs went red at PR #41 (M1 task 6) and stayed red through #114 unnoticed: reviews checked the local Linux verify output, and the stack was merged with the admin bypass, so the failing required check never blocked anything | The task review checks the PR's CI status, all required jobs, before approving; a red job is a finding even when the code is Linux-only | `docs/ai/dev-pipeline.md` step 4 |
 
 ## Review log
 

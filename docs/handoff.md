@@ -13,6 +13,7 @@ DONE:
 - Dev pipeline documented: `docs/ai/dev-pipeline.md`; local-model tool `scripts/local_model.py` (endpoint from `LOCAL_LLM_URL`).
 
 NEXT:
+- **Fix Windows CI first:** the Windows test jobs have been red since PR #41 (M1's Linux-only modules and their tests run on Windows). Make them skip or pass on Windows so every required check is green again.
 - **Owner:** first live-mic run done (results and findings B1–B5 at the end of `docs/milestones/M1-acceptance.md`). Still untried live: checklist 1–5, "close it", "Jarvis, stop" while thinking, self-trigger.
 - **Track W:** custom single-word "Jarvis" wake model (brief in the orchestrator's SDD workspace; stops for owner approval before > 2 GB of downloads; licences decide shippability, OQ-004). Re-run the wake-related acceptance cases with it.
 - **Plan M2** (FRS §11 "Hands"): consent layer, confirmations (Safe mode T1 / T2+), more desktop tools, Windows backend. Fold in the M2 backlog below.
