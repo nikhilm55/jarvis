@@ -149,7 +149,7 @@ def test_should_build_correct_exec_call_when_window_spawner_invoked() -> None:
         assert args[1] == "-I"
         window_path = Path(args[2])
         assert window_path.exists()
-        assert str(window_path).endswith("hud/window.py")
+        assert window_path.parts[-2:] == ("hud", "window.py")
         assert args[3] == "--url"
         assert args[4] == "http://localhost:8080"
 

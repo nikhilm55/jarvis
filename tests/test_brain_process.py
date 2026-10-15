@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -99,6 +100,13 @@ def test_should_signal_eof_and_not_be_alive_when_the_process_exits(
     asyncio.run(main())
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason=(
+        "on Windows, kill() ends only the .cmd shim; the brain process survives "
+        "(needs a Job Object, Windows milestone)"
+    ),
+)
 def test_should_kill_the_whole_process_group_when_kill_is_called(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

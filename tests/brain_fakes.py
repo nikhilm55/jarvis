@@ -1,6 +1,7 @@
 """Test helpers for the brain: a fake claude executable on disk and process helpers."""
 
 import asyncio
+import ctypes
 import json
 import os
 import shlex
@@ -45,12 +46,14 @@ class FakeClaude:
         monkeypatch.setenv("FAKE_CLAUDE_LOG", str(log))
         if child:
             monkeypatch.setenv("FAKE_CLAUDE_CHILD_PIDFILE", str(root / "child.pid"))
-        wrapper = root / "claude"
-        wrapper.write_text(
-            f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(FAKE_CLAUDE))} "$@"\n',
-            encoding="utf-8",
-        )
-        wrapper.chmod(0o755)
+        if sys.platform == "win32":  # CreateProcess cannot run a shebang script, but runs a .cmd
+            wrapper = root / "claude.cmd"
+            wrapper.write_text(f'@"{sys.executable}" "{FAKE_CLAUDE}" %*\r\n', encoding="utf-8")
+        else:
+            wrapper = root / "claude"
+            py, fake = shlex.quote(sys.executable), shlex.quote(str(FAKE_CLAUDE))
+            wrapper.write_text(f'#!/bin/sh\nexec {py} {fake} "$@"\n', encoding="utf-8")
+            wrapper.chmod(0o755)
         self.bin = str(wrapper)
         self._log = log
         self._pidfile = root / "child.pid"
@@ -78,8 +81,37 @@ class FakeClaude:
             return None
 
 
+def _windows_process_gone(pid: int) -> bool:
+    """Windows liveness probe: os.kill(pid, 0) would send Ctrl+C there, so ask the OS instead."""
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined,unused-ignore]
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return True
+    try:
+        code = ctypes.c_ulong()
+        if not kernel32.GetExitCodeProcess(ctypes.c_void_p(handle), ctypes.byref(code)):
+            return True
+        return code.value != 259  # STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(ctypes.c_void_p(handle))
+
+
+def pid_exited(pid: int) -> bool:
+    """Strict probe: an unreaped zombie still counts as alive on POSIX (os.kill(pid, 0))."""
+    if sys.platform == "win32":
+        return _windows_process_gone(pid)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    return False
+
+
 def process_gone(pid: int) -> bool:
     """True when `pid` no longer exists (a zombie that is waiting to be reaped counts as gone)."""
+    if sys.platform == "win32":
+        return _windows_process_gone(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

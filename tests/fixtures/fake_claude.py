@@ -43,7 +43,7 @@ def _log(path: str, payload: dict[str, Any]) -> None:
 
 def _spawn_child(pidfile: str) -> None:
     """Spawn a long-lived child and record its pid."""
-    proc = subprocess.Popen(["sleep", "300"])
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)"])
     with open(pidfile, "w", encoding="utf-8") as fh:
         fh.write(str(proc.pid))
 
@@ -240,6 +240,7 @@ async def _run(argv: list[str]) -> None:
 
 def main() -> None:
     """Entry point: run the fake CLI loop."""
+    sys.stdin.reconfigure(encoding="utf-8")  # type: ignore[union-attr]  # Windows defaults to ANSI
     asyncio.run(_run(sys.argv[1:]))
 
 

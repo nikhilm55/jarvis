@@ -120,3 +120,79 @@ def test_should_return_only_extra_when_environment_is_empty_and_extra_given() ->
     extra = {"JARVIS_MCP_TOKEN": "token"}
     result = brain_env({}, extra)
     assert result == {"JARVIS_MCP_TOKEN": "token"}
+
+
+WINDOWS_NAMES = [
+    "SYSTEMROOT",
+    "WINDIR",
+    "COMSPEC",
+    "PATHEXT",
+    "USERPROFILE",
+    "USERNAME",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "PROGRAMDATA",
+    "TEMP",
+    "TMP",
+]
+
+
+@pytest.mark.parametrize("name", WINDOWS_NAMES)
+def test_should_drop_windows_name_when_platform_is_linux(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("jarvis.brain.env.sys.platform", "linux")
+    assert brain_env({name: "value"}) == {}
+
+
+def test_should_give_the_old_linux_result_when_windows_names_are_mixed_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("jarvis.brain.env.sys.platform", "linux")
+    environ = {name: "value" for name in WINDOWS_NAMES} | {"HOME": "/h", "PATH": "/bin"}
+    assert brain_env(environ) == {"HOME": "/h", "PATH": "/bin"}
+
+
+@pytest.mark.parametrize("name", WINDOWS_NAMES)
+def test_should_keep_windows_name_when_platform_is_win32(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("jarvis.brain.env.sys.platform", "win32")
+    assert brain_env({name: "value"}) == {name: "value"}
+
+
+@pytest.mark.parametrize("name", ["SystemRoot", "ComSpec", "LocalAppData", "Temp"])
+def test_should_keep_mixed_case_windows_name_when_platform_is_win32(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("jarvis.brain.env.sys.platform", "win32")
+    assert brain_env({name: "value"}) == {name: "value"}
+
+
+@pytest.mark.parametrize("name", ["SystemRoot", "SYSTEMROOT"])
+def test_should_drop_mixed_case_windows_name_when_platform_is_linux(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("jarvis.brain.env.sys.platform", "linux")
+    assert brain_env({name: "value"}) == {}
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "ANTHROPIC_API_KEY",
+        "Anthropic_Api_Key",
+        "CLAUDECODE",
+        "MCP_TIMEOUT",
+        "OTEL_X",
+        "AWS_SECRET_ACCESS_KEY",
+    ],
+)
+def test_should_still_drop_denied_and_unlisted_names_when_platform_is_win32(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("jarvis.brain.env.sys.platform", "win32")
+    result = brain_env({name: "value", "SYSTEMROOT": "C:\\Windows"})
+    assert result == {"SYSTEMROOT": "C:\\Windows"}

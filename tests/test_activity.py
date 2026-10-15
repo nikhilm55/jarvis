@@ -1,9 +1,12 @@
 """Tests for jarvis.activity."""
 
 import json
+import sys
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from jarvis.activity import ActivityLog, PolicyRecord, ToolCallRecord, TurnRecord
 from jarvis.contract import FinalResponse
@@ -59,6 +62,7 @@ def test_should_use_default_activity_dir_when_no_directory_given() -> None:
     assert target.exists()
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="POSIX mode bits")
 def test_should_set_file_mode_0600_and_dir_mode_0700_when_recorded(tmp_path: Path) -> None:
     directory = tmp_path / "activity"
     ActivityLog(directory=directory).record(make_record())

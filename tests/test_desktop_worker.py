@@ -68,7 +68,7 @@ def test_should_recover_when_malformed_json() -> None:
         '{"id":true,"op":"volume_get"}',
         '{"id":1,"op":5}',
         '{"id":1,"op":"volume_get","args":[1]}',
-        "[" * 100000,
+        pytest.param("[" * 100000, id="deeply-nested"),
     ],
 )
 def test_should_return_malformed_when_bad_shape(line: str) -> None:

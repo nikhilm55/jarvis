@@ -130,7 +130,7 @@ def parse_desktop_file(path: Path, desktop_id: str) -> AppEntry | None:
 def _desktop_id_for(base: Path, path: Path) -> str:
     """Compute the desktop_id for a .desktop file relative to its base dir."""
     rel = path.relative_to(base)
-    return str(rel).replace("/", "-")
+    return rel.as_posix().replace("/", "-")
 
 
 def load_index(dirs: Sequence[Path] | None = None) -> list[AppEntry]:

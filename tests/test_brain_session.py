@@ -1,6 +1,7 @@
 """ClaudeCodeBrain end to end: the real MCP server and a fake claude, the happy paths."""
 
 import asyncio
+import sys
 from pathlib import Path
 
 import pytest
@@ -84,4 +85,5 @@ def test_should_start_claude_with_an_allowlisted_environment_when_a_turn_runs(
     _, _, fake = play(tmp_path, monkeypatch, [finish(respond())])
     names = set(fake.records()[0]["env"])
     assert not [n for n in names if n.startswith(("ANTHROPIC_", "CLAUDE", "MCP_", "OTEL_"))]
-    assert {"PATH", "HOME", "JARVIS_MCP_TOKEN", "FAKE_CLAUDE_SCENARIO"} <= names
+    home = "USERPROFILE" if sys.platform == "win32" else "HOME"
+    assert {"PATH", home, "JARVIS_MCP_TOKEN", "FAKE_CLAUDE_SCENARIO"} <= names

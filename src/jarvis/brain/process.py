@@ -20,6 +20,9 @@ Sink = Callable[[dict[str, Any] | None], None]
 
 _LINE_LIMIT = 8 * 1024 * 1024
 _TERM_GRACE_S = 2.0
+# Windows has no SIGKILL. There _signal_group calls proc.kill(), which ends only a .cmd shim
+# (npm's claude.cmd), not the brain behind it: that needs a Job Object (Windows milestone).
+_SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
 
 
 def _open_stderr() -> int | None:
@@ -136,8 +139,8 @@ class ClaudeProcess:
         try:
             await asyncio.wait_for(self._proc.wait(), _TERM_GRACE_S)
         except TimeoutError:
-            self._signal_group(signal.SIGKILL)
+            self._signal_group(_SIGKILL)
             await self._proc.wait()
-        self._signal_group(signal.SIGKILL)  # stray grandchildren outlive their leader
+        self._signal_group(_SIGKILL)  # stray grandchildren outlive their leader
         self._reader.cancel()  # a grandchild that escaped the group may still hold stdout open
         await asyncio.gather(self._reader, return_exceptions=True)

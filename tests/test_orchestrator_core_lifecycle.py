@@ -3,6 +3,7 @@
 import asyncio
 import os
 import signal
+import sys
 import threading
 from pathlib import Path
 
@@ -49,7 +50,21 @@ def test_should_cancel_the_running_turn_and_record_it_when_the_user_says_stop(
     assert rig.speaker.said == []
 
 
-@pytest.mark.parametrize("trigger", ["request_stop", "sigint", "sigterm", "sighup"])
+_POSIX_SIGNALS = pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="self-signalling is Linux-only (M1): os.kill terminates the process on Windows",
+)
+
+
+@pytest.mark.parametrize(
+    "trigger",
+    [
+        "request_stop",
+        pytest.param("sigint", marks=_POSIX_SIGNALS),
+        pytest.param("sigterm", marks=_POSIX_SIGNALS),
+        pytest.param("sighup", marks=_POSIX_SIGNALS),
+    ],
+)
 def test_should_close_every_child_when_asked_to_stop_mid_run(tmp_path: Path, trigger: str) -> None:
     async def scenario() -> CoreRig:
         rig = CoreRig(tmp_path, [])
