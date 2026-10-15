@@ -4,7 +4,7 @@ Single source of truth for every AI coding agent in this repo. `CLAUDE.md` impor
 
 ## Project
 
-Jarvis is a Windows + Linux desktop app: say "Jarvis, …", Whisper transcribes it, an AI "brain" (default: the user's Claude Code, headless) acts on the PC through tools/MCP servers, and Jarvis speaks back. Spec: `docs/FRS.md`. **Current stage: M1 built — the voice loop on Linux X11** (plan `docs/plans/2026-10-07-m1-voice-loop.md`, stack ADR-0010/0011); open: the owner's live-mic acceptance and the custom wake model (track W). M2 is next (FRS §11) and needs its own plan. Build only your assigned task.
+Jarvis is a Windows + Linux desktop app: say "Jarvis, …", Whisper transcribes it, an AI "brain" (default: the user's Claude Code, headless) acts on the PC through tools/MCP servers, and Jarvis speaks back. Spec: `docs/FRS.md`. **Current stage: M1 built — the voice loop on Linux X11** (plan `docs/plans/2026-10-07-m1-voice-loop.md`, stack ADR-0010/0011); all M1 PRs merged; the owner's first live-mic run is done; open: the custom wake model (track W). M2 is next (FRS §11) and needs its own plan. Build only your assigned task.
 
 ## Stack (actual, not aspirational)
 
@@ -91,6 +91,7 @@ Only libraries listed in `pyproject.toml` exist. Add one with `uv add <pkg>` (as
 | `docs/open-questions.md` | Session start: check for blockers |
 | `docs/handoff.md` | Session start: continue where the last session stopped |
 | `docs/ai/workflow.md` | Choosing a model, planning a large change, context limits |
+| `docs/ai/dev-pipeline.md` | Orchestrated milestone work, offloading drafts to the local model |
 | `docs/ai/policy.md` | Data handling, MCP servers, dangerous modes, attribution |
 | `docs/ai/lessons.md` | Repeating a mistake an earlier session already made |
 

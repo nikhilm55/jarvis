@@ -50,13 +50,4 @@ Context · Task · Constraints · "Done when". One objective per prompt. For bug
 
 ## Orchestrated work (milestones)
 
-For a milestone, one **orchestrator** session (Opus) owns the plan in `docs/plans/`, `docs/handoff.md` and the order of work. It never writes product code. It hands each plan task to a fresh **worker** session with a prompt in this shape:
-
-- **Context:** the plan task number, the files to read (only those), and the interfaces it must honour.
-- **Task:** one plan task, one branch from `main`, one PR.
-- **Constraints:** stay inside the task's files; don't edit the plan, `docs/handoff.md` or interfaces owned by the orchestrator. If a requirement is unclear, add an OQ and stop.
-- **Done when:** the task's verify line passes, with real output.
-
-Parallel workers use separate git worktrees (`git worktree add ../jarvis-t<N> -b <branch> origin/main`). Each worker ends with a REPORT block for the orchestrator: PR link, verify output, deviations from the plan, new OQs, follow-ups. The owner pastes the REPORT into the orchestrator session, reviews and merges the PR. The orchestrator then updates the plan status and the hand-off and issues the next prompts.
-
-**Local-model offload (optional, owner's setup).** Where the owner runs a local model (Qwen over Tailscale), implementation tasks run as: orchestrator writes the brief + a manifest (files to write, files to read, tests) → a Claude-free loop has the local model write the files and fixes them against ruff, mypy and pytest → a Sonnet "finisher" reads only the diff and remaining errors, fixes, commits → task review as usual. The reviewer gates stay the same; the local model never commits and only writes the manifest's files.
+A milestone runs under one **orchestrator** session (Opus). It owns the plan in `docs/plans/`, `docs/handoff.md` and the order of work, and it never writes product code. For each plan task it dispatches fresh subagents: the **local model loop** (`scripts/local_model.py implement`) drafts the files and fixes them against ruff, mypy and pytest; a **finisher** (Sonnet) completes and commits; a **task reviewer** (Sonnet, Opus for safety-critical code) gates it. Small calls are recorded as rulings for the owner to review later; ambiguous requirements still become OQs. Each task is one small PR stacked on the previous one; the owner merges the stack in order. Full description, with the token and quality levers: [`dev-pipeline.md`](dev-pipeline.md).
