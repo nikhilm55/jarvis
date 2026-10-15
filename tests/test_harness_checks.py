@@ -93,6 +93,13 @@ def test_should_parse_every_block_and_ignore_the_text_around_them() -> None:
     assert hc.parse_edits(reply) == [hc.Edit("a\nb\n", "c\n"), hc.Edit("x\n", "")]
 
 
+def test_should_accept_markers_without_the_space_or_with_another_length() -> None:
+    loose = "<<<<<<<SEARCH\na\n=======\nb\n>>>>>>>REPLACE\n"
+    short = "<<<<< SEARCH\nc\n=====\nd\n>>>>> REPLACE\n"
+    tiny = "<<<< SEARCH\ne\n====\nf\n>>>> REPLACE\n"
+    assert hc.parse_edits(loose + short + tiny) == [hc.Edit("a\n", "b\n"), hc.Edit("c\n", "d\n")]
+
+
 def test_should_ignore_an_unterminated_block() -> None:
     assert hc.parse_edits("<<<<<<< SEARCH\na\n=======\nb\n") == []
     assert hc.parse_edits("<<<<<<< SEARCH\na\n") == []

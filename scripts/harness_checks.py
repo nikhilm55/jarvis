@@ -88,7 +88,10 @@ class Edit:
     replace: str
 
 
-EDIT_BLOCK = re.compile(r"^<<<<<<< SEARCH\n(.*?)^=======\n(.*?)^>>>>>>> REPLACE$", re.M | re.S)
+# the model often drops the space or changes the marker length, so accept both
+EDIT_BLOCK = re.compile(
+    r"^<{5,9} ?SEARCH[ \t]*\n(.*?)^={5,9}[ \t]*\n(.*?)^>{5,9} ?REPLACE[ \t]*$", re.M | re.S
+)
 
 
 def parse_edits(reply: str) -> list[Edit]:
