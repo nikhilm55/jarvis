@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
@@ -332,6 +333,23 @@ ATTEMPTS = {
     "unittest.skip": "import unittest\n"
     + LOCKED.replace("def test_b", '@unittest.skip("x")\ndef test_b'),
     "one assert removed": LOCKED.replace("    assert f(2) == 3\n", ""),
+    # the second review's attempts
+    "star import": LOCKED + "from jarvis.new import *\n",
+    "new test above the locked ones that rewrites globals": LOCKED.replace(
+        "def test_a", "def test_0_setup():\n    globals()['f'] = lambda x: 99\n\n\ndef test_a"
+    ),
+    "new test that replaces a module": LOCKED
+    + "\nimport sys\n\n\ndef test_z():\n    sys.modules['jarvis.new'] = None\n",
+    "new test that stores into an imported module": LOCKED
+    + "\nimport jarvis.new as m\n\n\ndef test_z():\n    m.f = lambda x: 99\n",
+    "new test that mutates a locked name": LOCKED + "\n\ndef test_z():\n    THRESHOLD.real = 0\n",
+    "autouse fixture through an alias": "from pytest import fixture as fx\n"
+    + LOCKED
+    + "\n\n@fx(autouse=True)\ndef test_x(monkeypatch):\n    monkeypatch.setattr(f, 'x', 1)\n",
+    "new test with a foreign decorator": LOCKED + "\n\n@some.hook\ndef test_y():\n    assert 1\n",
+    "new test that skips": LOCKED + "\n\n@pytest.mark.skip\ndef test_y():\n    assert 1\n",
+    "new test using usefixtures": LOCKED
+    + "\n\n@pytest.mark.usefixtures('boom')\ndef test_y():\n    assert 1\n",
 }
 
 
@@ -395,3 +413,96 @@ def test_should_flag_only_paths_outside_the_scope() -> None:
     found = hc.scope_violations(out, {"src/a.py"}, {"was_dirty.py"}, (".runs/",))
     assert found == ["other.py", "stray.txt"]
     assert hc.scope_violations(" M src/a.py\n", {"src/a.py"}, set()) == []
+
+
+def test_should_allow_a_new_test_with_pytest_marks_and_count_a_skipif_as_a_skip() -> None:
+    marks = "@pytest.mark.slow\n@pytest.mark.parametrize('x', [1, 2])\n"
+    grown = LOCKED + f"\n\n{marks}def test_new(x):\n    assert f(x) > 0\n"
+    assert hc.lock_violations(LOCKED, grown, extend=True) == []
+    skipif = (
+        LOCKED + "\n\n@pytest.mark.skipif(False, reason='x')\ndef test_new():\n    assert f(1)\n"
+    )
+    assert hc.lock_violations(LOCKED, skipif, extend=True) == []
+    stats = hc.test_stats(skipif)
+    assert stats is not None
+    assert stats.skips == 1
+
+
+def test_should_allow_a_module_path_fix_only_to_a_manifest_module_with_the_same_names() -> None:
+    typo = LOCKED.replace("from jarvis.new import f", "from jarvis.helpres import f")
+    fixed = typo.replace("helpres", "helpers")
+    assert hc.lock_violations(typo, fixed)
+    assert hc.lock_violations(typo, fixed, modules=["jarvis.helpers"]) == []
+    assert hc.lock_violations(typo, fixed, modules=["helpers"]) == []
+    elsewhere = typo.replace("jarvis.helpres import f", "os.path import f")
+    other_name = typo.replace("jarvis.helpres import f", "jarvis.helpers import g")
+    for bad in (elsewhere, other_name):
+        assert hc.lock_violations(typo, bad, modules=["jarvis.helpers"])
+
+
+def pytest_outcome(tmp_path: Path, test_source: str) -> int:
+    """Run real pytest on `test_source` against a module whose f() is wrong (returns 1)."""
+    (tmp_path / "mod.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "test_x.py").write_text(test_source, encoding="utf-8")
+    cmd = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-o", "addopts="]
+    done = subprocess.run(cmd, cwd=tmp_path, capture_output=True, timeout=120, check=False)
+    return done.returncode
+
+
+REAL_LOCKED = "import mod\n\n\ndef test_f():\n    assert mod.f() == 2\n"
+REAL_ESCAPES = {
+    "globals() rewrite in a new test above the locked one": (
+        "import mod\n\n\ndef test_0_setup():\n"
+        "    globals()['mod'] = __import__('types').SimpleNamespace(f=lambda: 2)\n\n\n"
+        "def test_f():\n    assert mod.f() == 2\n"
+    ),
+    "autouse fixture through an alias": (
+        "import mod\nfrom pytest import fixture as fx\n\n\n@fx(autouse=True)\n"
+        "def test_setup(monkeypatch):\n    monkeypatch.setattr(mod, 'f', lambda: 2)\n\n\n"
+        "def test_f():\n    assert mod.f() == 2\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("name", REAL_ESCAPES)
+def test_should_catch_edits_that_make_a_failing_test_pass_under_real_pytest(
+    tmp_path: Path, name: str
+) -> None:
+    assert pytest_outcome(tmp_path, REAL_LOCKED) == 1  # the locked test really fails
+    assert pytest_outcome(tmp_path, REAL_ESCAPES[name]) == 0  # the escape really goes green
+    for flags in ({"extend": True}, {}):
+        assert hc.lock_violations(REAL_LOCKED, REAL_ESCAPES[name], **flags)
+
+
+TAMPERING = {
+    "imports pytest": "import pytest\n",
+    "imports _pytest": "import _pytest.python\n",
+    "imports from _pytest": "from _pytest.python import Function\n",
+    "imports unittest.mock": "import unittest.mock\n",
+    "imports mock from unittest": "from unittest import mock\n",
+    "imports builtins": "import builtins\n",
+    "disarms pytest": "import _pytest.python as p\n\np.Function.runtest = lambda self: None\n",
+    "writes sys.modules": "import sys\n\nsys.modules['jarvis.x'] = None\n",
+    "assigns into an imported module": "import os\n\nos.sep = '!'\n",
+    "dynamic import": "m = __import__('pytest')\n",
+    "exec": "exec('x = 1')\n",
+}
+
+
+@pytest.mark.parametrize("name", TAMPERING)
+def test_should_flag_an_implementation_file_that_reaches_into_the_test_machinery(name: str) -> None:
+    assert hc.tamper_violations(TAMPERING[name])
+
+
+def test_should_not_flag_an_ordinary_implementation_file() -> None:
+    source = (
+        "import os\nfrom unittest import skip\n\n\nclass A:\n    def f(self):\n        self.x = 1\n"
+    )
+    assert hc.tamper_violations(source) == []
+    assert hc.tamper_violations("def broken(:") == []
+
+
+def test_should_list_the_numbered_requirements_under_the_requirements_heading() -> None:
+    spec = "## Goal\n1. no\n## Requirements\n1. one\n 2. two\ntext\n10. ten\n## Limits\n3. no\n"
+    assert hc.brief_requirements(spec) == ["1", "2", "10"]
+    assert hc.brief_requirements("# Task\n1. x\n") == []

@@ -101,19 +101,21 @@ def _defined(tree: ast.Module) -> set[str]:
     return names
 
 
-def _bindings(tree: ast.Module) -> dict[str, frozenset[object]]:
+Binding = tuple[int, str, str]  # (relative level or -1 for `import x`, module, imported name)
+
+
+def _bindings(tree: ast.Module) -> dict[str, frozenset[Binding]]:
     """What each top-level import binds, with a leading `src.` ignored."""
-    found: dict[str, set[object]] = {}
+    found: dict[str, set[Binding]] = {}
     for node in tree.body:
         if isinstance(node, ast.Import):
             for a in node.names:
-                found.setdefault((a.asname or a.name).split(".")[0], set()).add(
-                    a.name.removeprefix("src.")
-                )
+                key = (a.asname or a.name).split(".")[0]
+                found.setdefault(key, set()).add((-1, a.name.removeprefix("src."), ""))
         elif isinstance(node, ast.ImportFrom):
-            mod = (node.level, (node.module or "").removeprefix("src."))
+            mod = (node.module or "").removeprefix("src.")
             for a in node.names:
-                found.setdefault(a.asname or a.name, set()).add((*mod, a.name))
+                found.setdefault(a.asname or a.name, set()).add((node.level, mod, a.name))
     return {k: frozenset(v) for k, v in found.items()}
 
 
@@ -129,24 +131,96 @@ def _bare(node: ast.stmt) -> ast.stmt:
     return node
 
 
-def _is_new_test(node: ast.stmt, taken: set[str]) -> bool:
+BAD_MARKS = ("skip", "xfail", "usefixtures", "filterwarnings")
+TRICKS = (
+    "globals",
+    "locals",
+    "vars",
+    "setattr",
+    "delattr",
+    "exec",
+    "eval",
+    "__import__",
+    "compile",
+)
+
+
+def _stores_into(tree: ast.AST, names: set[str]) -> bool:
+    """Does the code assign to (or delete) an attribute or item of one of `names`?"""
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Assign):
+            targets = n.targets
+        elif isinstance(n, (ast.AugAssign, ast.AnnAssign)):
+            targets = [n.target]
+        elif isinstance(n, ast.Delete):
+            targets = n.targets
+        else:
+            continue
+        for sub in (s for t in targets for s in ast.walk(t)):
+            root = sub
+            while isinstance(root, (ast.Attribute, ast.Subscript)):
+                root = root.value
+            if root is not sub and isinstance(root, ast.Name) and root.id in names:
+                return True
+    return False
+
+
+def _mark_ok(dec: ast.expr) -> bool:
+    """`@pytest.mark.<name>` or `@pytest.mark.<name>(...)`, but never skip/xfail/usefixtures."""
+    call = dec.func if isinstance(dec, ast.Call) else dec
+    mark = call.value if isinstance(call, ast.Attribute) else None
     return (
-        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and node.name.startswith("test")
-        and node.name not in taken
-        and not any("fixture" in ast.dump(d) for d in node.decorator_list)
+        isinstance(call, ast.Attribute)
+        and call.attr not in BAD_MARKS
+        and isinstance(mark, ast.Attribute)
+        and mark.attr == "mark"
+        and isinstance(mark.value, ast.Name)
+        and mark.value.id == "pytest"
     )
 
 
+def _is_new_test(node: ast.stmt, names: set[str]) -> bool:
+    """A plain new `def test_*` whose decorators are pytest marks and whose body cannot reach
+    out of the test (no globals(), setattr, `global`, or stores into module-level objects)."""
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+    inside = list(ast.walk(node))
+    return (
+        node.name.startswith("test")
+        and node.name not in names
+        and all(_mark_ok(d) for d in node.decorator_list)
+        and not any(isinstance(n, ast.Global) for n in inside)
+        and not any(isinstance(n, ast.Name) and n.id in TRICKS for n in inside)
+        and not any(
+            isinstance(n, ast.Attribute) and n.attr in ("modules", "__dict__") for n in inside
+        )
+        and not _stores_into(node, names | {"sys", "builtins"})
+    )
+
+
+def _renamed(old: frozenset[Binding], new: frozenset[Binding], modules: Collection[str]) -> bool:
+    """A from-import whose module path was corrected to a manifest module, names unchanged."""
+    if not new or any(level != 0 for level, _, _ in (*old, *new)):
+        return False
+    inside = all(any(mod == m or mod.endswith("." + m) for m in modules) for _, mod, _ in new)
+    return inside and {n for _, _, n in old} == {n for _, _, n in new}
+
+
 def lock_violations(
-    locked: str, new: str, *, extend: bool = False, annotations: bool = False
+    locked: str,
+    new: str,
+    *,
+    extend: bool = False,
+    annotations: bool = False,
+    modules: Collection[str] = (),
 ) -> list[str]:
     """Why `new` may not replace the locked test file; [] when it may.
 
     Every top-level non-import statement must be identical by `ast.dump`, so no assert, decorator,
-    helper, patch or early return can change. `extend` also allows new, undecorated `test*`
-    functions (a test file that already existed); `annotations` ignores type annotations (a
-    lint/mypy fix). Imports may change, but never rebind a name the locked file already imports.
+    helper, patch or early return can change. `extend` also allows new tests appended after the
+    last locked statement (see `_is_new_test`); `annotations` ignores type annotations (a lint/mypy
+    fix). Imports may change, but never rebind a name the locked file already imports (except to
+    correct a module path to one of `modules`, the implementation), and `import *` is never allowed.
     """
     try:
         old_tree, new_tree = ast.parse(locked), ast.parse(new)
@@ -154,12 +228,19 @@ def lock_violations(
         return ["the test file does not parse"]
     prep = _bare if annotations else (lambda n: n)
     old = Counter(ast.dump(prep(n)) for n in _statements(old_tree))
-    taken, kept, problems = _defined(old_tree), [], []
+    before, after = _bindings(old_tree), _bindings(new_tree)
+    names = _defined(old_tree) | set(before) | set(after)
+    kept: list[str] = []
+    problems: list[str] = []
+    added = False
     for node in _statements(new_tree):
-        if extend and _is_new_test(node, taken):
-            taken.add(getattr(node, "name", ""))
+        if extend and _is_new_test(node, names):
+            names.add(getattr(node, "name", ""))
+            added = True
         else:
             kept.append(ast.dump(prep(node)))
+            if added and not problems:
+                problems.append("a new test sits before a locked statement; append them last")
     if Counter(kept) != old:
         problems.append(
             f"{sum((old - Counter(kept)).values())} locked statement(s) changed or removed, "
@@ -167,12 +248,58 @@ def lock_violations(
         )
     elif kept != [ast.dump(prep(n)) for n in _statements(old_tree)]:
         problems.append("locked statements were reordered")
-    before, after = _bindings(old_tree), _bindings(new_tree)
-    if any(after.get(b) != v for b, v in before.items()):
+    if any(
+        after.get(b) != v and not _renamed(v, after.get(b, frozenset()), modules)
+        for b, v in before.items()
+    ):
         problems.append("an import the test file already had was removed or rebound")
     if (set(after) - set(before)) & _defined(old_tree):
         problems.append("a new import shadows a name the tests define")
+    if any(
+        isinstance(n, ast.ImportFrom) and any(a.name == "*" for a in n.names)
+        for n in ast.walk(new_tree)
+    ):
+        problems.append("`import *` is not allowed in a test file")
     return problems
+
+
+def tamper_violations(source: str) -> list[str]:
+    """How an implementation file reaches the test machinery: it must not import pytest, _pytest,
+    unittest.mock or builtins, dynamic-import or exec, or assign into an imported module,
+    `sys.modules` or `builtins` (e.g. `_pytest.python.Function.runtest = ...`)."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    problems: list[str] = []
+    bound = {"sys", "builtins"}
+    for n in ast.walk(tree):
+        found = []
+        if isinstance(n, ast.Import):
+            found = [(a.name, a.asname or a.name.split(".")[0]) for a in n.names]
+        elif isinstance(n, ast.ImportFrom):
+            found = [(f"{n.module or ''}.{a.name}", a.asname or a.name) for a in n.names]
+        for full, name in found:
+            bound.add(name)
+            if full.split(".")[0] in ("pytest", "_pytest", "builtins") or full.startswith(
+                "unittest.mock"
+            ):
+                problems.append(f"imports {full.strip('.')}")
+        if isinstance(n, ast.Call):
+            called = getattr(n.func, "id", getattr(n.func, "attr", ""))
+            if called in ("__import__", "import_module", "exec", "eval"):
+                problems.append(f"calls {called}()")
+    if _stores_into(tree, bound):
+        problems.append("assigns into an imported module, sys.modules or builtins")
+    return sorted(set(problems))
+
+
+def brief_requirements(spec: str) -> list[str]:
+    """Numbers of the numbered lines under a `## Requirements` heading ([] without one)."""
+    section = re.search(
+        r"^#{1,6}[ \t]*Requirements[ \t]*$(.*?)(?=^#{1,6}[ \t]|\Z)", spec, re.M | re.S | re.I
+    )
+    return re.findall(r"^[ \t]*(\d+)\.", section.group(1), re.M) if section else []
 
 
 @dataclass(frozen=True)
