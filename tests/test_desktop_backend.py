@@ -183,7 +183,7 @@ def test_should_launch_app_with_gio(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("jarvis.desktop.backend.subprocess.Popen", fake_popen)
     launch_app(_app("Calculator", "ExampleCalc"))
     argv, kwargs = captured[0]
-    assert argv == ["gio", "launch", "/x/Calculator.desktop"]
+    assert argv == ["gio", "launch", str(Path("/x/Calculator.desktop"))]
     assert kwargs["stdin"] == subprocess.DEVNULL
     assert kwargs["stdout"] == subprocess.DEVNULL
     assert kwargs["stderr"] == subprocess.DEVNULL

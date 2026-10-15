@@ -2,6 +2,7 @@
 
 import json
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -98,7 +99,8 @@ def test_should_write_settings_with_deny_list_when_launching(tmp_path: Path) -> 
     assert "Read" in deny
     assert "WebFetch" in deny
     assert data["disableAllHooks"] is True
-    assert stat.S_IMODE(settings_path.stat().st_mode) == 0o600
+    if sys.platform != "win32":  # Windows has no POSIX mode bits
+        assert stat.S_IMODE(settings_path.stat().st_mode) == 0o600
 
 
 def test_should_set_system_prompt_to_rules_when_launching(tmp_path: Path) -> None:

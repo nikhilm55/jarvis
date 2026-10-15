@@ -1,5 +1,6 @@
 """Tests for jarvis.brain.agent_bin and jarvis.brain.failures."""
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -110,6 +111,7 @@ def test_should_pick_highest_nvm_version_dir_when_multiple_exist(
     assert result == str(v22)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the executable bit is POSIX-only")
 def test_should_skip_non_executable_file_when_scanning_fallbacks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -32,6 +32,12 @@ class FakeLibc:
         return self.status
 
 
+_LINUX_ONLY = pytest.mark.skipif(
+    sys.platform != "linux", reason="PR_SET_PDEATHSIG is Linux-only (M1)"
+)
+
+
+@_LINUX_ONLY
 def test_should_record_prctl_sigterm_when_parent_pid_is_real_parent() -> None:
     libc = FakeLibc(status=0)
     preexec = parent_death_preexec(libc, parent_pid=os.getppid())
@@ -45,6 +51,7 @@ def _fake_exit(code: int) -> None:
     raise _Exited(code)
 
 
+@_LINUX_ONLY
 def test_should_exit_when_parent_pid_does_not_match(monkeypatch: pytest.MonkeyPatch) -> None:
     libc = FakeLibc(status=0)
     preexec = parent_death_preexec(libc, parent_pid=os.getpid() + 10_000_000)
@@ -56,6 +63,7 @@ def test_should_exit_when_parent_pid_does_not_match(monkeypatch: pytest.MonkeyPa
     assert exc_info.value.code == 1
 
 
+@_LINUX_ONLY
 def test_should_exit_when_prctl_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     libc = FakeLibc(status=-1)
     preexec = parent_death_preexec(libc, parent_pid=os.getppid())

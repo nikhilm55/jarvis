@@ -46,12 +46,14 @@ class FakeClaude:
         monkeypatch.setenv("FAKE_CLAUDE_LOG", str(log))
         if child:
             monkeypatch.setenv("FAKE_CLAUDE_CHILD_PIDFILE", str(root / "child.pid"))
-        wrapper = root / "claude"
-        wrapper.write_text(
-            f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(FAKE_CLAUDE))} "$@"\n',
-            encoding="utf-8",
-        )
-        wrapper.chmod(0o755)
+        if sys.platform == "win32":  # CreateProcess cannot run a shebang script, but runs a .cmd
+            wrapper = root / "claude.cmd"
+            wrapper.write_text(f'@"{sys.executable}" "{FAKE_CLAUDE}" %*\r\n', encoding="utf-8")
+        else:
+            wrapper = root / "claude"
+            py, fake = shlex.quote(sys.executable), shlex.quote(str(FAKE_CLAUDE))
+            wrapper.write_text(f'#!/bin/sh\nexec {py} {fake} "$@"\n', encoding="utf-8")
+            wrapper.chmod(0o755)
         self.bin = str(wrapper)
         self._log = log
         self._pidfile = root / "child.pid"
