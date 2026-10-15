@@ -30,7 +30,7 @@ from jarvis.policy import Mode
 from jarvis.stt import SttUnavailable
 from jarvis.tts import Speaker
 from jarvis.tts.earcons import EARCON_NAMES
-from jarvis.userconfig import InvalidNameError, clean_name, set_user_name
+from jarvis.userconfig import clean_name, set_user_name
 
 NAME_TIP = "Tip: tell Jarvis your name with: jarvis setup --name <your name>"
 
@@ -103,9 +103,12 @@ def _cmd_setup(args: argparse.Namespace) -> int:
             if not name.strip():
                 print("Name left unchanged.")
                 return 0
-        set_user_name(path, name)
-        print(f"Jarvis will call you {clean_name(name)}.")
-    except (InvalidNameError, OSError) as error:
+        name = clean_name(name)
+        note = set_user_name(path, name)
+        print(f"Jarvis will call you {name}.")
+        if note:
+            print(note)
+    except (ValueError, OSError) as error:  # InvalidNameError, bad UTF-8, ... never a traceback
         print(f"jarvis setup: {error}", file=sys.stderr)
         return 2
     return 0

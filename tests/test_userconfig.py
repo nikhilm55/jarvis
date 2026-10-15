@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from jarvis import userconfig
 from jarvis.userconfig import InvalidNameError, clean_name, set_user_name
 
 # A realistic file: comments, a table before and one after [user].
@@ -293,3 +294,94 @@ def test_should_create_through_a_dangling_symlink(tmp_path: Path) -> None:
 def test_should_accept_the_joiners_that_some_names_need() -> None:
     name = "नमस्ते" + chr(0x200C) + "जी"  # ZWNJ is part of how some Indic and Persian names are spelt
     assert clean_name(name) == name
+
+
+LEGACY = '[brain]\nmodel = "opus"\naddress_as = "Boss"  # old\n\n[tts]\nvoice = "x"\n'
+
+
+def test_should_remove_a_leftover_brain_address_as_line_when_setting_the_name(
+    tmp_path: Path,
+) -> None:
+    path = _put(tmp_path / "config.toml", LEGACY)
+    note = set_user_name(path, "Nik")
+    assert _get(path) == '[brain]\nmodel = "opus"\n\n[tts]\nvoice = "x"\n\n[user]\nname = "Nik"\n'
+    assert note == 'Removed the old brain.address_as setting ("Boss") from config.toml.'
+
+
+def test_should_leave_address_as_of_another_table_and_say_nothing(tmp_path: Path) -> None:
+    original = '[other]\naddress_as = "x"\n'
+    path = _put(tmp_path / "config.toml", original)
+    assert set_user_name(path, "Nik") is None
+    assert _get(path) == original + '\n[user]\nname = "Nik"\n'
+
+
+def test_should_set_the_name_but_keep_address_as_and_say_so_when_removal_is_not_safe(
+    tmp_path: Path,
+) -> None:
+    original = '[brain]\naddress_as = """\nBoss\n"""\n'  # not a one-line value
+    path = _put(tmp_path / "config.toml", original)
+    note = set_user_name(path, "Nik")
+    assert _get(path) == original + '\n[user]\nname = "Nik"\n'
+    assert note is not None
+    assert "delete that line" in note
+
+
+def test_should_keep_address_as_when_clearing_the_name(tmp_path: Path) -> None:
+    original = LEGACY + '\n[user]\nname = "Old"\n'
+    path = _put(tmp_path / "config.toml", original)
+    assert set_user_name(path, None) is None
+    assert _get(path) == original.replace('name = "Old"\n', "")
+
+
+NOT_REMOVABLE = ['brain = { address_as = "Boss" }\n', '[brain]\n"address_as" = "Boss"\n']
+
+
+@pytest.mark.parametrize("original", NOT_REMOVABLE)
+def test_should_not_claim_to_remove_address_as_in_a_form_it_cannot_delete(
+    tmp_path: Path, original: str
+) -> None:
+    path = _put(tmp_path / "config.toml", original)
+    note = set_user_name(path, "Nik")
+    assert _get(path) == original + '\n[user]\nname = "Nik"\n'  # name set, nothing else touched
+    assert note is not None
+    assert "Removed" not in note
+    assert "delete that line" in note
+
+
+def test_should_not_claim_removal_when_the_edit_deleted_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_edit = userconfig._edit  # mutation: an editor that deletes nothing
+
+    def never_drops(lines: list[str], name_line: str | None, ending: str, _drop: bool) -> str:
+        return real_edit(lines, name_line, ending, False)
+
+    monkeypatch.setattr(userconfig, "_edit", never_drops)
+    path = _put(tmp_path / "config.toml", LEGACY)
+    note = set_user_name(path, "Nik")
+    assert _get(path) == LEGACY + '\n[user]\nname = "Nik"\n'
+    assert note is not None
+    assert "Removed" not in note
+
+
+def test_should_fsync_the_temp_file_before_it_replaces_the_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[str, int]] = []
+    real_fsync, real_replace = os.fsync, os.replace
+
+    def fsync(fd: int) -> None:
+        calls.append(("fsync", os.fstat(fd).st_ino))
+        real_fsync(fd)
+
+    def replace(src: str | Path, dst: str | Path) -> None:
+        calls.append(("replace", os.stat(src).st_ino))
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "fsync", fsync)
+    monkeypatch.setattr(os, "replace", replace)
+    path = _put(tmp_path / "config.toml", LF_FILE)
+    set_user_name(path, "New")
+    assert [name for name, _ in calls] == ["fsync", "replace"]
+    assert calls[0][1] == calls[1][1]  # the file that was fsynced is the one that was moved
+    assert _get(path) == LF_FILE.replace("Old", "New")

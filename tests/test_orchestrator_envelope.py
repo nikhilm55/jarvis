@@ -3,9 +3,11 @@
 import datetime
 import inspect
 import re
+import sys
 
 import pytest
 
+from jarvis.brain.rules import build_rules
 from jarvis.config import BrainSettings, Settings, UserSettings
 from jarvis.contract import TurnEnvelope
 from jarvis.contract.models import UserInfo
@@ -164,3 +166,24 @@ def test_should_not_read_the_os_account_name_at_all() -> None:
     source = inspect.getsource(envelope_module)
     for forbidden in ("pwd", "gecos", "getuser", "getlogin", "getpwuid", "expanduser"):
         assert forbidden not in source
+
+
+def test_should_leak_no_os_account_detail_to_the_brain_whatever_the_environment_says(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinels = {"USER": "S1user", "LOGNAME": "S2login", "USERNAME": "S3winuser", "HOME": "/S4home"}
+    for key, value in sentinels.items():
+        monkeypatch.setenv(key, value)
+    if sys.platform != "win32":
+        import pwd  # noqa: PLC0415 - POSIX only
+
+        account = pwd.struct_passwd(
+            ("S5pw", "x", 1000, 1000, "S6Full Name,,,", "/S7pwhome", "/bin/sh")
+        )
+        monkeypatch.setattr(pwd, "getpwuid", lambda _uid: account)
+    monkeypatch.setattr("getpass.getuser", lambda: "S8getuser")
+
+    seen = _envelope(Settings()).to_json() + build_rules()
+
+    for sentinel in (*sentinels.values(), "S5pw", "S6Full", "S7pwhome", "S8getuser"):
+        assert sentinel not in seen

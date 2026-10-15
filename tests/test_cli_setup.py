@@ -118,6 +118,75 @@ def test_should_reject_name_and_clear_name_together() -> None:
     assert exit_info.value.code == 2
 
 
+def test_should_remove_a_leftover_address_as_and_say_so(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    original = '[brain]\nmodel = "opus"\naddress_as = "Boss"\n'
+    _config().parent.mkdir(parents=True)
+    _config().write_bytes(original.encode())
+    assert cli.main(["setup", "--name", "Nik"]) == 0
+    assert _config().read_bytes() == b'[brain]\nmodel = "opus"\n\n[user]\nname = "Nik"\n'
+    assert capsys.readouterr().out == (
+        "Jarvis will call you Nik.\n"
+        'Removed the old brain.address_as setting ("Boss") from config.toml.\n'
+    )
+    assert load_settings().user.name == "Nik"  # the config loads again
+
+
+def test_should_tell_the_user_to_delete_address_as_when_it_cannot_be_removed_safely(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    original = '[brain]\naddress_as = """\nBoss\n"""\n'
+    _config().parent.mkdir(parents=True)
+    _config().write_bytes(original.encode())
+    assert cli.main(["setup", "--name", "Nik"]) == 0
+    assert _config().read_bytes() == (original + '\n[user]\nname = "Nik"\n').encode()
+    assert "delete that line" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "original", ['brain = { address_as = "Boss" }\n', '[brain]\n"address_as" = "Boss"\n']
+)
+def test_should_not_say_removed_when_address_as_is_in_a_form_it_cannot_delete(
+    capsys: pytest.CaptureFixture[str], original: str
+) -> None:
+    _config().parent.mkdir(parents=True)
+    _config().write_bytes(original.encode())
+    assert cli.main(["setup", "--name", "Nik"]) == 0
+    out = capsys.readouterr().out
+    assert "Removed" not in out
+    assert "delete that line" in out
+    assert _config().read_bytes() == (original + '\n[user]\nname = "Nik"\n').encode()
+
+
+@pytest.mark.parametrize("bad", ["a\udcffb", "a\u202eb", "a\u2028b"])
+def test_should_exit_2_without_a_traceback_for_a_name_the_terminal_mangled(
+    capsys: pytest.CaptureFixture[str], bad: str
+) -> None:
+    # argv can carry a lone surrogate (invalid UTF-8 bytes); it must be refused, not crash
+    assert cli.main(["setup", "--name", bad]) == 2
+    assert capsys.readouterr().err.startswith("jarvis setup: ")
+    assert not _config().exists()
+
+
+def test_should_exit_2_with_a_remedy_when_the_config_is_not_utf8(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _config().parent.mkdir(parents=True)
+    _config().write_bytes(b'[user]\nname = "\xff"\n')
+    assert cli.main(["setup", "--name", "Ana"]) == 2
+    assert "save it as UTF-8" in capsys.readouterr().err
+    assert _config().read_bytes() == b'[user]\nname = "\xff"\n'
+
+
+def test_should_exit_2_when_the_config_cannot_be_written(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _config().mkdir(parents=True)  # a folder where the file should be
+    assert cli.main(["setup", "--name", "Ana"]) == 2
+    assert capsys.readouterr().err.startswith("jarvis setup: ")
+
+
 def _run_with_no_brain(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> str:

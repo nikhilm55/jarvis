@@ -137,5 +137,14 @@ def test_should_reject_a_bad_user_name(tmp_path: Path, literal: str) -> None:
 
 def test_should_reject_the_removed_brain_address_as_key(tmp_path: Path) -> None:
     path = write_toml(tmp_path / "c.toml", "[brain]\naddress_as = 'Nik'\n")
-    with pytest.raises(ConfigError, match=r"brain\.address_as"):
+    with pytest.raises(ConfigError, match=r"c\.toml: brain\.address_as was removed") as error:
+        load_settings(path)
+    assert "delete it and run `jarvis setup --name <your name>`" in str(error.value)
+    assert "Extra inputs" not in str(error.value)
+
+
+def test_should_say_what_to_do_when_the_config_is_not_utf8(tmp_path: Path) -> None:
+    path = tmp_path / "c.toml"
+    path.write_bytes(b"[user]\nname = '\xff'\n")
+    with pytest.raises(ConfigError, match=r"c\.toml: not valid UTF-8"):
         load_settings(path)
