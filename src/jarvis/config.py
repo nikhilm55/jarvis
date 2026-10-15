@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic_core import ErrorDetails
 
 from jarvis.paths import config_dir
 from jarvis.userconfig import InvalidNameError, clean_name
@@ -88,6 +89,13 @@ class Settings(_Section):
     user: UserSettings = Field(default_factory=UserSettings)
 
 
+def _describe(problem: ErrorDetails) -> str:
+    where = ".".join(str(part) for part in problem["loc"])
+    if where == "brain.address_as":  # removed key: say what to do, not just "extra inputs"
+        return f"{where} was removed: delete it and run `jarvis setup --name <your name>`"
+    return f"{where}: {problem['msg']}"
+
+
 def load_settings(path: Path | None = None) -> Settings:
     """Read `path` (default `config_dir()/config.toml`); a missing file gives defaults."""
     path = path or config_dir() / "config.toml"
@@ -96,10 +104,10 @@ def load_settings(path: Path | None = None) -> Settings:
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
         return Settings.model_validate(data)
+    except UnicodeDecodeError as error:
+        raise ConfigError(f"{path}: not valid UTF-8; open it and save it as UTF-8") from error
     except tomllib.TOMLDecodeError as error:
         raise ConfigError(f"{path}: invalid TOML: {error}") from error
     except ValidationError as error:
-        problems = "; ".join(
-            f"{'.'.join(str(part) for part in e['loc'])}: {e['msg']}" for e in error.errors()
-        )
+        problems = "; ".join(_describe(e) for e in error.errors())
         raise ConfigError(f"{path}: {problems}") from error

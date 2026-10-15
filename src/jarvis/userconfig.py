@@ -138,9 +138,13 @@ def _append_user_section(lines: list[str], new_line: str, file_ending: str) -> l
     return lines
 
 
-def _edit(lines: list[str], name_line: str | None, file_ending: str) -> str:
-    """The text with `name_line` set in [user], or the name line removed when it is None."""
+def _edit(lines: list[str], name_line: str | None, file_ending: str, drop_legacy: bool) -> str:
+    """The text with `name_line` set in [user], or the name line removed when it is None; with
+    `drop_legacy`, a leftover `[brain] address_as` line is deleted too."""
     lines = list(lines)
+    brain = _find_section(lines, "brain") if drop_legacy else None
+    if brain is not None and (idx := _find_key(lines, brain, "address_as")) is not None:
+        del lines[idx]
     user = _find_section(lines, "user")
     if name_line is None:
         if user is not None and (idx := _find_key(lines, user, "name")) is not None:
@@ -152,9 +156,13 @@ def _edit(lines: list[str], name_line: str | None, file_ending: str) -> str:
     return "".join(lines)
 
 
-def _comparable(data: dict[str, Any]) -> dict[str, Any]:
-    """The parsed data minus the one key we are allowed to change (`user.name`)."""
+def _comparable(data: dict[str, Any], drop_legacy: bool) -> dict[str, Any]:
+    """The parsed data minus the keys we are allowed to change: `user.name`, and with
+    `drop_legacy` the removed `brain.address_as`."""
     out = dict(data)
+    brain = out.get("brain")
+    if drop_legacy and isinstance(brain, dict):
+        out["brain"] = {key: value for key, value in brain.items() if key != "address_as"}
     user = out.get("user")
     if isinstance(user, dict):
         rest = {key: value for key, value in user.items() if key != "name"}
@@ -165,28 +173,30 @@ def _comparable(data: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _verify(before: dict[str, Any], new_text: str, value: str | None) -> bool:
+def _verify(before: dict[str, Any], new_text: str, value: str | None, drop_legacy: bool) -> bool:
     """True when `new_text` parses, holds exactly `value` as user.name, and differs from the
-    original in nothing else."""
+    original in nothing else (bar the legacy key when `drop_legacy`)."""
     try:
         after = tomllib.loads(new_text)
     except tomllib.TOMLDecodeError:
         return False
     user = after.get("user")
     name = user.get("name") if isinstance(user, dict) else None
-    return name == value and _comparable(after) == _comparable(before)
+    return name == value and _comparable(after, drop_legacy) == _comparable(before, drop_legacy)
 
 
-def set_user_name(path: Path, name: str | None) -> None:
+def set_user_name(path: Path, name: str | None) -> str | None:
     """Set (or, with None, remove) `name` in the `[user]` table of the TOML file at `path`.
 
-    Raises InvalidNameError (a ValueError) for a bad name or a file that cannot be edited
+    Setting also deletes a leftover `[brain] address_as` (removed from Jarvis; it would make the
+    config invalid) when that is provably safe. Returns a note for the user about that key, or
+    None. Raises InvalidNameError (a ValueError) for a bad name or a file that cannot be edited
     safely; in that case the file is left exactly as it was."""
     value = None if name is None else clean_name(name)
     if not path.exists():
         if value is not None:
             _atomic_write(path, f"[user]\nname = {json.dumps(value, ensure_ascii=False)}\n")
-        return
+        return None
 
     try:
         original = Path(os.path.realpath(path)).read_bytes().decode("utf-8")
@@ -204,10 +214,21 @@ def set_user_name(path: Path, name: str | None) -> None:
 
     user = before.get("user")
     if value is None and not (isinstance(user, dict) and "name" in user):
-        return  # nothing to remove
+        return None  # nothing to remove
     name_line = None if value is None else f"name = {json.dumps(value, ensure_ascii=False)}"
-    new_text = _edit(_split_lines(original), name_line, _file_ending(original))
-    if not _verify(before, new_text, value):
+    brain = before.get("brain")
+    legacy = value is not None and isinstance(brain, dict) and "address_as" in brain
+    lines, ending = _split_lines(original), _file_ending(original)
+    for drop in (True, False) if legacy else (False,):  # try the cleanup, then the name alone
+        new_text = _edit(lines, name_line, ending, drop)
+        if _verify(before, new_text, value, drop):
+            break
+    else:
         raise InvalidNameError(_CANT_EDIT.format(file=path.name))
     if new_text != original:
         _atomic_write(path, new_text)
+    if not legacy:
+        return None
+    if drop:
+        return "Removed the old brain.address_as setting from config.toml."
+    return "brain.address_as is still in config.toml and is no longer supported: delete that line."

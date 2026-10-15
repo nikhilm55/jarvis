@@ -293,3 +293,40 @@ def test_should_create_through_a_dangling_symlink(tmp_path: Path) -> None:
 def test_should_accept_the_joiners_that_some_names_need() -> None:
     name = "नमस्ते" + chr(0x200C) + "जी"  # ZWNJ is part of how some Indic and Persian names are spelt
     assert clean_name(name) == name
+
+
+LEGACY = '[brain]\nmodel = "opus"\naddress_as = "Boss"  # old\n\n[tts]\nvoice = "x"\n'
+
+
+def test_should_remove_a_leftover_brain_address_as_line_when_setting_the_name(
+    tmp_path: Path,
+) -> None:
+    path = _put(tmp_path / "config.toml", LEGACY)
+    note = set_user_name(path, "Nik")
+    assert _get(path) == '[brain]\nmodel = "opus"\n\n[tts]\nvoice = "x"\n\n[user]\nname = "Nik"\n'
+    assert note == "Removed the old brain.address_as setting from config.toml."
+
+
+def test_should_leave_address_as_of_another_table_and_say_nothing(tmp_path: Path) -> None:
+    original = '[other]\naddress_as = "x"\n'
+    path = _put(tmp_path / "config.toml", original)
+    assert set_user_name(path, "Nik") is None
+    assert _get(path) == original + '\n[user]\nname = "Nik"\n'
+
+
+def test_should_set_the_name_but_keep_address_as_and_say_so_when_removal_is_not_safe(
+    tmp_path: Path,
+) -> None:
+    original = '[brain]\naddress_as = """\nBoss\n"""\n'  # not a one-line value
+    path = _put(tmp_path / "config.toml", original)
+    note = set_user_name(path, "Nik")
+    assert _get(path) == original + '\n[user]\nname = "Nik"\n'
+    assert note is not None
+    assert "delete that line" in note
+
+
+def test_should_keep_address_as_when_clearing_the_name(tmp_path: Path) -> None:
+    original = LEGACY + '\n[user]\nname = "Old"\n'
+    path = _put(tmp_path / "config.toml", original)
+    assert set_user_name(path, None) is None
+    assert _get(path) == original.replace('name = "Old"\n', "")
