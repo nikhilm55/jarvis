@@ -34,3 +34,10 @@ def test_should_raise_when_n_features_exceeds_feature_buffer() -> None:
         make_with_n_features(fake, 119)
     fake2 = LongMelFakeBackends()
     make_with_n_features(fake2, 118)
+
+
+def test_should_say_what_to_do_when_n_features_is_too_long() -> None:
+    with pytest.raises(ValueError, match="at most 39 feature rows"):
+        make_with_n_features(FakeBackends(), 40)
+    with pytest.raises(ValueError, match="at most 118 feature rows"):
+        make_with_n_features(LongMelFakeBackends(), 119)

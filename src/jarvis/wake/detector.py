@@ -119,8 +119,9 @@ class WakeDetector:
         needed = self._backends.n_features + _LOOK_BACK
         if needed > limit:
             raise ValueError(
-                f"n_features={self._backends.n_features} + look-back {_LOOK_BACK} = {needed} "
-                f"exceeds buffer limit {limit}"
+                f"wake model reads n_features={self._backends.n_features} rows, which with the "
+                f"{_LOOK_BACK} look-back frames needs {needed} feature rows, but the buffer holds "
+                f"{limit}; use a classifier with at most {limit - _LOOK_BACK} feature rows"
             )
 
     def _prime(self) -> npt.NDArray[np.float32]:
