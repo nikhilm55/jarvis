@@ -1,5 +1,6 @@
 """The allowlisted environment of the brain's claude child (R45)."""
 
+import sys
 from collections.abc import Mapping
 
 __all__ = ["brain_env"]
@@ -29,6 +30,25 @@ _ALLOWED = frozenset(
     }
 )
 
+# Windows processes (python, node) cannot start without these; none of them holds a secret.
+_WINDOWS_ALLOWED = frozenset(
+    {
+        "SYSTEMROOT",
+        "WINDIR",
+        "COMSPEC",
+        "PATHEXT",
+        "USERPROFILE",
+        "USERNAME",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "PROGRAMDATA",
+        "TEMP",
+        "TMP",
+    }
+)
+
 _ALLOWED_PREFIXES = ("LC_", "XDG_")
 
 _DENIED_PREFIXES = ("ANTHROPIC_", "CLAUDE", "MCP_", "OTEL_")
@@ -40,7 +60,11 @@ def brain_env(environ: Mapping[str, str], extra: Mapping[str, str] | None = None
     for name, value in environ.items():
         if name.startswith(_DENIED_PREFIXES):
             continue
-        if name in _ALLOWED or name.startswith(_ALLOWED_PREFIXES):
+        if (
+            name in _ALLOWED
+            or name.startswith(_ALLOWED_PREFIXES)
+            or (sys.platform == "win32" and name.upper() in _WINDOWS_ALLOWED)
+        ):
             result[name] = value
     if extra is not None:
         result.update(extra)
