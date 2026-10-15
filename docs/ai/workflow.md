@@ -58,3 +58,5 @@ For a milestone, one **orchestrator** session (Opus) owns the plan in `docs/plan
 - **Done when:** the task's verify line passes, with real output.
 
 Parallel workers use separate git worktrees (`git worktree add ../jarvis-t<N> -b <branch> origin/main`). Each worker ends with a REPORT block for the orchestrator: PR link, verify output, deviations from the plan, new OQs, follow-ups. The owner pastes the REPORT into the orchestrator session, reviews and merges the PR. The orchestrator then updates the plan status and the hand-off and issues the next prompts.
+
+**Local-model offload (optional, owner's setup).** Where the owner runs a local model (Qwen over Tailscale), implementation tasks run as: orchestrator writes the brief + a manifest (files to write, files to read, tests) → a Claude-free loop has the local model write the files and fixes them against ruff, mypy and pytest → a Sonnet "finisher" reads only the diff and remaining errors, fixes, commits → task review as usual. The reviewer gates stay the same; the local model never commits and only writes the manifest's files.
