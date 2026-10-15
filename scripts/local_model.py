@@ -4,7 +4,8 @@ The local model is any OpenAI-compatible chat server (we use Qwen under llama-se
 receives text and only returns text; this script writes its files and runs the checks.
 
   ask        one prompt in, one answer out (test-case lists, fixtures, docstrings, PR drafts)
-  implement  write the manifest's files, run ruff + mypy + pytest, feed failures back, repeat
+  implement  the harness contract (harness/README.md): plan, tests first then locked,
+             search/replace edits, ruff + mypy + pytest every round
 
 Usage:
   export LOCAL_LLM_URL=http://<host>:8080/v1      # never commit the address
@@ -16,7 +17,7 @@ Usage:
 `implement` only writes the files named in --write (inside the repo) and never commits.
 Exit 0 when ruff, mypy and the tests pass; 1 when the rounds run out (the files keep the last
 attempt for a finisher to complete); 2 on a usage or connection error. Every prompt, reply and
-check output is saved in --log-dir, plus summary.json. See docs/ai/dev-pipeline.md.
+check output is saved in --log-dir, plus plan.json and summary.json. See harness/README.md.
 """
 
 from __future__ import annotations
@@ -29,26 +30,35 @@ import subprocess
 import sys
 import time
 import urllib.request
+from collections.abc import Iterator
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import harness_checks as hc
 
-HOUSE_RULES = """You are a careful senior Python engineer implementing one task in an existing repo.
-House rules (all are checked automatically):
-- Python 3.11+, full type hints, mypy --strict clean, ruff clean (line length 100, max 5 args).
-- Every import you use must be present; no unused imports.
-- Every text file I/O and subprocess.run(text=True) passes encoding="utf-8"; never shell=True.
-- Tests use pytest's `monkeypatch`/`tmp_path` fixtures (never construct pytest.MonkeyPatch()
-  yourself), assert real behaviour, and never touch the network, real user dirs, audio devices
-  or the display.
-- No try/except/pass; don't swallow errors silently.
-Repo facts: src layout - the package is `jarvis` (import `from jarvis.x import y`, NEVER
-`from src.jarvis...`); tests live in `tests/` and import the package the same way;
-tests/conftest.py already points JARVIS_HOME at a tmp dir.
-If mypy says a file is "found twice under different module names", an import uses `src.`.
-Output format: return the COMPLETE content of the requested file in ONE fenced ```python block
-and nothing else."""
+ROOT = Path(__file__).resolve().parent.parent
+SYSTEM_FILE = ROOT / "harness" / "qwen" / "system.md"
+EDIT_LIMIT = 150  # lines; a bigger file is edited with SEARCH/REPLACE blocks, never rewritten
+
+WHOLE_FORMAT = (
+    "Output format: return the COMPLETE content of `{rel}` in ONE fenced ```python block and "
+    "nothing else."
+)
+EDIT_FORMAT = (
+    "Output format: `{rel}` already exists; return ONLY SEARCH/REPLACE blocks and no other text.\n"
+    "<<<<<<< SEARCH\n(lines copied exactly from the current file; they must match exactly once)\n"
+    "=======\n(the replacement lines)\n>>>>>>> REPLACE\n"
+    "Keep each SEARCH short but unique, and do not rewrite code the task does not need."
+)
+PLAN_FORMAT = (
+    "Output format: ONLY a JSON object, no prose: "
+    '{"files": {"<path>": ["<public name(signature) -> return>", ...]}, '
+    '"tests": [{"requirement": "<number or short text from the brief>", '
+    '"test": "<test function name>"}]}. '
+    "Every file you will write gets an entry; every requirement maps to a named test."
+)
 
 CODE_BLOCK = re.compile(r"```(?:python|py)?\s*\n(.*?)```", re.S)
 
@@ -112,7 +122,7 @@ def check(repo: Path, files: list[str], tests: list[str], cache: Path) -> tuple[
     run([*uv, "ruff", "format", *py], repo)
     run([*uv, "ruff", "check", "--fix", "--quiet", *py], repo)
     report = []
-    code, out = run([*uv, "ruff", "check", "--quiet", *py], repo)
+    code, out = run([*uv, "ruff", "check", "--quiet", "--output-format=concise", *py], repo)
     if code:
         report.append("RUFF:\n" + trim(out, 60))
     # a per-run cache so stale entries never leak in
@@ -125,87 +135,176 @@ def check(repo: Path, files: list[str], tests: list[str], cache: Path) -> tuple[
     return not report, "\n\n".join(report)
 
 
+def json_values(text: str) -> Iterator[Any]:
+    """Every JSON object or array that starts somewhere in a reply (fenced or bare)."""
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"[\[{]", text):
+        try:
+            yield decoder.raw_decode(text, match.start())[0]
+        except json.JSONDecodeError:
+            continue
+
+
+def valid_plan(value: Any) -> bool:
+    shape = {"files": dict, "tests": list}
+    return isinstance(value, dict) and all(isinstance(value.get(k), t) for k, t in shape.items())
+
+
 class Implementer:
-    """Holds one `implement` run: the repo, the manifest and the log directory."""
+    """Holds one `implement` run: the repo, the manifest, the plan, the test lock, the log."""
 
     def __init__(self, opts: argparse.Namespace) -> None:
         self.opts = opts
         self.repo: Path = opts.repo.resolve()
         self.log: Path = opts.log_dir
         self.spec = opts.spec.read_text(encoding="utf-8")
+        self.system = SYSTEM_FILE.read_text(encoding="utf-8")
         self.context = "\n\n".join(
             f"### {p} (read-only, existing)\n```python\n{self.current(p)}```" for p in opts.read
         )
+        self.tests = [p for p in opts.write if p.startswith("tests/")]
+        self.impl = [p for p in opts.write if p not in self.tests]
+        self.order = self.tests + self.impl
+        self.existing = {p for p in opts.write if (self.repo / p).exists()}
+        self.plan: dict[str, Any] | None = None
+        self.baseline: dict[str, hc.TestStats] = {}
+        self.notes: dict[str, list[str]] = {}
+        self.weakened: list[dict[str, Any]] = []
 
     def current(self, rel: str) -> str:
         path = self.repo / rel
         return path.read_text(encoding="utf-8") if path.exists() else "(file does not exist yet)"
 
-    def write(self, rel: str, prompt: str, tag: str) -> None:
-        msgs = [{"role": "system", "content": HOUSE_RULES}, {"role": "user", "content": prompt}]
+    def call(self, fmt: str, prompt: str, tag: str, system: str | None = None) -> str:
+        """One call: the system prompt is harness/qwen/system.md, the output format is ours."""
+        msgs = [
+            {"role": "system", "content": f"{system or self.system}\n\n{fmt}"},
+            {"role": "user", "content": prompt},
+        ]
         (self.log / f"{tag}.prompt.md").write_text(prompt, encoding="utf-8")
         reply = chat(msgs, self.opts.max_tokens, self.opts.timeout)
         (self.log / f"{tag}.reply.md").write_text(reply, encoding="utf-8")
-        code = last_code_block(reply)
-        if code is None:
-            print(f"{tag}: no code block in the reply", file=sys.stderr)
-            return
-        dest = self.repo / rel
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(code, encoding="utf-8")
+        return reply
+
+    def brief(self) -> str:
+        plan = f"## Plan (follow it)\n```json\n{json.dumps(self.plan, indent=2)}\n```\n\n"
+        return (
+            f"## Task spec\n{self.spec}\n\n{plan if self.plan else ''}"
+            f"## Existing code you must use as-is\n{self.context}"
+        )
+
+    def make_plan(self) -> None:
+        """Plan first: public names per file, and every requirement mapped to a named test."""
+        prompt = f"{self.brief()}\n\n## Files to write\n" + "\n".join(self.opts.write)
+        for attempt in (1, 2):
+            reply = self.call(PLAN_FORMAT, prompt, f"plan-{attempt}")
+            self.plan = next((v for v in json_values(reply) if valid_plan(v)), None)
+            if self.plan:
+                (self.log / "plan.json").write_text(json.dumps(self.plan, indent=2), "utf-8")
+                return
+            prompt += "\n\nYour last reply was not the required JSON object. Return only it."
+        print("plan: no valid JSON after a retry; continuing without one", file=sys.stderr)
+
+    def write(self, rel: str, prompt: str, tag: str) -> None:
+        """Existing or big files change by SEARCH/REPLACE; new small ones are written whole."""
+        path = self.repo / rel
+        old = path.read_text(encoding="utf-8") if path.exists() else None
+        editing = old is not None and (rel in self.existing or len(old.splitlines()) > EDIT_LIMIT)
+        reply = self.call((EDIT_FORMAT if editing else WHOLE_FORMAT).format(rel=rel), prompt, tag)
+        self.notes[rel], code = [], None
+        if editing and old is not None:
+            edits = hc.parse_edits(reply)
+            code, self.notes[rel] = hc.apply_edits(old, edits)
+            if not edits:
+                code, self.notes[rel] = None, ["no SEARCH/REPLACE block in the reply"]
+        else:
+            code = last_code_block(reply)
+            if code is None:
+                self.notes[rel] = ["no code block in the reply"]
+        if code is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(code, encoding="utf-8")
 
     def draft(self) -> None:
-        """Round 0: draft each file in order; later files see the earlier drafts."""
-        for i, rel in enumerate(self.opts.write):
-            others = "\n\n".join(
-                f"### {q} (written so far)\n```python\n{self.current(q)}```"
-                for q in self.opts.write[:i]
+        """Round 0: the test files first (from the brief), then the implementation."""
+        for i, rel in enumerate(self.order):
+            done = "\n\n".join(
+                f"### {q} (written so far)\n```python\n{self.current(q)}```" for q in self.order[:i]
             )
+            kind = "tests (the implementation does not exist yet)" if rel in self.tests else "code"
             prompt = (
-                f"## Task spec\n{self.spec}\n\n## Existing code you must use as-is\n"
-                f"{self.context}\n\n{others}\n\n"
-                f"## Current content of {rel}\n```python\n{self.current(rel)}```\n\n"
-                f"Write the complete file `{rel}` for this task."
+                f"{self.brief()}\n\n{done}\n\n## Current content of {rel}\n"
+                f"```python\n{self.current(rel)}```\n\nWrite the {kind} for `{rel}`."
             )
             self.write(rel, prompt, f"r0-{i}-{Path(rel).name}")
 
     def fix(self, round_no: int, report: str) -> None:
+        """Only implementation files change, plus a test file that itself fails to import."""
         (self.log / f"r{round_no}.checks.txt").write_text(report, encoding="utf-8")
-        for i, rel in enumerate(self.opts.write):
+        broken = hc.collection_errors(report)
+        for i, rel in enumerate(self.impl + [t for t in self.tests if t in broken]):
             files = "\n\n".join(
-                f"### {q}\n```python\n{self.current(q)}```" for q in self.opts.write
+                f"### {q}{' (locked tests)' if q in self.tests else ''}\n"
+                f"```python\n{self.current(q)}```"
+                for q in self.order
             )
+            notes = "\n".join(f"- {n}" for n in self.notes.get(rel, []))
             prompt = (
-                f"## Task spec\n{self.spec}\n\n## Existing code (read-only)\n{self.context}\n\n"
-                f"## The files written for this task\n{files}\n\n"
-                f"## The checks failed\n```\n{report}\n```\n\n"
-                f"Fix the problems that belong to `{rel}` (if none do, return it unchanged). "
-                f"Return the complete corrected `{rel}`."
+                f"{self.brief()}\n\n## The files written for this task\n{files}\n\n"
+                f"## The checks failed\n```\n{trim(report)}\n```\n\n"
+                f"## Notes from the harness\n{notes or '(none)'}\n\nFix `{rel}`."
             )
             self.write(rel, prompt, f"r{round_no}-{i}-{Path(rel).name}")
 
-    def run(self) -> int:
-        start = time.time()
+    def lock_tests(self, round_no: int, before: dict[str, str]) -> None:
+        """Record the test counts after round 0; later, restore any test file that got weaker."""
+        for rel in self.tests:
+            stats = hc.test_stats(self.current(rel))
+            if stats is None:
+                continue
+            problems = hc.weakening(self.baseline.setdefault(rel, stats), stats)
+            if problems and rel in before:
+                (self.repo / rel).write_text(before[rel], encoding="utf-8")
+                self.weakened.append({"round": round_no, "file": rel, "problems": problems})
+                why = "; ".join(problems)
+                self.notes.setdefault(rel, []).append(f"reverted, tests may not shrink: {why}")
+
+    def iterate(self) -> tuple[str, int, str]:
+        """Round 0 then fix rounds. Returns (status, fix rounds, last failing report)."""
         cache = self.log / "mypy-cache"
-        self.draft()
+        self.lock_tests(0, {})
         ok, report = check(self.repo, self.opts.write, self.opts.test, cache)
         rounds = 0
         while not ok and rounds < self.opts.rounds:
             rounds += 1
+            before = {t: self.current(t) for t in self.tests}
             self.fix(rounds, report)
+            self.lock_tests(rounds, before)
             ok, report = check(self.repo, self.opts.write, self.opts.test, cache)
+        if ok:
+            return "green", rounds, ""
+        return ("test_weakened" if self.weakened else "red"), rounds, report
+
+    def run(self) -> int:
+        start = time.time()
+        self.make_plan()
+        self.draft()
+        status, rounds, report = self.iterate()
         summary = {
-            "status": "green" if ok else "red",
-            "fix_rounds": rounds,
+            "status": status,
+            "plan": self.plan is not None,
+            "tests_locked_counts": {k: asdict(v) for k, v in self.baseline.items()},
+            "weakening_events": self.weakened,
+            "rounds": rounds,
             "minutes": round((time.time() - start) / 60, 1),
             "files": self.opts.write,
-            "remaining": "" if ok else report,
+            "remaining": report,
         }
         (self.log / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
         print(json.dumps({k: v for k, v in summary.items() if k != "remaining"}))
-        if not ok:
+        if report:
             print(trim(report, 40))
-        return 0 if ok else 1
+        return 0 if status == "green" else 1
 
 
 def parse(argv: list[str]) -> argparse.Namespace:
