@@ -180,11 +180,24 @@ class Implementer:
         self.order = self.tests + self.impl
         self.existing = {p for p in opts.write if (self.repo / p).exists()}
         self.plan: dict[str, Any] | None = None
-        self.baseline: dict[str, hc.TestStats] = {}
+        self.locked: dict[str, str] = {}  # test file -> the last content that passed the lock
+        for rel in self.tests:
+            before = self.read(rel)
+            if before is not None and hc.test_stats(before) is not None:
+                self.locked[rel] = before
+        self.modules = [
+            p.removeprefix("src/").removesuffix(".py").replace("/", ".") for p in self.impl
+        ]
+        self.lint_done: set[str] = set()
+        self.disputes: list[dict[str, str]] = []
         self.notes: dict[str, list[str]] = {}
         self.weakened: list[dict[str, Any]] = []
         self.dirty: set[str] = set()
         self.stray: list[str] = []
+
+    def read(self, rel: str) -> str | None:
+        path = self.repo / rel
+        return path.read_text(encoding="utf-8") if path.exists() else None
 
     def current(self, rel: str) -> str:
         path = self.repo / rel
@@ -227,6 +240,8 @@ class Implementer:
         editing = old is not None and (rel in self.existing or len(old.splitlines()) > EDIT_LIMIT)
         reply = self.call((EDIT_FORMAT if editing else WHOLE_FORMAT).format(rel=rel), prompt, tag)
         self.notes[rel], code = [], None
+        for line in re.findall(r"^\s*TEST-DISPUTE:(.*)$", reply, re.M):
+            self.disputes.append({"file": rel, "step": tag, "text": line.strip()})
         if editing and old is not None:
             edits = hc.parse_edits(reply)
             code, self.notes[rel] = hc.apply_edits(old, edits)
@@ -253,11 +268,12 @@ class Implementer:
             )
             self.write(rel, prompt, f"r0-{i}-{Path(rel).name}")
 
-    def fix(self, round_no: int, report: str) -> None:
-        """Only implementation files change, plus a test file that itself fails to import."""
+    def fix(self, round_no: int, report: str, lint: set[str]) -> None:
+        """Implementation files change. A test file changes only to fix its own import (imports
+        only) or, once, its own lint/mypy errors (annotations and imports only)."""
         (self.log / f"r{round_no}.checks.txt").write_text(report, encoding="utf-8")
-        broken = hc.collection_errors(report)
-        for i, rel in enumerate(self.impl + [t for t in self.tests if t in broken]):
+        unlock = hc.collection_errors(report, self.modules) | lint
+        for i, rel in enumerate(self.impl + [t for t in self.tests if t in unlock]):
             routed = hc.errors_for_file(report, rel)
             if not routed and not self.notes.get(rel):
                 continue
@@ -267,26 +283,40 @@ class Implementer:
                 for q in self.order
             )
             errors = "\n\n".join(f"{k}:\n{trim(v, 60)}" for k, v in routed.items())
-            notes = "\n".join(f"- {n}" for n in self.notes.get(rel, []))
+            notes = [f"- {n}" for n in self.notes.get(rel, [])]
+            if rel in self.tests:
+                allowed = "type annotations and imports" if rel in lint else "import lines"
+                notes.append(f"- only the {allowed} of this locked test file may change")
             prompt = (
                 f"{self.brief()}\n\n## The files written for this task\n{files}\n\n"
                 f"## The checks failed (the part that concerns `{rel}`)\n```\n{errors}\n```\n\n"
-                f"## Notes from the harness\n{notes or '(none)'}\n\nFix `{rel}`."
+                f"## Notes from the harness\n{chr(10).join(notes) or '(none)'}\n\nFix `{rel}`."
             )
             self.write(rel, prompt, f"r{round_no}-{i}-{Path(rel).name}")
 
-    def lock_tests(self, round_no: int, before: dict[str, str]) -> None:
-        """Record the test counts after round 0; later, restore any test file that got weaker."""
+    def lock_tests(self, round_no: int, lint: frozenset[str] = frozenset()) -> None:
+        """Hold every test file to the last content that passed the lock; put back what broke it.
+        A file with no lock yet is locked at its first parseable state."""
         for rel in self.tests:
-            stats = hc.test_stats(self.current(rel))
-            if stats is None:
+            new, old = self.read(rel), self.locked.get(rel)
+            now = hc.test_stats(new) if new is not None else None
+            if old is None:
+                if new is not None and now is not None:
+                    self.locked[rel] = new
                 continue
-            problems = hc.weakening(self.baseline.setdefault(rel, stats), stats)
-            if problems and rel in before:
-                (self.repo / rel).write_text(before[rel], encoding="utf-8")
-                self.weakened.append({"round": round_no, "file": rel, "problems": problems})
-                why = "; ".join(problems)
-                self.notes.setdefault(rel, []).append(f"reverted, tests may not shrink: {why}")
+            if new is None or now is None:
+                problems = ["the test file is missing or does not parse"]
+            else:
+                extend = round_no == 0 and rel in self.existing
+                problems = hc.lock_violations(old, new, extend=extend, annotations=rel in lint)
+                if not problems:
+                    self.locked[rel] = new
+                    continue
+                problems += hc.weakening(hc.test_stats(old) or now, now)
+            (self.repo / rel).write_text(old, encoding="utf-8")
+            self.weakened.append({"round": round_no, "file": rel, "problems": problems})
+            why = "; ".join(problems)
+            self.notes.setdefault(rel, []).append(f"reverted, the tests are locked: {why}")
 
     def porcelain(self) -> str:
         code, out = run(["git", "status", "--porcelain", "--untracked-files=all"], self.repo)
@@ -304,8 +334,9 @@ class Implementer:
     def iterate(self) -> tuple[str, int, str]:
         """Round 0 then fix rounds. Returns (status, fix rounds, last failing report)."""
         cache = self.log / "mypy-cache"
-        self.lock_tests(0, {})
+        self.lock_tests(0)
         ok, report = check(self.repo, self.opts.write, self.opts.test, cache)
+        self.lock_tests(0)  # the formatter and ruff --fix are trusted: they join the lock
         seen: str | None = None
         rounds = 0
         while True:
@@ -313,16 +344,20 @@ class Implementer:
                 return "scope_violation", rounds, report
             if ok:
                 return "green", rounds, ""
+            lint = hc.only_test_errors(report, self.tests)
+            if lint and lint <= self.lint_done:
+                return "test_error", rounds, report
             if hc.fingerprint(report) == seen:
                 return "stalled", rounds, report
             if rounds >= self.opts.rounds:
                 break
             seen, rounds = hc.fingerprint(report), rounds + 1
-            before = {t: self.current(t) for t in self.tests}
-            self.fix(rounds, report)
-            self.lock_tests(rounds, before)
+            self.fix(rounds, report, lint)
+            self.lint_done |= lint
+            self.lock_tests(rounds, frozenset(lint))
             ok, report = check(self.repo, self.opts.write, self.opts.test, cache)
-        return ("test_weakened" if self.weakened else "red"), rounds, report
+            self.lock_tests(rounds)
+        return "red", rounds, report
 
     def diff(self) -> str:
         parts = []
@@ -350,13 +385,20 @@ class Implementer:
         self.make_plan()
         self.draft()
         status, rounds, report = self.iterate()
+        if status == "stalled" and self.disputes:
+            status = "test_disputed"
+        if self.weakened and status != "scope_violation":
+            status = "test_weakened"
         review, reviewed = self.review() if status == "green" else ([], False)
         missing = [str(i.get("requirement")) for i in review if i["status"] == "missing"]
         summary = {
             "status": status,
             "plan": self.plan is not None,
-            "tests_locked_counts": {k: asdict(v) for k, v in self.baseline.items()},
+            "tests_locked_counts": {
+                k: asdict(st) for k, v in self.locked.items() if (st := hc.test_stats(v))
+            },
             "weakening_events": self.weakened,
+            "test_disputes": self.disputes,
             "rounds": rounds,
             "review_missing": missing,
             "reviewed": reviewed,
