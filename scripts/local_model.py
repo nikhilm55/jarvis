@@ -169,12 +169,24 @@ def is_test(rel: str) -> bool:
     return "tests" in path.parts[:-1] or path.name.startswith("test_") or path.name == "conftest.py"
 
 
-def valid_plan(value: Any, write: list[str]) -> bool:
-    """A plan names every file to write and maps requirements to at least one test."""
+def valid_plan(value: Any, write: list[str], required: list[str]) -> bool:
+    """A plan names every file to write and covers every numbered requirement of the brief
+    (or, when the brief has none, at least one) with `{"requirement": str, "test": str}` entries."""
     if not isinstance(value, dict) or not isinstance(value.get("files"), dict):
         return False
+    tests = value.get("tests")
+    if not isinstance(tests, list) or not tests:
+        return False
+    if not all(
+        isinstance(t, dict)
+        and isinstance(t.get("requirement"), str)
+        and isinstance(t.get("test"), str)
+        for t in tests
+    ):
+        return False
     named = {Path(os.path.normpath(k)).as_posix() for k in value["files"]}
-    return set(write) <= named and isinstance(value.get("tests"), list) and bool(value["tests"])
+    covered = {m.group(1) for t in tests if (m := re.match(r"\D*(\d+)", t["requirement"]))}
+    return set(write) <= named and set(required) <= covered
 
 
 class Implementer:
@@ -199,9 +211,15 @@ class Implementer:
             before = self.read(rel)
             if before is not None and hc.test_stats(before) is not None:
                 self.locked[rel] = before
+        # the repo's mypy_path has src and scripts, so tests import `jarvis.x` and `tool`
         self.modules = [
-            p.removeprefix("src/").removesuffix(".py").replace("/", ".") for p in self.impl
+            re.sub(r"^(?:src|scripts)/", "", p).removesuffix(".py").replace("/", ".")
+            for p in self.impl
         ]
+        self.path_fixed: set[str] = set()  # test files that already had their one import-path fix
+        self.good = {p: c for p in self.impl if (c := self.read(p)) is not None}
+        self.tampered: list[dict[str, Any]] = []
+        self.required = hc.brief_requirements(self.spec)
         self.lint_done: set[str] = set()
         self.disputes: list[dict[str, str]] = []
         self.notes: dict[str, list[str]] = {}
@@ -242,7 +260,8 @@ class Implementer:
         for attempt in (1, 2):
             reply = self.call(PLAN_FORMAT, prompt, f"plan-{attempt}")
             self.plan = next(
-                (v for v in json_values(reply) if valid_plan(v, self.opts.write)), None
+                (v for v in json_values(reply) if valid_plan(v, self.opts.write, self.required)),
+                None,
             )
             if self.plan:
                 (self.log / "plan.json").write_text(json.dumps(self.plan, indent=2), "utf-8")
@@ -250,7 +269,8 @@ class Implementer:
             prompt += (
                 "\n\nYour last reply was not the required JSON object. Return only it, with an "
                 f"entry under files for every one of: {', '.join(self.opts.write)} (an existing "
-                "locked test file too), and a non-empty tests list."
+                "locked test file too), and tests entries of {requirement: string, test: string} "
+                f"covering every numbered requirement ({', '.join(self.required) or 'any'})."
             )
         print("plan: no valid JSON after a retry; continuing without one", file=sys.stderr)
 
@@ -332,9 +352,14 @@ class Implementer:
             if new is None or now is None:
                 problems = ["the test file is missing or does not parse"]
             else:
-                extend = round_no == 0 and rel in self.existing
-                problems = hc.lock_violations(old, new, extend=extend, annotations=rel in lint)
+                extend, ann = round_no == 0 and rel in self.existing, rel in lint
+                mods = [] if rel in self.path_fixed else self.modules
+                problems = hc.lock_violations(
+                    old, new, extend=extend, annotations=ann, modules=mods
+                )
                 if not problems:
+                    if mods and hc.lock_violations(old, new, extend=extend, annotations=ann):
+                        self.path_fixed.add(rel)  # an import path was corrected: once per file
                     self.locked[rel] = new
                     continue
                 problems += hc.weakening(hc.test_stats(old) or now, now)
@@ -342,6 +367,25 @@ class Implementer:
             self.weakened.append({"round": round_no, "file": rel, "problems": problems})
             why = "; ".join(problems)
             self.notes.setdefault(rel, []).append(f"reverted, the tests are locked: {why}")
+        self.guard_impl(round_no)
+
+    def guard_impl(self, round_no: int) -> None:
+        """An implementation file may not reach into the test machinery; put back what does."""
+        for rel in self.impl:
+            new = self.read(rel)
+            if new is None:
+                continue
+            known = hc.tamper_violations(self.good.get(rel, ""))
+            problems = [p for p in hc.tamper_violations(new) if p not in known]
+            if not problems:
+                self.good[rel] = new
+                continue
+            if rel in self.good:
+                (self.repo / rel).write_text(self.good[rel], encoding="utf-8")
+            else:
+                (self.repo / rel).unlink()
+            self.tampered.append({"round": round_no, "file": rel, "problems": problems})
+            self.notes.setdefault(rel, []).append("reverted: " + "; ".join(problems))
 
     def locate(self) -> None:
         """The git root and this repo's path inside it (porcelain paths are root-relative)."""
@@ -432,11 +476,15 @@ class Implementer:
         status, rounds, report = self.iterate()
         if status == "stalled" and self.disputes:
             status = "test_disputed"
-        if self.weakened and status != "scope_violation":
+        if self.tampered and status != "scope_violation":
+            status = "sensor_tamper"
+        elif self.weakened and status != "scope_violation":
             status = "test_weakened"
         review, reviewed = self.review() if status == "green" else ([], False)
         missing = [str(i.get("requirement")) for i in review if i["status"] == "missing"]
-        needed = max(1, len({str(t.get("requirement")) for t in self.plan_tests()}))
+        needed = len(self.required) or max(
+            1, len({str(t.get("requirement")) for t in self.plan_tests()})
+        )
         complete = reviewed and len(review) >= needed
         summary = {
             "status": status,
@@ -445,6 +493,7 @@ class Implementer:
                 k: asdict(st) for k, v in self.locked.items() if (st := hc.test_stats(v))
             },
             "weakening_events": self.weakened,
+            "tamper_events": self.tampered,
             "test_disputes": self.disputes,
             "rounds": rounds,
             "review_missing": missing,
@@ -460,7 +509,8 @@ class Implementer:
         print(json.dumps({k: v for k, v in summary.items() if k != "remaining"}))
         if report:
             print(trim(report, 40))
-        return 0 if status == "green" and not missing and complete else 1
+        clean = not missing and complete and not (planned - written)
+        return 0 if status == "green" and clean else 1
 
 
 def parse(argv: list[str]) -> argparse.Namespace:

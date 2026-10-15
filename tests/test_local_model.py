@@ -72,6 +72,9 @@ MANIFEST = [
     "tests/test_old.py",
     "src/a.py",
     "src/b.py",
+    "scripts/tool.py",
+    "src/helpers.py",
+    "src/other.py",
 ]
 PLAN = {
     "files": {name: ["def f() -> int"] for name in MANIFEST},
@@ -158,7 +161,7 @@ def implement(
     home: Path = kw.pop("home", repo.parent)  # where the brief and the log live
     log: Path = kw.pop("log", home / "log")
     write: list[str] = kw.pop("write", ["tests/test_new.py", "src/new.py"])
-    (home / "brief.md").write_text("brief: make f()", encoding="utf-8")
+    (home / "brief.md").write_text(kw.pop("brief", "brief: make f()"), encoding="utf-8")
     argv = ["implement", "--repo", str(repo), "--spec", str(home / "brief.md")]
     argv += [
         "--write",
@@ -231,11 +234,14 @@ def broken(n: int = 0) -> str:
     )
 
 
-NO_NAME = (
-    "PYTEST:\n___ ERROR collecting tests/test_new.py ___\ntests/test_new.py:1: in <module>\n"
-    "    from jarvis.new import g\nE   ImportError: cannot import name 'g' from 'jarvis.new'\n"
-    "=== short test summary info ===\nERROR tests/test_new.py - ImportError: cannot import name 'g'"
-)
+def no_name(module: str) -> str:
+    return (
+        "PYTEST:\n___ ERROR collecting tests/test_new.py ___\ntests/test_new.py:1: in <module>\n"
+        f"    from {module} import g\nE   ImportError: cannot import name 'g' from '{module}'\n"
+        "=== short test summary info ===\nERROR tests/test_new.py - ImportError: no name 'g'"
+    )
+
+
 LINT = "MYPY:\ntests/test_new.py:3: error: bad  [misc]"
 
 
@@ -248,17 +254,42 @@ def test_should_fix_a_test_file_when_its_own_import_fails_to_collect(
     assert "only the import lines" in fix
 
 
+@pytest.mark.parametrize(
+    ("impl", "module"), [("src/new.py", "jarvis.new"), ("scripts/tool.py", "tool")]
+)
 def test_should_blame_the_implementation_when_it_lacks_a_name_the_test_imports(
-    repo: Path, monkeypatch: pytest.MonkeyPatch
+    repo: Path, monkeypatch: pytest.MonkeyPatch, impl: str, module: str
 ) -> None:
     model = FakeModel(
         {"tests/test_new.py": [fenced(TEST_SRC), fenced("def test_a():\n    assert True\n")]}
     )
-    code, summary, _ = implement(repo, monkeypatch, model, FakeChecks((False, NO_NAME), (True, "")))
+    checks = FakeChecks((False, no_name(module)), (True, ""))
+    code, summary, _ = implement(
+        repo, monkeypatch, model, checks, write=["tests/test_new.py", impl]
+    )
     assert len(model.prompts("tests/test_new.py")) == 1
-    assert "cannot import name 'g'" in model.prompts("src/new.py")[1]
+    assert "no name 'g'" in model.prompts(impl)[1]
     assert (repo / "tests" / "test_new.py").read_text(encoding="utf-8") == TEST_SRC
     assert (code, summary["weakening_events"]) == (0, [])
+
+
+TYPO = "from jarvis.helpres import f\n\n\ndef test_a() -> None:\n    assert f() == 1\n"
+
+
+def test_should_allow_one_import_path_fix_to_a_manifest_module_and_no_second_one(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixed = TYPO.replace("helpres", "helpers")
+    again = TYPO.replace("helpres", "other")
+    model = FakeModel({"tests/test_new.py": [fenced(TYPO), fenced(fixed), fenced(again)]})
+    checks = FakeChecks((False, broken(1)), (False, broken(2)), (False, broken(3)))
+    write = ["tests/test_new.py", "src/helpers.py", "src/other.py"]
+    _, summary, _ = implement(repo, monkeypatch, model, checks, write=write, rounds=2)
+    assert (repo / "tests" / "test_new.py").read_text(encoding="utf-8") == fixed
+    assert [(e["round"], e["file"]) for e in summary["weakening_events"]] == [
+        (2, "tests/test_new.py")
+    ]
+    assert "rebound" in summary["weakening_events"][0]["problems"][0]
 
 
 ASSERT_TRUE = "def test_a() -> None:\n    assert True\n    assert 2\n"
@@ -607,10 +638,11 @@ def test_should_list_planned_tests_that_were_never_drafted(
         PLAN,
         tests=[{"requirement": "1", "test": "test_a"}, {"requirement": "2", "test": "T::test_zzz"}],
     )
-    _, summary, _ = implement(
-        repo, monkeypatch, FakeModel({"plan": json.dumps(plan)}), FakeChecks((True, ""))
-    )
-    assert summary["plan_tests_missing"] == ["test_zzz"]
+    both = json.dumps([{"requirement": r, "status": "met", "note": "ok"} for r in "12"])
+    model = FakeModel({"plan": json.dumps(plan), "review": both})
+    code, summary, _ = implement(repo, monkeypatch, model, FakeChecks((True, "")))
+    assert (summary["plan_tests_missing"], summary["status"]) == (["test_zzz"], "green")
+    assert code == 1
 
 
 @pytest.mark.parametrize("review", ["no json here", "[]"])
@@ -633,3 +665,93 @@ def test_should_exit_1_when_the_review_covers_fewer_items_than_the_plan_has_requ
         repo, monkeypatch, FakeModel({"plan": json.dumps(plan)}), FakeChecks((True, ""))
     )
     assert (code, summary["review_complete"]) == (1, False)
+
+
+BRIEF = "## Requirements\n1. does a\n2. does b\n\n## Constraints\n3. not a requirement\n"
+
+
+def two_reqs_plan(**kw: object) -> str:
+    tests = [{"requirement": r, "test": "test_a"} for r in ("1", "2", "extra")]
+    return json.dumps(dict(PLAN, tests=kw.get("tests", tests)))
+
+
+@pytest.mark.parametrize(
+    "tests",
+    [
+        ["test_a"],
+        [{"requirement": 1, "test": "test_a"}, {"requirement": 2, "test": "test_a"}],
+        [{"requirement": "1", "test": "test_a"}],
+        [{"requirement": "one", "test": "test_a"}, {"requirement": "two", "test": "test_a"}],
+    ],
+)
+def test_should_reject_a_plan_that_is_malformed_or_misses_a_numbered_requirement(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, tests: list[object]
+) -> None:
+    model = FakeModel({"plan": two_reqs_plan(tests=tests)})
+    _, summary, _ = implement(repo, monkeypatch, model, FakeChecks((True, "")), brief=BRIEF)
+    assert summary["plan"] is False
+    assert "(1, 2)" in model.calls[1][1]
+
+
+@pytest.mark.parametrize(("items", "exit_code"), [(1, 1), (2, 0)])
+def test_should_count_review_completeness_against_the_briefs_requirements(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, items: int, exit_code: int
+) -> None:
+    review = json.dumps(
+        [{"requirement": str(i), "status": "met", "note": "ok"} for i in range(items)]
+    )
+    model = FakeModel({"plan": two_reqs_plan(), "review": review})
+    code, summary, _ = implement(repo, monkeypatch, model, FakeChecks((True, "")), brief=BRIEF)
+    assert (code, summary["plan"]) == (exit_code, True)
+
+
+def test_should_restore_a_test_file_that_is_tampered_with_during_the_final_check(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runs: list[int] = []
+
+    def tamper(root: Path) -> None:
+        runs.append(1)
+        if len(runs) == 2:  # the check that ends the first fix round
+            (root / "tests" / "test_new.py").write_text(ASSERT_TRUE, encoding="utf-8")
+
+    checks = FakeChecks((False, FAILED), (True, ""), effect=tamper)
+    code, summary, _ = implement(repo, monkeypatch, FakeModel(), checks)
+    assert (repo / "tests" / "test_new.py").read_text(encoding="utf-8") == TEST_SRC
+    assert [e["round"] for e in summary["weakening_events"]] == [1]
+    assert (code, summary["status"]) == (1, "test_weakened")
+
+
+DISARM = "import _pytest.python as p\n\np.Function.runtest = lambda self: None\n"
+
+
+def test_should_remove_a_new_implementation_file_that_imports_pytest_and_stop_as_sensor_tamper(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model = FakeModel({"src/new.py": fenced("import pytest\n" + IMPL_SRC)})
+    code, summary, _ = implement(repo, monkeypatch, model, FakeChecks((True, "")))
+    assert not (repo / "src" / "new.py").exists()
+    assert [(e["round"], e["file"]) for e in summary["tamper_events"]] == [(0, "src/new.py")]
+    assert (code, summary["status"]) == (1, "sensor_tamper")
+
+
+def test_should_restore_the_last_good_implementation_when_a_fix_disarms_pytest(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model = FakeModel({"src/new.py": [fenced(IMPL_SRC), fenced(IMPL_SRC + DISARM)]})
+    code, summary, _ = implement(repo, monkeypatch, model, FakeChecks((False, FAILED), (True, "")))
+    assert (repo / "src" / "new.py").read_text(encoding="utf-8") == IMPL_SRC
+    assert [e["round"] for e in summary["tamper_events"]] == [1]
+    assert (code, summary["status"]) == (1, "sensor_tamper")
+
+
+def test_should_restore_an_existing_implementation_file_to_its_pre_run_content(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    edit = "<<<<<<< SEARCH\nB = 2\n=======\nB = 2\nimport unittest.mock\n>>>>>>> REPLACE\n"
+    model = FakeModel({"src/old.py": edit})
+    code, summary, _ = implement(
+        repo, monkeypatch, model, FakeChecks((True, "")), write=["src/old.py"]
+    )
+    assert (repo / "src" / "old.py").read_text(encoding="utf-8") == "A = 1\nB = 2\n"
+    assert (code, summary["status"]) == (1, "sensor_tamper")
