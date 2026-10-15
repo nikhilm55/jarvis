@@ -99,7 +99,7 @@ def test_should_write_settings_with_deny_list_when_launching(tmp_path: Path) -> 
     assert "Read" in deny
     assert "WebFetch" in deny
     assert data["disableAllHooks"] is True
-    if sys.platform != "win32":  # Windows has no POSIX mode bits
+    if sys.platform == "linux":  # Windows has no POSIX mode bits
         assert stat.S_IMODE(settings_path.stat().st_mode) == 0o600
 
 

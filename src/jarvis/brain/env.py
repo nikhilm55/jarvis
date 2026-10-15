@@ -63,6 +63,7 @@ def brain_env(environ: Mapping[str, str], extra: Mapping[str, str] | None = None
         if (
             name in _ALLOWED
             or name.startswith(_ALLOWED_PREFIXES)
+            # Windows names are case-insensitive (os.environ upper-cases them), hence upper()
             or (sys.platform == "win32" and name.upper() in _WINDOWS_ALLOWED)
         ):
             result[name] = value

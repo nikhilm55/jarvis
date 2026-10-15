@@ -25,6 +25,8 @@ M2 BACKLOG (from M1 reviews; details in the PR descriptions):
 - Guard the wake detector for classifiers whose window doesn't fit the primed buffer (n_features ≥ 41) — needed before track W lands a different model.
 - Inject clocks in timing-sensitive orchestrator tests (CI flake risk).
 - From the live run (B1–B5): a "your name" setting so the brain stops using the account's full name; end silently on an empty transcript after a wake; a decline isn't an error in the HUD; idle CPU 3.7 % with a real mic; `tiny.en` vs `base.en` accuracy.
+- Windows: the brain's env allowlist adds 13 OS variables on win32 (SYSTEMROOT, WINDIR, COMSPEC, PATHEXT, USERPROFILE, USERNAME, HOMEDRIVE, HOMEPATH, APPDATA, LOCALAPPDATA, PROGRAMDATA, TEMP, TMP); no secrets; extends R45 (PR #123).
+- Windows: kill() on a `.cmd`-launched brain leaves the real process running: use a Job Object; CI should fail on unclosed-transport warnings; CI runs pytest with a doubled -q, so no summary or skip list is printed (needs a .github change).
 - Owner's phrases as M2 acceptance cases: "open the terminal and check what I've been working on", "help me set up my project" (needs `run_shell` and files).
 
 OPEN:

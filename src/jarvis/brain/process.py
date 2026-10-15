@@ -20,9 +20,9 @@ Sink = Callable[[dict[str, Any] | None], None]
 
 _LINE_LIMIT = 8 * 1024 * 1024
 _TERM_GRACE_S = 2.0
-_SIGKILL = getattr(
-    signal, "SIGKILL", signal.SIGTERM
-)  # Windows has no SIGKILL; _signal_group kills directly there
+# Windows has no SIGKILL. There _signal_group calls proc.kill(), which ends only a .cmd shim
+# (npm's claude.cmd), not the brain behind it: that needs a Job Object (Windows milestone).
+_SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
 
 
 def _open_stderr() -> int | None:

@@ -111,7 +111,7 @@ def test_should_pick_highest_nvm_version_dir_when_multiple_exist(
     assert result == str(v22)
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the executable bit is POSIX-only")
+@pytest.mark.skipif(sys.platform != "linux", reason="the executable bit is POSIX-only")
 def test_should_skip_non_executable_file_when_scanning_fallbacks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

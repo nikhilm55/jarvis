@@ -97,6 +97,17 @@ def _windows_process_gone(pid: int) -> bool:
         kernel32.CloseHandle(ctypes.c_void_p(handle))
 
 
+def pid_exited(pid: int) -> bool:
+    """Strict probe: an unreaped zombie still counts as alive on POSIX (os.kill(pid, 0))."""
+    if sys.platform == "win32":
+        return _windows_process_gone(pid)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    return False
+
+
 def process_gone(pid: int) -> bool:
     """True when `pid` no longer exists (a zombie that is waiting to be reaped counts as gone)."""
     if sys.platform == "win32":

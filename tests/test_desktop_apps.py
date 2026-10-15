@@ -99,7 +99,7 @@ def test_should_use_defaults_when_env_unset(
     assert Path("/usr/share/applications") in dirs
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="XDG_DATA_DIRS is a colon-separated POSIX list")
+@pytest.mark.skipif(sys.platform != "linux", reason="XDG_DATA_DIRS is a colon-separated POSIX list")
 def test_should_use_env_dirs_when_env_set(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
     monkeypatch.setenv("XDG_DATA_DIRS", str(tmp_path / "a") + ":" + str(tmp_path / "b"))

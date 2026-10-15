@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from jarvis.desktop.client import DesktopClient, DesktopError
-from tests.brain_fakes import process_gone
+from tests.brain_fakes import pid_exited
 
 FAKE = Path(__file__).parent / "fixtures" / "fake_desktop_worker.py"
 
@@ -240,7 +240,7 @@ def test_should_close_idempotently_and_kill_worker_when_closed(tmp_path: Path) -
             await c.close()
             await c.close()
             for _ in range(50):
-                if process_gone(pid):
+                if pid_exited(pid):
                     break
                 await asyncio.sleep(0.1)
             else:

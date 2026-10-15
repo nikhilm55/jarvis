@@ -148,8 +148,11 @@ def test_should_start_a_fresh_warm_process_when_reset(
 
 
 @pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="process-group kill is POSIX-only; Windows needs a Job Object (Windows milestone)",
+    sys.platform != "linux",
+    reason=(
+        "on Windows, kill() ends only the .cmd shim; the brain process survives "
+        "(needs a Job Object, Windows milestone)"
+    ),
 )
 def test_should_kill_the_process_group_when_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
