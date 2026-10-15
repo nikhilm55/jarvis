@@ -47,7 +47,7 @@ Then say "Jarvis, what time is it?". `uv run jarvis --help` lists the other comm
 | UI design (approved, frozen) | [`docs/design/jarvis-ui-mockup.html`](docs/design/jarvis-ui-mockup.html) |
 | Plans and acceptance | [`docs/plans/`](docs/plans/) · [`docs/milestones/`](docs/milestones/) |
 | Where we are | [`docs/handoff.md`](docs/handoff.md) · [`docs/open-questions.md`](docs/open-questions.md) |
-| How it's built | [`docs/ai/dev-pipeline.md`](docs/ai/dev-pipeline.md) |
+| How it's built | [`docs/ai/dev-pipeline.md`](docs/ai/dev-pipeline.md) · the agent harness [`harness/`](harness/README.md) |
 | Working with AI agents | [`AGENTS.md`](AGENTS.md) · [`docs/ai/onboarding.md`](docs/ai/onboarding.md) · [`docs/ai/workflow.md`](docs/ai/workflow.md) · [`docs/ai/policy.md`](docs/ai/policy.md) |
 
 ## Develop
@@ -68,6 +68,11 @@ Jarvis is built by AI agents under one human owner, in a pipeline designed to sp
 - **A local model writes the code:** Qwen 27B on the owner's GPU drafts every file and fixes it against ruff, mypy and pytest in a loop with no Claude in it (`scripts/local_model.py`).
 - **Claude Sonnet finishes and reviews:** it sees only the diff and the remaining errors. Opus reviews safety-critical code and each milestone as a whole.
 - **The owner decides:** they run the live tests and merge.
+- **Everything runs inside one [agent harness](harness/README.md):**
+  - **Guides before the model acts:** a precise brief with "done" agreed up front, a plan that maps each requirement to a test, and house rules.
+  - **Sensors after it acts:** tests written first and then locked so they can't be weakened, lint, strict types, a scope check, a fresh-context review, and CI.
+  - **Ratchet:** every mistake a check could have caught becomes a new check.
+  - **Enforced:** a hook rejects any subagent brief that skips it.
 
 M1 went in as 100 small, reviewed PRs, with the local model writing most of the lines. The roles, the flow, the token levers and the quality gates are in [`docs/ai/dev-pipeline.md`](docs/ai/dev-pipeline.md).
 
