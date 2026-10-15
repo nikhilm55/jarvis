@@ -51,6 +51,7 @@ Only libraries listed in `pyproject.toml` exist. Add one with `uv add <pkg>` (as
 | `docs/ai/` | AI policy, workflow, MCP inventory, observability, lessons |
 | `docs/handoff.md` | Rolling session hand-off (DONE / NEXT / OPEN) |
 | `.claude/` | Shared agent settings, hooks, skills |
+| `harness/` | The agent harness: brief, report and review templates; the local model's system prompt |
 | `scripts/check_ai_config.py` | CI validator for the AI setup |
 
 ## Rules
@@ -68,6 +69,7 @@ Only libraries listed in `pyproject.toml` exist. Add one with `uv add <pkg>` (as
 11. Commits use Conventional Commits and end with the `Co-Authored-By:` trailer for the AI agent used (docs/ai/policy.md §Attribution).
 12. Keep PRs small: aim for ≤ 400 changed lines excluding docs and lockfile; split larger work.
 13. Show evidence (command plus real output) before saying anything is done or fixed.
+14. **Delegating work** (to a subagent or the local model) runs inside the harness: brief from `harness/brief.md`, report with `harness/report.md`, review with `harness/review.md`. A hook rejects briefs without Goal / Context / Constraints / Done when / Report.
 
 ## Skills — read before doing
 
@@ -92,6 +94,7 @@ Only libraries listed in `pyproject.toml` exist. Add one with `uv add <pkg>` (as
 | `docs/handoff.md` | Session start: continue where the last session stopped |
 | `docs/ai/workflow.md` | Choosing a model, planning a large change, context limits |
 | `docs/ai/dev-pipeline.md` | Orchestrated milestone work, offloading drafts to the local model |
+| `harness/README.md` | Before delegating any task, or reviewing delegated work |
 | `docs/ai/policy.md` | Data handling, MCP servers, dangerous modes, attribution |
 | `docs/ai/lessons.md` | Repeating a mistake an earlier session already made |
 

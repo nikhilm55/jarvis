@@ -190,3 +190,113 @@ def test_should_redact_credentials_when_echoing_a_blocked_command() -> None:
     output = json.dumps(run_hook("guard_bash.py", payload))
     assert token not in output
     assert "[REDACTED]" in output
+
+
+BRIEF = (
+    "# Brief: add a thing\n\n## Goal\nx\n\n## Context\ny\n\n## Constraints\nz\n\n"
+    "## Done when\n- [ ] tests\n\n## Report\nuse report.md\n"
+)
+
+
+def delegate(
+    prompt: object, tool: str = "Agent", subagent_type: str | None = None
+) -> dict[str, object]:
+    inp: dict[str, object] = {"prompt": prompt, "description": "work"}
+    if subagent_type is not None:
+        inp["subagent_type"] = subagent_type
+    return run_hook("guard_delegation.py", {"tool_name": tool, "tool_input": inp})
+
+
+def reason(output: dict[str, object]) -> str:
+    specific = output["hookSpecificOutput"]
+    assert isinstance(specific, dict)
+    return str(specific["permissionDecisionReason"])
+
+
+@pytest.mark.parametrize("tool", ["Agent", "Task"])
+def test_should_allow_dispatch_when_prompt_is_a_full_brief(tool: str) -> None:
+    assert decision(delegate(BRIEF, tool=tool)) == "allow"
+
+
+def test_should_block_dispatch_naming_every_missing_section_when_prompt_is_not_a_brief() -> None:
+    out = delegate("Please refactor the audio module and make it faster.")
+    assert decision(out) == "deny"
+    message = reason(out)
+    for name in ("Goal", "Context", "Constraints", "Done when", "Report"):
+        assert name in message
+    assert "harness/brief.md" in message
+
+
+@pytest.mark.parametrize("missing", ["Goal", "Context", "Constraints", "Done when", "Report"])
+def test_should_block_dispatch_when_one_section_is_missing(missing: str) -> None:
+    prompt = BRIEF.replace(f"## {missing}", "## Other")
+    out = delegate(prompt)
+    assert decision(out) == "deny"
+    assert f"{missing}" in reason(out).split("Missing section(s):")[1].split(".")[0]
+
+
+@pytest.mark.parametrize("level", ["#", "##", "###", "####"])
+def test_should_accept_markdown_headings_at_levels_1_to_4(level: str) -> None:
+    prompt = "\n".join(f"{level} {n}\ntext" for n in ("Goal", "Context", "Constraints"))
+    prompt += f"\n{level} Done when\nx\n{level} Report\ny\n"
+    assert decision(delegate(prompt)) == "allow"
+
+
+def test_should_block_when_heading_is_level_5_or_not_at_line_start() -> None:
+    prompt = "##### Goal\nthe goal is\nContext here, mid sentence: Constraints\n"
+    assert decision(delegate(prompt)) == "deny"
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "**Goal:** a\n**Context:** b\n**Constraints:** c\n**Done when:** d\n**Report:** e",
+        "**Goal** a\n**Context**: b\n**Constraints**: c\n**Done when**: d\n**Report**: e",
+        "Goal: a\nContext: b\nConstraints: c\nDone when: d\nReport: e",
+        "GOAL: a\ncontext: b\n  Constraints: c\nDONE WHEN: d\n## report\ne",
+    ],
+)
+def test_should_accept_bold_or_plain_labels_in_any_case(prompt: str) -> None:
+    assert decision(delegate(prompt)) == "allow"
+
+
+@pytest.mark.parametrize("agent", ["Explore", "claude-code-guide", "statusline-setup"])
+def test_should_allow_read_only_helper_agents_without_a_brief(agent: str) -> None:
+    assert decision(delegate("find where config is loaded", subagent_type=agent)) == "allow"
+
+
+@pytest.mark.parametrize("agent", ["general-purpose", "Plan", "my-custom-agent", None])
+def test_should_check_every_other_or_missing_agent_type(agent: str | None) -> None:
+    assert decision(delegate("just do it", subagent_type=agent)) == "deny"
+
+
+@pytest.mark.parametrize("prompt", [None, 42, ["Goal"]])
+def test_should_allow_dispatch_when_prompt_is_not_a_string(prompt: object) -> None:
+    assert decision(delegate(prompt)) == "allow"
+
+
+def test_should_allow_dispatch_when_tool_input_is_missing() -> None:
+    assert decision(run_hook("guard_delegation.py", {"tool_name": "Agent"})) == "allow"
+
+
+def test_should_allow_dispatch_when_payload_is_malformed() -> None:
+    result = subprocess.run(
+        [sys.executable, str(HOOKS / "guard_delegation.py")],
+        input="{not json",
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert result.stdout == ""
+
+
+def test_should_wire_the_delegation_guard_in_settings() -> None:
+    settings = json.loads((HOOKS.parent / "settings.json").read_text(encoding="utf-8"))
+    entries = [e for e in settings["hooks"]["PreToolUse"] if e["matcher"] == "Agent|Task"]
+    assert len(entries) == 1
+    command = entries[0]["hooks"][0]["command"]
+    assert command.startswith("uv run --no-project --quiet python ")
+    assert "guard_delegation.py" in command
