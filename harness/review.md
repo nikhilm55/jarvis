@@ -10,6 +10,7 @@ The reviewer is a sensor, not a co-author: report findings, don't fix them. Revi
 - [ ] **CI is green on every required job** of the PR (both OSes). A red job is a finding even for Linux-only code.
 - [ ] **Safety rules hold:** every product tool call goes through the policy gate and consent check; no `shell=True`; text I/O passes `encoding="utf-8"`; no secrets, no real user data, no network in tests.
 - [ ] **The verify output in the report is real** (it matches what you get when you run it).
+- [ ] **New tests in an existing test file** don't change shared state that later tests rely on (the local-model loop can't fully stop this; see `harness/README.md` § Limits).
 
 ## Correctness
 
@@ -23,6 +24,15 @@ The reviewer is a sensor, not a co-author: report findings, don't fix them. Revi
 - [ ] Names, layout and style match the surrounding code.
 - [ ] Docs updated in the same change when behaviour changed (FRS, ADR, `docs/architecture.md`).
 - [ ] PR ≤ 400 reviewable lines.
+
+## Recurring findings (check these every time)
+
+- [ ] Success messages are backed by a check of the actual result.
+- [ ] Structured-file editors can't lose data: try a multi-line string, an inline table and a quoted key.
+- [ ] File writes are atomic and keep mode and symlinks; errors become clean messages, not tracebacks.
+- [ ] Allowlist or platform branches have a test per branch.
+- [ ] Skip reasons say what breaks on the skipped platform.
+- [ ] Try to make a failing test pass without fixing the code (skip, exit early, rebind, deselect). If one works, it's a finding.
 
 ## Ratchet
 

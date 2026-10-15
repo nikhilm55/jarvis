@@ -35,6 +35,15 @@ Numbered, each one testable. The worker maps every number to a named test.
 - Limits: CI rounds, live runs, paid calls, wall time. Say the number.
 - Never: merge or approve PRs, push to `main`, read secrets or real user data, weaken or skip a test to make it pass.
 - Out of scope: what not to do, even if tempting.
+- Standing rules learned from earlier reviews (keep the ones that apply):
+  - A step that reports success checks its postcondition on the result itself, not through a check that can't see what it changed.
+  - An editor of a structured file (TOML, JSON, YAML) verifies by parsed-data equality: everything except the edited key is unchanged. A successful parse is not enough.
+  - Atomic writes: a unique temp file in the same directory, cleanup on every failure path, keep the file mode, follow symlinks, fsync before replace, and map decode/encode errors to the domain error.
+  - Security-relevant allowlists and platform branches get a unit test for each branch, including one proving the old behaviour on the unchanged platform.
+  - Platform skips use `sys.platform != "linux"` (or the platform that has the feature), and the reason states what breaks on the skipped platform.
+  - Removing a config key: the unknown-key error tells the user what to do instead.
+  - Prefer behavioural tests (set the input, check the output) to tests that grep the source.
+  - Test the unusual syntactic forms of anything an editor or parser touches: inline tables, quoted keys, multi-line strings, CRLF.
 
 ## Done when
 

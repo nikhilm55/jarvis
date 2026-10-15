@@ -2,7 +2,7 @@
 
 Rolling note so a fresh session (human or agent) picks up instantly. Overwrite it at the end of every working session; history lives in git.
 
-**Updated:** 2026-10-15 (M1 merged; dev pipeline documented; track W open)
+**Updated:** 2026-10-15 (M1 merged; harness, Windows CI and the user-name setting merged; track W open)
 
 DONE:
 - M0 closed; FRS v0.3; frozen UI design; AI-assisted dev setup (ADRs 0001–0011).
@@ -11,9 +11,11 @@ DONE:
 - **Acceptance Part A:** 17/17 scripted runs on real components; idle CPU ≈ 2.7% of one core (budget 3%) — `docs/milestones/M1-acceptance.md`.
 - All M1 PRs merged into `main` (#15 → #114, squash, in order).
 - Dev pipeline documented: `docs/ai/dev-pipeline.md`; local-model tool `scripts/local_model.py` (endpoint from `LOCAL_LLM_URL`).
+- **Agent harness** (`harness/`, #125 → #141): brief/report/review templates, a delegation hook, and the local-model loop's sensors (plan against the brief's requirements, tests drafted first then AST-locked, pytest judged by its summary line, scope check, tamper rule, stall stop, fresh-context review). Five adversarial Opus review rounds; limits in `harness/README.md`.
+- **Windows CI green** (#123, #138): Linux-only tests skip off Linux with a stated consequence; the brain env allowlist gains 13 Windows OS variables; a timing flake fixed.
+- **User name** (#124, #127, #126, #128): `[user] name` set with `jarvis setup --name`; the brain never sees the OS account name (live-run finding B1).
 
 NEXT:
-- **Fix Windows CI first:** the Windows test jobs have been red since PR #41 (M1's Linux-only modules and their tests run on Windows). Make them skip or pass on Windows so every required check is green again.
 - **Owner:** first live-mic run done (results and findings B1–B5 at the end of `docs/milestones/M1-acceptance.md`). Still untried live: checklist 1–5, "close it", "Jarvis, stop" while thinking, self-trigger.
 - **Track W:** custom single-word "Jarvis" wake model (brief in the orchestrator's SDD workspace; stops for owner approval before > 2 GB of downloads; licences decide shippability, OQ-004). Re-run the wake-related acceptance cases with it.
 - **Plan M2** (FRS §11 "Hands"): consent layer, confirmations (Safe mode T1 / T2+), more desktop tools, Windows backend. Fold in the M2 backlog below.
@@ -26,6 +28,9 @@ M2 BACKLOG (from M1 reviews; details in the PR descriptions):
 - Audit records carry `turn_id`; fill the activity log's `policy_decisions`.
 - Guard the wake detector for classifiers whose window doesn't fit the primed buffer (n_features ≥ 41) — needed before track W lands a different model.
 - Inject clocks in timing-sensitive orchestrator tests (CI flake risk).
+- Windows: kill the brain's whole process tree (taskkill /T or a Job Object); a second possible flake, `tests/test_desktop_client.py:211`; optionally start the turn clock after the brain's init.
+- Harness follow-ups: skip allowance from the skips round 0 actually reports (not from markers); `deselected` counts as not clean; read `tox.ini` addopts.
+- Dependabot PRs #115–#121: check each (onnxruntime first) before merging.
 - From the live run (B1–B5): a "your name" setting so the brain stops using the account's full name; end silently on an empty transcript after a wake; a decline isn't an error in the HUD; idle CPU 3.7 % with a real mic; `tiny.en` vs `base.en` accuracy.
 - Windows: the brain's env allowlist adds 13 OS variables on win32 (SYSTEMROOT, WINDIR, COMSPEC, PATHEXT, USERPROFILE, USERNAME, HOMEDRIVE, HOMEPATH, APPDATA, LOCALAPPDATA, PROGRAMDATA, TEMP, TMP); no secrets; extends R45 (PR #123).
 - Windows: kill() on a `.cmd`-launched brain leaves the real process running: use a Job Object; CI should fail on unclosed-transport warnings; CI runs pytest with a doubled -q, so no summary or skip list is printed (needs a .github change).
@@ -36,4 +41,3 @@ OPEN:
 - OQ-004 licences now also cover espeak-ng (via Kokoro) and the stock wake model (dev-only).
 - OQ-001…006 unchanged; none blocks M2 planning.
 - Process: implementation tasks run "plan → local model implements (Claude-free loop) → Sonnet finishes → review"; see `docs/ai/dev-pipeline.md`.
-- Dependabot PRs #115–#121 are open (ruff, onnxruntime, pydantic, platformdirs, setup-uv, CodeQL); check each before merging, onnxruntime first.
