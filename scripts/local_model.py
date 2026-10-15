@@ -129,8 +129,13 @@ def run(cmd: list[str], repo: Path) -> tuple[int, str]:
     return proc.returncode, proc.stdout + proc.stderr
 
 
-def check(repo: Path, files: list[str], tests: list[str], cache: Path) -> tuple[bool, str]:
-    """ruff (after autofix), mypy with the project config, then the tests. Returns (ok, report)."""
+def check(
+    repo: Path, files: list[str], tests: list[str], cache: Path, minimum: int = 0
+) -> tuple[bool, str]:
+    """ruff (after autofix), mypy with the project config, then the tests. Returns (ok, report).
+    pytest is green only when its exit code is 0 AND its last line says `N passed` (N at least
+    `minimum`, the locked tests' count) with nothing failed: an implementation can fake the exit
+    code (atexit, os._exit) but not print a believable summary."""
     py = [f for f in files if f.endswith(".py")]
     uv = ["uv", "run", "--quiet"]
     run([*uv, "ruff", "format", *py], repo)
@@ -143,9 +148,13 @@ def check(repo: Path, files: list[str], tests: list[str], cache: Path) -> tuple[
     code, out = run([*uv, "mypy", "--cache-dir", str(cache)], repo)
     if code:
         report.append("MYPY:\n" + trim(out, 60))
-    code, out = run([*uv, "pytest", "-q", "-x", "-p", "no:cacheprovider", *tests], repo)
-    if code:
-        report.append("PYTEST:\n" + trim(out, 120))
+    # the repo's addopts already hold a -q; a second one would drop the summary line
+    pytest = [*uv, "pytest", "-o", "addopts=--strict-markers", "-q", "-x", "-p", "no:cacheprovider"]
+    code, out = run([*pytest, *tests], repo)
+    if code or not hc.pytest_clean(out, minimum):
+        last = (out.strip().splitlines() or [""])[-1]
+        note = "" if code else f"{hc.CLEAN_MSG} (exit 0, last line: {last!r})\n"
+        report.append("PYTEST:\n" + note + trim(out, 120))
     return not report, "\n\n".join(report)
 
 
@@ -185,8 +194,9 @@ def valid_plan(value: Any, write: list[str], required: list[str]) -> bool:
     ):
         return False
     named = {Path(os.path.normpath(k)).as_posix() for k in value["files"]}
-    covered = {m.group(1) for t in tests if (m := re.match(r"\D*(\d+)", t["requirement"]))}
-    return set(write) <= named and set(required) <= covered
+    covered = {n for t in tests if (n := hc.req_number(t["requirement"])) is not None}
+    pairs = [(t["requirement"], t["test"]) for t in tests]
+    return set(write) <= named and set(required) <= covered and hc.plan_distinct(pairs, required)
 
 
 class Implementer:
@@ -372,6 +382,10 @@ class Implementer:
             self.notes.setdefault(rel, []).append(f"reverted, the tests are locked: {why}")
         self.guard_impl(round_no)
 
+    def minimum(self) -> int:
+        """At least this many tests must pass: the locked test files' collectable tests."""
+        return sum(hc.collectable_tests(c) for c in self.locked.values())
+
     def guard_impl(self, round_no: int) -> None:
         """An implementation file may not reach into the test machinery; put back what does."""
         for rel in self.impl:
@@ -425,7 +439,7 @@ class Implementer:
         """Round 0 then fix rounds. Returns (status, fix rounds, last failing report)."""
         cache = self.log / "mypy-cache"
         self.lock_tests(0)
-        ok, report = check(self.repo, self.opts.write, self.opts.test, cache)
+        ok, report = check(self.repo, self.opts.write, self.opts.test, cache, self.minimum())
         self.lock_tests(0)  # the formatter and ruff --fix are trusted: they join the lock
         seen: str | None = None
         rounds = 0
@@ -445,7 +459,7 @@ class Implementer:
             self.fix(rounds, report, lint)
             self.lint_done |= lint
             self.lock_tests(rounds, frozenset(lint))
-            ok, report = check(self.repo, self.opts.write, self.opts.test, cache)
+            ok, report = check(self.repo, self.opts.write, self.opts.test, cache, self.minimum())
             self.lock_tests(rounds)
         return "red", rounds, report
 
@@ -486,10 +500,9 @@ class Implementer:
             status = "test_weakened"
         review, reviewed = self.review() if status == "green" else ([], False)
         missing = [str(i.get("requirement")) for i in review if i["status"] == "missing"]
-        needed = len(self.required) or max(
-            1, len({str(t.get("requirement")) for t in self.plan_tests()})
-        )
-        complete = reviewed and len(review) >= needed
+        plan_reqs = len({str(t.get("requirement")) for t in self.plan_tests()})
+        reviewed_reqs = [str(i.get("requirement")) for i in review]
+        complete = reviewed and hc.review_covers(reviewed_reqs, self.required, plan_reqs)
         summary = {
             "status": status,
             "plan": self.plan is not None,

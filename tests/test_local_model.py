@@ -123,8 +123,12 @@ class FakeChecks:
         self.results = list(results)
         self.effect = effect
         self.runs = 0
+        self.minimums: list[int] = []
 
-    def __call__(self, repo: Path, files: list[str], tests: list[str], cache: Path) -> object:
+    def __call__(
+        self, repo: Path, files: list[str], tests: list[str], cache: Path, minimum: int = 0
+    ) -> object:
+        self.minimums.append(minimum)
         if self.effect:
             self.effect(repo)
         self.runs += 1
@@ -685,9 +689,8 @@ def test_should_exit_1_when_the_review_is_unparseable_or_covers_nothing(
 def test_should_exit_1_when_the_review_covers_fewer_items_than_the_plan_has_requirements(
     repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    plan = dict(
-        PLAN, tests=[{"requirement": "1", "test": "test_a"}, {"requirement": "2", "test": "test_a"}]
-    )
+    tests = [{"requirement": "1", "test": "test_a"}, {"requirement": "2", "test": "test_b"}]
+    plan = dict(PLAN, tests=tests)
     code, summary, _ = implement(
         repo, monkeypatch, FakeModel({"plan": json.dumps(plan)}), FakeChecks((True, ""))
     )
@@ -698,7 +701,8 @@ BRIEF = "## Requirements\n1. does a\n2. does b\n\n## Constraints\n3. not a requi
 
 
 def two_reqs_plan(**kw: object) -> str:
-    tests = [{"requirement": r, "test": "test_a"} for r in ("1", "2", "extra")]
+    names = {"1": "test_a", "2": "test_b", "extra": "test_c"}
+    tests = [{"requirement": r, "test": n} for r, n in names.items()]
     return json.dumps(dict(PLAN, tests=kw.get("tests", tests)))
 
 
@@ -709,6 +713,7 @@ def two_reqs_plan(**kw: object) -> str:
         [{"requirement": 1, "test": "test_a"}, {"requirement": 2, "test": "test_a"}],
         [{"requirement": "1", "test": "test_a"}],
         [{"requirement": "one", "test": "test_a"}, {"requirement": "two", "test": "test_a"}],
+        [{"requirement": r, "test": "test_a"} for r in ("1", "2", "extra")],  # one test for all
     ],
 )
 def test_should_reject_a_plan_that_is_malformed_or_misses_a_numbered_requirement(
@@ -720,14 +725,21 @@ def test_should_reject_a_plan_that_is_malformed_or_misses_a_numbered_requirement
     assert "(1, 2)" in model.calls[1][1]
 
 
-@pytest.mark.parametrize(("items", "exit_code"), [(1, 1), (2, 0)])
-def test_should_count_review_completeness_against_the_briefs_requirements(
-    repo: Path, monkeypatch: pytest.MonkeyPatch, items: int, exit_code: int
+@pytest.mark.parametrize(
+    ("items", "exit_code"), [(["1"], 1), (["1", "1", "1"], 1), (["2", "1"], 0)]
+)
+def test_should_count_review_completeness_by_distinct_brief_requirements(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, items: list[str], exit_code: int
 ) -> None:
-    review = json.dumps(
-        [{"requirement": str(i), "status": "met", "note": "ok"} for i in range(items)]
+    review = json.dumps([{"requirement": r, "status": "met", "note": "ok"} for r in items])
+    three = "".join(f"def test_{n}() -> None:\n    assert 1\n\n\n" for n in "abc")
+    model = FakeModel(
+        {
+            "plan": two_reqs_plan(),
+            "review": review,
+            "tests/test_new.py": fenced(three.rstrip() + "\n"),
+        }
     )
-    model = FakeModel({"plan": two_reqs_plan(), "review": review})
     code, summary, _ = implement(repo, monkeypatch, model, FakeChecks((True, "")), brief=BRIEF)
     assert (code, summary["plan"]) == (exit_code, True)
 
@@ -800,3 +812,50 @@ def test_should_not_let_an_old_tamper_finding_hide_a_new_kind(
     [event] = summary["tamper_events"]
     assert event["problems"] == ["stores into sys.modules['x']"]
     assert (code, summary["status"]) == (1, "sensor_tamper")
+
+
+def fake_uv(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run `uv run --quiet pytest ...` as the current interpreter's pytest; lint and types pass."""
+    real: Callable[[list[str], Path], tuple[int, str]] = local_model.run
+
+    def run(cmd: list[str], repo: Path) -> tuple[int, str]:
+        if cmd[:3] == ["uv", "run", "--quiet"]:
+            return real([sys.executable, "-m", *cmd[3:]], repo) if cmd[3] == "pytest" else (0, "")
+        return real(cmd, repo)
+
+    monkeypatch.setattr(local_model, "run", run)
+
+
+@pytest.mark.parametrize(
+    ("impl", "green", "forged"),
+    [
+        ("def f():\n    return 2\n", True, False),
+        ("def f():\n    return 1\n", False, False),
+        (
+            "import atexit, os\natexit.register(lambda: os._exit(0))\ndef f():\n    return 1\n",
+            False,
+            True,
+        ),
+        ("import os\nos._exit(0)\ndef f():\n    return 2\n", False, True),
+    ],
+    ids=["passes", "fails", "atexit forges exit 0", "os._exit(0) at import"],
+)
+def test_should_trust_pytest_only_when_it_prints_a_clean_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, impl: str, green: bool, forged: bool
+) -> None:
+    fake_uv(monkeypatch)
+    (tmp_path / "impl.py").write_text(impl, encoding="utf-8")
+    (tmp_path / "test_impl.py").write_text(
+        "from impl import f\n\n\ndef test_f():\n    assert f() == 2\n", encoding="utf-8"
+    )
+    ok, report = local_model.check(tmp_path, ["impl.py"], ["test_impl.py"], tmp_path / "c", 1)
+    assert ok is green
+    assert ("did not report a clean summary" in report) is forged
+
+
+def test_should_ask_for_at_least_the_locked_tests_collected_count_to_pass(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checks = FakeChecks((True, ""))
+    implement(repo, monkeypatch, FakeModel(), checks)
+    assert checks.minimums[-1] == 1
