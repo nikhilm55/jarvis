@@ -65,7 +65,19 @@ def test_should_exit_2_when_no_endpoint_is_configured(
 
 TEST_SRC = "def test_a() -> None:\n    assert 1\n    assert 2\n"
 IMPL_SRC = "def f() -> int:\n    return 1\n"
-PLAN = {"files": {"src/new.py": ["def f() -> int"]}, "tests": [{"requirement": "1", "test": "a"}]}
+MANIFEST = [
+    "tests/test_new.py",
+    "src/new.py",
+    "src/old.py",
+    "tests/test_old.py",
+    "src/a.py",
+    "src/b.py",
+]
+PLAN = {
+    "files": {name: ["def f() -> int"] for name in MANIFEST},
+    "tests": [{"requirement": "1", "test": "test_a"}],
+}
+MET = json.dumps([{"requirement": "1", "status": "met", "note": "ok"}])
 FAILED = "PYTEST:\nFAILED tests/test_new.py::test_a - assert 0"
 
 
@@ -91,7 +103,7 @@ class FakeModel:
         if "JSON object" in system:
             return self.answer("plan", json.dumps(PLAN))
         if system.startswith(local_model.REVIEW_SYSTEM):
-            return self.answer("review", "[]")
+            return self.answer("review", MET)
         match = re.search(r"(?:Write the \w+|Fix) .*?`([^`]+)`", user)
         rel = match.group(1) if match else ""
         default = fenced(TEST_SRC if rel.startswith("tests/") else IMPL_SRC)
@@ -143,10 +155,11 @@ def implement(
     repo: Path, monkeypatch: pytest.MonkeyPatch, model: FakeModel, checks: FakeChecks, **kw: Any
 ) -> tuple[int, dict[str, Any], Path]:
     """Run `implement`; returns (exit code, summary.json, log dir)."""
-    log: Path = kw.pop("log", repo.parent / "log")
+    home: Path = kw.pop("home", repo.parent)  # where the brief and the log live
+    log: Path = kw.pop("log", home / "log")
     write: list[str] = kw.pop("write", ["tests/test_new.py", "src/new.py"])
-    (repo.parent / "brief.md").write_text("brief: make f()", encoding="utf-8")
-    argv = ["implement", "--repo", str(repo), "--spec", str(repo.parent / "brief.md")]
+    (home / "brief.md").write_text("brief: make f()", encoding="utf-8")
+    argv = ["implement", "--repo", str(repo), "--spec", str(home / "brief.md")]
     argv += [
         "--write",
         *write,
@@ -313,6 +326,7 @@ def test_should_let_an_existing_test_file_gain_a_new_test_in_round_0(
         repo, monkeypatch, model, FakeChecks((True, "")), write=["tests/test_old.py"]
     )
     assert "def test_b" in (repo / "tests" / "test_old.py").read_text(encoding="utf-8")
+    assert "existing tests are locked" in model.prompts("tests/test_old.py")[0]
     assert (code, summary["weakening_events"]) == (0, [])
 
 
@@ -504,3 +518,118 @@ def test_should_keep_ask_a_single_user_prompt_call(
     assert local_model.main(["ask", "hello"]) == 0
     assert capsys.readouterr().out == "answer\n"
     assert seen == [[{"role": "user", "content": "hello"}]]
+
+
+def test_should_trim_each_routed_error_section_to_its_last_60_lines(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lines = "\n".join(f"src/new.py:{i}:1: E501 long" for i in range(1, 101))
+    model = FakeModel()
+    implement(repo, monkeypatch, model, FakeChecks((False, f"RUFF:\n{lines}"), (True, "")))
+    fix = model.prompts("src/new.py")[1]
+    assert "src/new.py:100:1: E501" in fix
+    assert "src/new.py:41:1: E501" in fix
+    assert "src/new.py:40:1: E501" not in fix
+
+
+@pytest.mark.parametrize("name", ["./tests/test_new.py", "tests/../tests/test_new.py", "abs"])
+def test_should_lock_a_test_file_named_with_a_dot_or_an_absolute_path(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    given = str(repo / "tests" / "test_new.py") if name == "abs" else name
+    weaker = fenced(ASSERT_TRUE)
+    model = FakeModel({"tests/test_new.py": [fenced(TEST_SRC), weaker]})
+    checks = FakeChecks((False, broken(1)), (True, ""))
+    code, summary, _ = implement(repo, monkeypatch, model, checks, write=[given, "./src/new.py"])
+    assert summary["files"] == ["tests/test_new.py", "src/new.py"]
+    assert [e["file"] for e in summary["weakening_events"]] == ["tests/test_new.py"]
+    assert (code, summary["scope_violations"]) == (1, [])
+
+
+def test_should_flag_a_further_edit_to_a_file_that_was_already_dirty(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (repo / "notes.txt").write_text("one", encoding="utf-8")
+
+    def touch(root: Path) -> None:
+        (root / "notes.txt").write_text("two", encoding="utf-8")
+
+    code, summary, _ = implement(
+        repo, monkeypatch, FakeModel(), FakeChecks((False, FAILED), effect=touch)
+    )
+    assert (code, summary["status"], summary["scope_violations"]) == (
+        1,
+        "scope_violation",
+        ["notes.txt"],
+    )
+
+
+def test_should_work_when_the_repo_is_a_subdirectory_of_the_git_root(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sub = repo / "sub"
+    (sub / "tests").mkdir(parents=True)
+    (sub / "src").mkdir()
+    code, summary, _ = implement(
+        repo=sub,
+        monkeypatch=monkeypatch,
+        model=FakeModel(),
+        checks=FakeChecks((True, "")),
+        home=repo.parent,
+    )
+    assert (code, summary["status"], summary["scope_violations"]) == (0, "green", [])
+    assert (sub / "src" / "new.py").exists()
+
+
+@pytest.mark.parametrize(
+    "plan",
+    [
+        {"files": {}, "tests": []},
+        {"files": {"src/new.py": []}, "tests": [{"requirement": "1", "test": "test_a"}]},
+        {"files": {name: [] for name in MANIFEST}, "tests": []},
+    ],
+)
+def test_should_not_accept_a_plan_without_every_file_or_without_tests(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, plan: dict[str, object]
+) -> None:
+    model = FakeModel({"plan": json.dumps(plan)})
+    _, summary, _ = implement(repo, monkeypatch, model, FakeChecks((True, "")))
+    assert summary["plan"] is False
+    assert sum("JSON object" in system for system, _ in model.calls) == 2
+    retry = model.calls[1][1]
+    assert "tests/test_new.py, src/new.py" in retry
+
+
+def test_should_list_planned_tests_that_were_never_drafted(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = dict(
+        PLAN,
+        tests=[{"requirement": "1", "test": "test_a"}, {"requirement": "2", "test": "T::test_zzz"}],
+    )
+    _, summary, _ = implement(
+        repo, monkeypatch, FakeModel({"plan": json.dumps(plan)}), FakeChecks((True, ""))
+    )
+    assert summary["plan_tests_missing"] == ["test_zzz"]
+
+
+@pytest.mark.parametrize("review", ["no json here", "[]"])
+def test_should_exit_1_when_the_review_is_unparseable_or_covers_nothing(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, review: str
+) -> None:
+    code, summary, _ = implement(
+        repo, monkeypatch, FakeModel({"review": review}), FakeChecks((True, ""))
+    )
+    assert (code, summary["status"], summary["review_complete"]) == (1, "green", False)
+
+
+def test_should_exit_1_when_the_review_covers_fewer_items_than_the_plan_has_requirements(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = dict(
+        PLAN, tests=[{"requirement": "1", "test": "test_a"}, {"requirement": "2", "test": "test_a"}]
+    )
+    code, summary, _ = implement(
+        repo, monkeypatch, FakeModel({"plan": json.dumps(plan)}), FakeChecks((True, ""))
+    )
+    assert (code, summary["review_complete"]) == (1, False)

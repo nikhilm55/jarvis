@@ -177,27 +177,64 @@ def lock_violations(
 
 @dataclass(frozen=True)
 class Edit:
-    """A single SEARCH/REPLACE edit block."""
+    """A SEARCH/REPLACE block. A malformed one carries `error` and is never applied."""
 
     search: str
     replace: str
+    error: str = ""
 
 
 # the model often drops the space or changes the marker length, so accept both
-EDIT_BLOCK = re.compile(
-    r"^<{5,9} ?SEARCH[ \t]*\n(.*?)^={5,9}[ \t]*\n(.*?)^>{5,9} ?REPLACE[ \t]*$", re.M | re.S
-)
+SEARCH_MARK = re.compile(r"<{5,9} ?SEARCH")
+DIVIDER = re.compile(r"={5,9}")
+REPLACE_MARK = re.compile(r">{5,9} ?REPLACE")
+
+
+def _text(lines: list[str]) -> str:
+    return "".join(f"{x}\n" for x in lines)
 
 
 def parse_edits(reply: str) -> list[Edit]:
-    """Aider-style SEARCH/REPLACE blocks; text between them and unterminated blocks are ignored."""
-    return [Edit(m.group(1), m.group(2)) for m in EDIT_BLOCK.finditer(reply)]
+    """Aider-style blocks (CRLF too). A block with a stray marker line inside its SEARCH or
+    REPLACE text, or one that never closes, becomes an Edit with `error`; text between blocks
+    is ignored."""
+    edits: list[Edit] = []
+    search: list[str] | None = None  # set while inside a block
+    replace: list[str] | None = None
+    error = ""
+    for line in reply.replace("\r\n", "\n").split("\n"):
+        mark = line.rstrip()
+        if SEARCH_MARK.fullmatch(mark):
+            if search is not None:
+                edits.append(Edit("", "", "unterminated block (a marker line is inside it)"))
+            search, replace, error = [], None, ""
+        elif search is None:
+            continue
+        elif DIVIDER.fullmatch(mark):
+            if replace is None:
+                replace = []
+            else:
+                error = "SEARCH or REPLACE contains a marker line"
+        elif REPLACE_MARK.fullmatch(mark):
+            error = error or (
+                "" if replace is not None else "no ======= between SEARCH and REPLACE"
+            )
+            edits.append(Edit(_text(search), _text(replace or []), error))
+            search = replace = None
+        else:
+            (search if replace is None else replace).append(line)
+    if search is not None:
+        edits.append(Edit("", "", "unterminated block"))
+    return edits
 
 
 def apply_edits(content: str, edits: list[Edit]) -> tuple[str, list[str]]:
     """Apply *edits* in order to *content*; return (new_content, errors)."""
     errors: list[str] = []
     for idx, edit in enumerate(edits, start=1):
+        if edit.error:
+            errors.append(f"edit {idx}: {edit.error}")
+            continue
         if not edit.search:
             errors.append(f"edit {idx}: SEARCH is empty")
             continue
