@@ -160,6 +160,13 @@ def rate(hits: list[bool]) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--model", type=Path, help="candidate E: a custom wake model (.onnx)")
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        nargs="*",
+        default=[],
+        help="extra E thresholds, e.g. the one chosen on validation data before looking at M0a",
+    )
     args = parser.parse_args()
     if args.model is not None and not args.model.is_file():
         parser.error(f"--model {args.model}: no such file")
@@ -249,14 +256,15 @@ def main() -> int:
         # E: the custom model. Same set, same cached transcripts; D's gate is the "+ gate" rows.
         key = hashlib.sha256(args.model.read_bytes()).hexdigest()[:12]
         custom, _ = cached(f"oww-custom-{key}", lambda: score_oww(rows, args.model))
+        thresholds = sorted({*E_THRESHOLDS, *args.threshold})
         print(f"\ncandidate E: {args.model.name} (sha256 {key}…)")
         table(
             "E — custom model alone",
-            [(f"threshold {t}", lambda r, t=t: custom[r["clip"]] >= t) for t in E_THRESHOLDS],
+            [(f"threshold {t}", lambda r, t=t: custom[r["clip"]] >= t) for t in thresholds],
         )
         table(
             "E+gate — custom model + Whisper tiny.en+prompt, fuzzy first word ≤ 2 edits",
-            [(f"E ≥ {t} + gate", fuzzy(custom, t, "tiny.en+prompt", 2)) for t in E_THRESHOLDS],
+            [(f"E ≥ {t} + gate", fuzzy(custom, t, "tiny.en+prompt", 2)) for t in thresholds],
         )
 
     misses = [
