@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from jarvis.desktop.client import DesktopClient, DesktopError
+from tests.brain_fakes import process_gone
 
 FAKE = Path(__file__).parent / "fixtures" / "fake_desktop_worker.py"
 
@@ -239,11 +240,9 @@ def test_should_close_idempotently_and_kill_worker_when_closed(tmp_path: Path) -
             await c.close()
             await c.close()
             for _ in range(50):
-                try:
-                    os.kill(pid, 0)
-                    await asyncio.sleep(0.1)
-                except ProcessLookupError:
+                if process_gone(pid):
                     break
+                await asyncio.sleep(0.1)
             else:
                 pytest.fail("worker still running after close")
             with pytest.raises(DesktopError) as exc:
@@ -272,7 +271,9 @@ def test_should_respawn_idle_worker_when_it_died_between_calls(
             r = await c.volume_get()
             pid = r["pid"]
             assert isinstance(pid, int)
-            os.kill(pid, signal.SIGKILL)
+            os.kill(
+                pid, getattr(signal, "SIGKILL", signal.SIGTERM)
+            )  # SIGTERM kills hard on Windows
             for _ in range(50):
                 if c._proc is not None and c._proc.returncode is not None:
                     break

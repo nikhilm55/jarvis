@@ -20,6 +20,9 @@ Sink = Callable[[dict[str, Any] | None], None]
 
 _LINE_LIMIT = 8 * 1024 * 1024
 _TERM_GRACE_S = 2.0
+_SIGKILL = getattr(
+    signal, "SIGKILL", signal.SIGTERM
+)  # Windows has no SIGKILL; _signal_group kills directly there
 
 
 def _open_stderr() -> int | None:
@@ -136,8 +139,8 @@ class ClaudeProcess:
         try:
             await asyncio.wait_for(self._proc.wait(), _TERM_GRACE_S)
         except TimeoutError:
-            self._signal_group(signal.SIGKILL)
+            self._signal_group(_SIGKILL)
             await self._proc.wait()
-        self._signal_group(signal.SIGKILL)  # stray grandchildren outlive their leader
+        self._signal_group(_SIGKILL)  # stray grandchildren outlive their leader
         self._reader.cancel()  # a grandchild that escaped the group may still hold stdout open
         await asyncio.gather(self._reader, return_exceptions=True)

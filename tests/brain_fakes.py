@@ -1,6 +1,7 @@
 """Test helpers for the brain: a fake claude executable on disk and process helpers."""
 
 import asyncio
+import ctypes
 import json
 import os
 import shlex
@@ -78,8 +79,26 @@ class FakeClaude:
             return None
 
 
+def _windows_process_gone(pid: int) -> bool:
+    """Windows liveness probe: os.kill(pid, 0) would send Ctrl+C there, so ask the OS instead."""
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined,unused-ignore]
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return True
+    try:
+        code = ctypes.c_ulong()
+        if not kernel32.GetExitCodeProcess(ctypes.c_void_p(handle), ctypes.byref(code)):
+            return True
+        return code.value != 259  # STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(ctypes.c_void_p(handle))
+
+
 def process_gone(pid: int) -> bool:
     """True when `pid` no longer exists (a zombie that is waiting to be reaped counts as gone)."""
+    if sys.platform == "win32":
+        return _windows_process_gone(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
