@@ -1,0 +1,194 @@
+"""Tests for jarvis.userconfig: edit one `name` line, touch nothing else."""
+
+import tomllib
+from pathlib import Path
+
+import pytest
+
+from jarvis.userconfig import InvalidNameError, clean_name, set_user_name
+
+# A realistic file: comments, a table before and one after [user].
+LF_FILE = (
+    '# top comment\n[brain]\nmodel = "sonnet"  # keep me\n\n'
+    '[user]\n# who I am\nname = "Old"\nlanguage = "en"\n\n[tts]\nvoice = "bm_george"\n'
+)
+
+
+def _put(path: Path, text: str) -> Path:
+    path.write_bytes(text.encode("utf-8"))
+    return path
+
+
+def _get(path: Path) -> str:
+    return path.read_bytes().decode("utf-8")
+
+
+def test_should_create_new_file_and_parent_dirs_with_just_the_user_table(tmp_path: Path) -> None:
+    path = tmp_path / "nested" / "dir" / "config.toml"
+    set_user_name(path, "Alice")
+    assert _get(path) == '[user]\nname = "Alice"\n'
+    assert tomllib.loads(_get(path)) == {"user": {"name": "Alice"}}
+
+
+@pytest.mark.parametrize("eol", ["\n", "\r\n"])
+def test_should_replace_name_line_leaving_every_other_byte_identical(
+    tmp_path: Path, eol: str
+) -> None:
+    original = LF_FILE.replace("\n", eol)
+    path = _put(tmp_path / "config.toml", original)
+    set_user_name(path, "New")
+    assert _get(path) == original.replace('name = "Old"', 'name = "New"')
+    assert tomllib.loads(_get(path))["user"]["name"] == "New"
+
+
+def test_should_insert_name_right_after_user_header_without_name(tmp_path: Path) -> None:
+    path = _put(tmp_path / "config.toml", "[user]\r\n# comment\r\n\r\n[other]\r\nx = 1\r\n")
+    set_user_name(path, "Bob")
+    assert _get(path) == '[user]\r\nname = "Bob"\r\n# comment\r\n\r\n[other]\r\nx = 1\r\n'
+
+
+def test_should_insert_name_when_user_header_is_the_last_line_without_newline(
+    tmp_path: Path,
+) -> None:
+    path = _put(tmp_path / "config.toml", "[brain]\nx = 1\n[user]")
+    set_user_name(path, "Bob")
+    assert _get(path) == '[brain]\nx = 1\n[user]\nname = "Bob"'
+
+
+@pytest.mark.parametrize("eol", ["\n", "\r\n"])
+def test_should_append_user_table_in_the_files_own_line_ending(tmp_path: Path, eol: str) -> None:
+    original = f"[other]{eol}x = 1{eol}"
+    path = _put(tmp_path / "config.toml", original)
+    set_user_name(path, "Carol")
+    assert _get(path) == f'{original}{eol}[user]{eol}name = "Carol"{eol}'
+
+
+def test_should_append_user_table_when_file_does_not_end_with_newline(tmp_path: Path) -> None:
+    path = _put(tmp_path / "config.toml", "[other]\nx = 1")
+    set_user_name(path, "Dave")
+    assert _get(path) == '[other]\nx = 1\n\n[user]\nname = "Dave"\n'
+
+
+def test_should_write_user_table_into_an_empty_existing_file(tmp_path: Path) -> None:
+    path = _put(tmp_path / "config.toml", "")
+    set_user_name(path, "Dave")
+    assert _get(path) == '[user]\nname = "Dave"\n'
+
+
+@pytest.mark.parametrize("has_user_table", [False, True])
+def test_should_not_touch_name_key_of_another_table(tmp_path: Path, has_user_table: bool) -> None:
+    other = '[other]\nname = "x"\n'
+    original = other + ('\n[user]\nname = "Old"\n' if has_user_table else "")
+    path = _put(tmp_path / "config.toml", original)
+    set_user_name(path, "Eve")
+    assert _get(path).startswith(other)
+    data = tomllib.loads(_get(path))
+    assert data["other"]["name"] == "x"
+    assert data["user"]["name"] == "Eve"
+
+
+def test_should_not_treat_unicode_line_separators_in_a_comment_as_lines(tmp_path: Path) -> None:
+    ls = chr(0x2028)  # a legal character inside a TOML comment
+    original = f'[user]\n# a{ls}[fake]\nname = "Old"\n'
+    path = _put(tmp_path / "config.toml", original)
+    set_user_name(path, "New")
+    assert _get(path) == original.replace("Old", "New")
+
+
+def test_should_remove_only_the_name_line(tmp_path: Path) -> None:
+    original = '[other]\nname = "keep"\n\n[user]\nname = "Old"\nlanguage = "en"\n'
+    path = _put(tmp_path / "config.toml", original)
+    set_user_name(path, None)
+    assert _get(path) == '[other]\nname = "keep"\n\n[user]\nlanguage = "en"\n'
+
+
+def test_should_leave_an_empty_user_header_after_removing_the_only_key(tmp_path: Path) -> None:
+    path = _put(tmp_path / "config.toml", '[user]\r\nname = "Old"\r\n')
+    set_user_name(path, None)
+    assert _get(path) == "[user]\r\n"
+
+
+@pytest.mark.parametrize("original", ["[user]\nlanguage = 1\n", "[brain]\nx = 1\n", ""])
+def test_should_be_noop_when_removing_an_absent_name(tmp_path: Path, original: str) -> None:
+    path = _put(tmp_path / "config.toml", original)
+    set_user_name(path, None)
+    assert _get(path) == original
+
+
+def test_should_be_noop_and_create_nothing_when_removing_from_missing_file(tmp_path: Path) -> None:
+    path = tmp_path / "sub" / "config.toml"
+    set_user_name(path, None)
+    assert not path.exists()
+    assert not path.parent.exists()
+
+
+@pytest.mark.parametrize(
+    ("raw", "stored"),
+    [
+        ("Nikhil", "Nikhil"),
+        ('O"Brien', 'O"Brien'),
+        ("back\\slash", "back\\slash"),
+        ("José", "José"),
+        ("नमस्ते", "नमस्ते"),
+        ("  Ana  ", "Ana"),
+        ("a" * 40, "a" * 40),
+    ],
+)
+def test_should_round_trip_tricky_names_through_tomllib(
+    tmp_path: Path, raw: str, stored: str
+) -> None:
+    fresh = tmp_path / "fresh.toml"
+    set_user_name(fresh, raw)
+    assert tomllib.loads(_get(fresh))["user"]["name"] == stored
+    replaced = _put(tmp_path / "replaced.toml", '[user]\nname = "Old"\n')
+    set_user_name(replaced, raw)
+    assert tomllib.loads(_get(replaced))["user"]["name"] == stored
+
+
+@pytest.mark.parametrize("bad", ["", "   ", "a" * 41, "a\nb", "a\tb", "a\x7fb", "a\rb"])
+def test_should_reject_bad_names_without_creating_or_changing_the_file(
+    tmp_path: Path, bad: str
+) -> None:
+    missing = tmp_path / "missing.toml"
+    with pytest.raises(InvalidNameError):
+        set_user_name(missing, bad)
+    assert not missing.exists()
+
+    existing = _put(tmp_path / "config.toml", LF_FILE)
+    with pytest.raises(InvalidNameError):
+        set_user_name(existing, bad)
+    assert _get(existing) == LF_FILE
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["config.toml"]  # no temp file left
+
+
+def test_should_strip_and_accept_a_name_of_exactly_the_maximum_length() -> None:
+    assert clean_name("  " + "é" * 40 + "\n") == "é" * 40
+    with pytest.raises(InvalidNameError):
+        clean_name("é" * 41)
+
+
+def test_should_refuse_to_edit_a_file_that_is_not_valid_toml(tmp_path: Path) -> None:
+    original = "this is not = valid toml"
+    path = _put(tmp_path / "config.toml", original)
+    with pytest.raises(InvalidNameError):
+        set_user_name(path, "Alice")
+    with pytest.raises(InvalidNameError):
+        set_user_name(path, None)
+    assert _get(path) == original
+
+
+def test_should_restore_the_original_when_the_edit_would_corrupt_the_file(tmp_path: Path) -> None:
+    original = '[user]\nname = """\nmulti\nline"""\n'  # valid TOML, but not a one-line value
+    path = _put(tmp_path / "config.toml", original)
+    with pytest.raises(InvalidNameError):
+        set_user_name(path, "Alice")
+    assert _get(path) == original
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["config.toml"]
+
+
+def test_should_refuse_when_user_is_defined_in_a_form_it_cannot_edit(tmp_path: Path) -> None:
+    original = 'user = { name = "Old" }\n'
+    path = _put(tmp_path / "config.toml", original)
+    with pytest.raises(InvalidNameError):
+        set_user_name(path, "Alice")
+    assert _get(path) == original
