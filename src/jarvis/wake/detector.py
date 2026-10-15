@@ -110,7 +110,18 @@ class WakeDetector:
         self._hot = hot
         self._replay = _replay_frames(self._backends.n_features)
         self._primed = self._prime()
+        self._check_fits()
         self.reset()
+
+    def _check_fits(self) -> None:
+        """Raise if the classifier's n_features plus look-back exceeds the buffer capacity."""
+        limit = min(len(self._primed), _FEATURE_MAX_ROWS)
+        needed = self._backends.n_features + _LOOK_BACK
+        if needed > limit:
+            raise ValueError(
+                f"n_features={self._backends.n_features} + look-back {_LOOK_BACK} = {needed} "
+                f"exceeds buffer limit {limit}"
+            )
 
     def _prime(self) -> npt.NDArray[np.float32]:
         """Generate the initial feature buffer from 4 s of seeded random noise."""

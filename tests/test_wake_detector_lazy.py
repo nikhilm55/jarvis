@@ -194,7 +194,7 @@ def test_should_score_every_frame_when_hot_is_none() -> None:
     assert backends.mel_calls - mel_before == 5
 
 
-@pytest.mark.parametrize("n_features", [8, 16, 32, 40])
+@pytest.mark.parametrize("n_features", [8, 16, 32, 39])
 def test_should_match_an_always_hot_detector_when_the_classifier_reads_more_rows(
     n_features: int,
 ) -> None:
