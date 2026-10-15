@@ -113,7 +113,7 @@ def test_should_time_out_when_released_reply_window_expires() -> None:
         assert w.hold_if_open(time.monotonic())
         await asyncio.sleep(0.1)
         w.release()
-        assert await task == "timeout"
+        assert await task is None
 
     asyncio.run(scenario())
 

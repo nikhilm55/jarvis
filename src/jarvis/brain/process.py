@@ -11,6 +11,7 @@ from typing import Any, Self
 
 from jarvis.brain.failures import BrainUnavailable
 from jarvis.brain.launch import LaunchSpec
+from jarvis.brain.stderr_log import open_stderr_log
 from jarvis.log import get_logger
 
 __all__ = ["ClaudeProcess", "Sink"]
@@ -19,6 +20,15 @@ Sink = Callable[[dict[str, Any] | None], None]
 
 _LINE_LIMIT = 8 * 1024 * 1024
 _TERM_GRACE_S = 2.0
+
+
+def _open_stderr() -> int | None:
+    """The brain's stderr log (FR-LOG-05); no log is better than no brain, so failure is None."""
+    try:
+        return open_stderr_log()
+    except OSError:
+        get_logger("brain").warning("brain stderr log unavailable", exc_info=True)
+        return None
 
 
 class ClaudeProcess:
@@ -35,6 +45,7 @@ class ClaudeProcess:
     @classmethod
     async def spawn(cls, spec: LaunchSpec, sink: Sink) -> Self:
         """Start the claude process in its own session and wrap it."""
+        stderr_fd = _open_stderr()
         try:
             proc = await asyncio.create_subprocess_exec(
                 *spec.argv,
@@ -42,7 +53,7 @@ class ClaudeProcess:
                 env=spec.env,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL if stderr_fd is None else stderr_fd,
                 start_new_session=True,
                 limit=_LINE_LIMIT,
             )
@@ -51,6 +62,9 @@ class ClaudeProcess:
                 f"Claude Code could not be started ({exc.strerror or exc})",
                 ["Check that the claude command runs in a terminal, then ask again."],
             ) from exc
+        finally:
+            if stderr_fd is not None:
+                os.close(stderr_fd)  # the child holds its own copy
         return cls(proc, sink)
 
     @property

@@ -97,7 +97,7 @@ def test_should_return_user_answer_when_on_ask_is_answered(tmp_path: Path) -> No
     asyncio.run(scenario())
 
 
-def test_should_return_timeout_when_on_ask_expires(tmp_path: Path) -> None:
+def test_should_tell_the_brain_nobody_replied_when_on_ask_expires(tmp_path: Path) -> None:
     async def scenario() -> None:
         async def script(on_say: OnSay, on_ask: OnAsk) -> FinalResponse:
             answer = await on_ask("Which one?", ["first", "second"])
@@ -111,7 +111,7 @@ def test_should_return_timeout_when_on_ask_expires(tmp_path: Path) -> None:
             await task
         finally:
             task.cancel()
-        assert rig.speaker.said[-1] == "Got timeout."
+        assert rig.speaker.said[-1] == "Got (no reply from the user within 0.02 seconds)."
 
     asyncio.run(scenario())
 
@@ -153,5 +153,24 @@ def test_should_record_tool_calls_from_trace_when_brain_uses_tools(tmp_path: Pat
         assert record["tool_calls"] == [
             {"tool": "desktop.open_app", "args": {"query": "calculator"}}
         ]
+
+    asyncio.run(scenario())
+
+
+def test_should_pass_a_spoken_timeout_to_the_brain_as_the_users_answer(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        async def script(on_say: OnSay, on_ask: OnAsk) -> FinalResponse:
+            answer = await on_ask("Which mode?", [])
+            return FinalResponse(status="success", spoken=f"Got {answer}.")
+
+        rig = make_rig(tmp_path, brain=FakeBrain(script=script))
+        task = asyncio.create_task(rig.runner.run(command("pick", None)))
+        try:
+            await until(lambda: rig.windows.kind == "reply")
+            assert rig.windows.offer_answer("timeout") is True
+            await task
+        finally:
+            task.cancel()
+        assert rig.speaker.said[-1] == "Got timeout."
 
     asyncio.run(scenario())

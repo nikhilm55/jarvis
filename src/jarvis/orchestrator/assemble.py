@@ -1,11 +1,11 @@
 """Builds the real components for `jarvis run`; the only place that knows the concrete classes."""
 
 import asyncio
-import functools
 import os
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from jarvis import models
 from jarvis.audio import AudioSource, Endpointer, SileroVad
@@ -14,6 +14,7 @@ from jarvis.config import Settings
 from jarvis.desktop.client import DesktopClient
 from jarvis.mcp import JarvisMcpServer
 from jarvis.orchestrator.components import Components
+from jarvis.orchestrator.lifeline import parent_death_preexec
 from jarvis.orchestrator.ports import ServicePort
 from jarvis.orchestrator.segmenter import Segmenter
 from jarvis.orchestrator.timing import Timing
@@ -27,13 +28,24 @@ from jarvis.wake import WakeDetector
 
 __all__ = ["build_components"]
 
-# whisper-server in its own process group, so a Ctrl-C aimed at Jarvis does not hit it first
-# and our own close() is what ends it (R30). Windows has no process groups to join.
-_POPEN = (
-    functools.partial(subprocess.Popen, start_new_session=True)
-    if os.name == "posix"
-    else subprocess.Popen
-)
+
+def _popen(cmd: list[str], **kwargs: Any) -> subprocess.Popen[bytes]:
+    """Spawn whisper-server in its own session, to die with us (R30).
+
+    A Ctrl-C aimed at Jarvis must not hit it first, so our own close() is what ends it. But a
+    terminal close or SIGKILL skips close(), so the kernel also SIGTERMs it when we die.
+    """
+    # The preexec is one prctl call and a getpid check, safe to run from a worker thread.
+    return subprocess.Popen(  # noqa: S603
+        cmd,
+        start_new_session=True,
+        preexec_fn=parent_death_preexec(),  # noqa: PLW1509
+        **kwargs,
+    )
+
+
+# Windows has no process groups to join and no parent-death signal.
+_POPEN: Callable[..., subprocess.Popen[bytes]] = _popen if os.name == "posix" else subprocess.Popen
 
 
 async def build_components(

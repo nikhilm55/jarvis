@@ -35,6 +35,24 @@ def test_should_run_the_answer_as_a_new_turn_with_the_pending_question(tmp_path:
     assert second.context.pending_question == "Which one?"
 
 
+def test_should_run_a_spoken_timeout_as_a_new_turn_when_it_answers_the_follow_up(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        brain = FakeBrain(finals=[ASK, DONE])
+        rig = make_rig(tmp_path, brain)
+        task = asyncio.create_task(rig.runner.run(command("open it", None)))
+        try:
+            await until(lambda: rig.windows.kind == "reply")
+            assert rig.windows.offer_answer("timeout") is True
+            await asyncio.wait_for(task, 5)
+        finally:
+            task.cancel()
+        assert [e.command for e in brain.envelopes] == ["open it", "timeout"]
+
+    asyncio.run(scenario())
+
+
 def test_should_go_idle_when_nobody_answers_the_follow_up(tmp_path: Path) -> None:
     brain = FakeBrain(finals=[ASK])
     rig = make_rig(tmp_path, brain, Timing(reply_window_s=0.02, deaf_tail_s=0.0))

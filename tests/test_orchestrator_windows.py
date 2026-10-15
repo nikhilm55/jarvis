@@ -120,24 +120,24 @@ def test_should_return_answer_when_ask_offered() -> None:
     asyncio.run(scenario())
 
 
-def test_should_return_timeout_when_ask_expires() -> None:
+def test_should_return_no_answer_when_ask_expires() -> None:
     async def scenario() -> None:
         windows = Windows()
         result = await windows.ask(0.02)
-        assert result == "timeout"
+        assert result is None
         assert windows.kind is None
 
     asyncio.run(scenario())
 
 
-def test_should_return_timeout_when_close_while_ask_pending() -> None:
+def test_should_return_no_answer_when_close_while_ask_pending() -> None:
     async def scenario() -> None:
         windows = Windows()
         task = asyncio.create_task(windows.ask(5))
         await asyncio.sleep(0)
         windows.close()
         result = await task
-        assert result == "timeout"
+        assert result is None
 
     asyncio.run(scenario())
 
@@ -158,14 +158,14 @@ def test_should_not_fire_callback_when_close_cancels_listen() -> None:
     asyncio.run(scenario())
 
 
-def test_should_return_timeout_when_listen_replaces_ask() -> None:
+def test_should_return_no_answer_when_listen_replaces_ask() -> None:
     async def scenario() -> None:
         windows = Windows()
         task = asyncio.create_task(windows.ask(5))
         await asyncio.sleep(0)
         windows.open_listen(5, noop)
         result = await task
-        assert result == "timeout"
+        assert result is None
         assert windows.kind == "listen"
         windows.close()
 

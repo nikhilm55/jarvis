@@ -16,6 +16,7 @@ from mcp.server import Server, ServerRequestContext
 from mcp.server.transport_security import TransportSecuritySettings
 
 from jarvis import policy
+from jarvis.brain.failures import ToolError
 from jarvis.log import get_logger, redact
 from jarvis.mcp.config_file import write_private_json
 from jarvis.mcp.guard import GuardMiddleware
@@ -195,6 +196,11 @@ class JarvisMcpServer:
             return _error(decision.reason)
         try:
             text = _render(await self._dispatch(tool.policy_name, args))
+        except ToolError as exc:  # the normal repair flow (bad argument, step limit), not a fault
+            self._log.warning(
+                "tool refused: %s", redact(str(exc)), extra={"tool": tool.policy_name}
+            )
+            return _error(redact(str(exc)))
         except Exception as exc:
             self._log.exception("tool dispatch failed", extra={"tool": tool.policy_name})
             return _error(f"tool error: {type(exc).__name__}: {redact(str(exc))}")

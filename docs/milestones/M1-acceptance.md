@@ -130,7 +130,7 @@ Smaller notes:
 - A real microphone and room: levels, noise, accents, distance, the 400 ms silence rule with real speakers.
 - Echo and self-trigger (FR-ACT-10): Jarvis's own voice is never played into the pipeline here, because the source is a file.
 - Real human voices; synthetic voices are cleaner than people.
-- Barge-in ("Jarvis, stop") while speech plays (FR-ACT-09) through the whole pipeline. Only the sink's cancel-to-silence time was measured (estimated at about 55 ms, finding F1).
+- Barge-in ("Jarvis, stop" while speech plays, FR-ACT-09) is M2: M1 is deaf while Jarvis speaks (R47), so it cannot be tried. Only the sink's cancel-to-silence time was measured (estimated at about 55 ms, finding F1).
 - The HUD window, and the custom wake model (R67): the stock `hey_jarvis` is dev-only; these cases get re-run when the custom model lands.
 - Latency percentiles; there are three runs per command.
 
@@ -158,7 +158,7 @@ Before you start:
 | 7 | "Jarvis." (pause until you hear the chime) then "open Calculator." | A chime, then Calculator opens without saying "Jarvis" again; close it by voice |
 | 8 | "I told Jarvis to open Calculator." (one sentence, no pause before "Jarvis") | Nothing happens |
 
-Also try, because Part A cannot: say "Jarvis, stop" while Jarvis is talking (it should go quiet at once), and listen for Jarvis triggering on its own voice (it must not).
+Also try, because Part A cannot: ask for something slow (for example "Jarvis, what is on my screen right now") and say "Jarvis, stop" (or "cancel") while Jarvis is still thinking or acting, before it speaks; the turn should end with a single chime and no spoken answer. Jarvis is deaf while it speaks (R47), so "stop" cannot interrupt speech until barge-in arrives in M2. Also confirm Jarvis does not trigger on its own voice: let it speak a long answer and check no new turn starts.
 
 What to observe: whether each phrase is heard (the HUD or the `[state] text` lines in the terminal show the transcript); how long after you stop speaking you hear something; whether the speakers' own voice ever starts a turn; the CPU use of `jarvis run` at idle in `top` (budget 3 % of a core).
 

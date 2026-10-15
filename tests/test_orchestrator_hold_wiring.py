@@ -64,7 +64,7 @@ def test_should_release_hold_when_empty_transcript_in_held_reply_window(tmp_path
         await asyncio.sleep(0)
         assert rig.windows.hold_if_open(time.monotonic())
         await rig.listener.handle(seg(score=0.0, silence_ms=0))
-        assert await asyncio.wait_for(task, 2) == "timeout"
+        assert await asyncio.wait_for(task, 2) is None
 
     asyncio.run(scenario())
 

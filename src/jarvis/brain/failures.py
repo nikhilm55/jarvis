@@ -1,5 +1,6 @@
 """Failed-turn responses and the BrainUnavailable error (FRS FR-BRN-10, Appendix B)."""
 
+from jarvis.brain.stderr_log import stderr_log_path
 from jarvis.contract import (
     FALLBACK_SPOKEN,
     ErrorCode,
@@ -132,7 +133,8 @@ def timeout_response(timeout_s: int) -> FinalResponse:
 def process_exit_response() -> FinalResponse:
     """The failed response when the Claude Code process died mid-turn."""
     return BrainUnavailable(
-        "the Claude Code process stopped unexpectedly", ["Ask again and I'll restart it."]
+        "the Claude Code process stopped unexpectedly",
+        ["Ask again and I'll restart it.", f"What it printed is in {stderr_log_path()}."],
     ).to_response()
 
 

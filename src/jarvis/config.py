@@ -20,11 +20,11 @@ class _Section(BaseModel):
 class AudioSettings(_Section):
     device: str | None = None
     trailing_ms: int = Field(default=700, ge=400, le=1500)
-    cap_s: int = 30
+    cap_s: int = Field(default=30, ge=2, le=300)
 
 
 class WakeSettings(_Section):
-    threshold: float = 0.005
+    threshold: float = Field(default=0.005, ge=0, le=1)
     model: str = "hey_jarvis_v0.1"
 
 
@@ -32,7 +32,7 @@ class SttSettings(_Section):
     engine: Literal["whisper-server"] = "whisper-server"
     model: str = "tiny.en"
     server_bin: str | None = None
-    threads: int = Field(default=4, ge=1)
+    threads: int = Field(default=4, ge=1, le=64)
 
 
 class TtsSettings(_Section):
@@ -44,10 +44,11 @@ class TtsSettings(_Section):
 
 
 class BrainSettings(_Section):
-    inactivity_reset_s: int = 600
+    # The MCP SDK reaps sessions idle for 30 minutes, so a longer reset would outlive the session.
+    inactivity_reset_s: int = Field(default=600, ge=30, le=1800)
     model: str = "sonnet"  # M0b measured warm Sonnet
-    max_steps: int = Field(default=25, ge=1)
-    turn_timeout_s: int = Field(default=120, ge=1)
+    max_steps: int = Field(default=25, ge=1, le=200)
+    turn_timeout_s: int = Field(default=120, ge=1, le=3600)
     claude_bin: str | None = None
     address_as: str | None = None  # how Jarvis addresses the user; None = the OS user's first name
 
@@ -58,7 +59,7 @@ class HudSettings(_Section):
 
 
 class LogSettings(_Section):
-    retention_days: int = 30
+    retention_days: int = Field(default=30, ge=1, le=3650)  # <= 0 would purge every record
 
 
 class Settings(_Section):

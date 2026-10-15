@@ -117,7 +117,7 @@ def test_should_keep_reply_window_open_when_transcript_is_empty(tmp_path: Path) 
             assert rig.speaker.said == [NOT_UNDERSTOOD]
             assert rig.windows.kind == "reply"
             rig.windows.close()
-            assert await task == "timeout"
+            assert await task is None
         finally:
             if not task.done():
                 task.cancel()
@@ -137,7 +137,7 @@ def test_should_stop_and_not_deliver_when_reply_window_text_is_stop(tmp_path: Pa
             assert rig.stops == 1
             assert rig.windows.kind == "reply"
             rig.windows.close()
-            assert await task == "timeout"
+            assert await task is None
         finally:
             if not task.done():
                 task.cancel()
