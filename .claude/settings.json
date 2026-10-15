@@ -97,6 +97,10 @@
       {
         "matcher": "Read",
         "hooks": [{ "type": "command", "command": "uv run --no-project --quiet python \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_read.py\"", "timeout": 10 }]
+      },
+      {
+        "matcher": "Agent|Task",
+        "hooks": [{ "type": "command", "command": "uv run --no-project --quiet python \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_delegation.py\"", "timeout": 10 }]
       }
     ],
     "PostToolUse": [
