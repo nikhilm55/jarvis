@@ -216,6 +216,7 @@ class Implementer:
             re.sub(r"^(?:src|scripts)/", "", p).removesuffix(".py").replace("/", ".")
             for p in self.impl
         ]
+        self.culprits: dict[str, set[str]] = {}  # test file -> names its collection error quotes
         self.path_fixed: set[str] = set()  # test files that already had their one import-path fix
         self.good = {p: c for p in self.impl if (c := self.read(p)) is not None}
         self.tampered: list[dict[str, Any]] = []
@@ -318,6 +319,7 @@ class Implementer:
         only) or, once, its own lint/mypy errors (annotations and imports only)."""
         (self.log / f"r{round_no}.checks.txt").write_text(report, encoding="utf-8")
         unlock = hc.collection_errors(report, self.modules) | lint
+        self.culprits = {t: hc.collection_culprits(report, t) for t in unlock}
         for i, rel in enumerate(self.impl + [t for t in self.tests if t in unlock]):
             routed = hc.errors_for_file(report, rel)
             if not routed and not self.notes.get(rel):
@@ -354,8 +356,9 @@ class Implementer:
             else:
                 extend, ann = round_no == 0 and rel in self.existing, rel in lint
                 mods = [] if rel in self.path_fixed else self.modules
+                rename = (mods, self.culprits.get(rel, set()))
                 problems = hc.lock_violations(
-                    old, new, extend=extend, annotations=ann, modules=mods
+                    old, new, extend=extend, annotations=ann, rename=rename
                 )
                 if not problems:
                     if mods and hc.lock_violations(old, new, extend=extend, annotations=ann):
@@ -380,12 +383,13 @@ class Implementer:
             if not problems:
                 self.good[rel] = new
                 continue
+            if any(e["file"] == rel and e["problems"] == problems for e in self.tampered):
+                continue  # already reported; a new file with no good content is kept as it is
             if rel in self.good:
                 (self.repo / rel).write_text(self.good[rel], encoding="utf-8")
-            else:
-                (self.repo / rel).unlink()
             self.tampered.append({"round": round_no, "file": rel, "problems": problems})
-            self.notes.setdefault(rel, []).append("reverted: " + "; ".join(problems))
+            fate = "reverted" if rel in self.good else "kept for the finisher"
+            self.notes.setdefault(rel, []).append(f"{fate}: " + "; ".join(problems))
 
     def locate(self) -> None:
         """The git root and this repo's path inside it (porcelain paths are root-relative)."""
