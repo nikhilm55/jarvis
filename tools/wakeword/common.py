@@ -17,7 +17,9 @@ DATA = Path(os.environ.get("WAKEWORD_DATA", HERE / "data"))
 LOGS = DATA / "logs"
 RATE = 16_000
 FRAME = 1280  # one 80 ms hop, the product's frame size
-M0A = Path.home() / "Jarvis" / "spikes" / "M0a-wake-word" / "data"  # read-only held-out set
+M0A = Path(
+    os.environ.get("M0A_DATA", Path.home() / "Jarvis" / "spikes" / "M0a-wake-word" / "data")
+)  # read-only held-out set
 MAX_DOWNLOAD_BYTES = 2_000_000_000  # R73: stop and ask before downloading more than this
 
 

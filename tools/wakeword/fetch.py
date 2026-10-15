@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import shutil
 import sys
 import tarfile
 import urllib.request
@@ -80,28 +81,47 @@ def _ledger() -> dict[str, int]:
     return read_json(LEDGER) if LEDGER.exists() else {}
 
 
-def _download(url: str, out: Path) -> tuple[int, str]:
+class OverBudget(RuntimeError):
+    """A download passed the byte allowance before it finished; `args[0]` is the bytes received."""
+
+
+def _download(url: str, out: Path, allowance: int) -> tuple[int, str]:
+    """Download `url` to `out`, giving up (and deleting the partial file) past `allowance` bytes."""
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_suffix(out.suffix + ".part")
     md5, n = hashlib.md5(usedforsecurity=False), 0
     request = urllib.request.Request(url, headers={"User-Agent": "jarvis-wakeword-fetch/1"})  # noqa: S310
-    with urllib.request.urlopen(request, timeout=60) as resp, tmp.open("wb") as handle:  # noqa: S310
-        for block in iter(lambda: resp.read(1 << 20), b""):
-            handle.write(block)
-            md5.update(block)
-            n += len(block)
-    tmp.replace(out)
+    try:
+        with urllib.request.urlopen(request, timeout=60) as resp, tmp.open("wb") as handle:  # noqa: S310
+            for block in iter(lambda: resp.read(1 << 20), b""):
+                n += len(block)
+                if n > allowance:
+                    raise OverBudget(n)
+                handle.write(block)
+                md5.update(block)
+        tmp.replace(out)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     return n, md5.hexdigest()
 
 
 def _unpack(archive: Path, kind: str, into: Path) -> None:
-    into.mkdir(parents=True, exist_ok=True)
-    if kind == "zip":
-        with zipfile.ZipFile(archive) as zf:
-            zf.extractall(into)  # noqa: S202 — pinned archive, hash-checked above
-    else:
-        with tarfile.open(archive) as tf:
-            tf.extractall(into, filter="data")
+    """Unpack into a staging directory and rename it, so `into` exists only when the unpack finished."""
+    staging = into.with_name(into.name + ".unpacking")
+    shutil.rmtree(staging, ignore_errors=True)  # left behind by an interrupted run
+    staging.mkdir(parents=True)
+    try:
+        if kind == "zip":
+            with zipfile.ZipFile(archive) as zf:
+                zf.extractall(staging)  # noqa: S202 — pinned archive, hash-checked before this
+        else:
+            with tarfile.open(archive) as tf:
+                tf.extractall(staging, filter="data")
+        staging.rename(into)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
 
 
 def fetch(item: Item, *, trust_new: bool, keep_archives: bool) -> None:
@@ -125,7 +145,14 @@ def fetch(item: Item, *, trust_new: bool, keep_archives: bool) -> None:
             f"{item.key} has no pin in pins.py; run with --trust-new {item.key} to fetch and print one"
         )
     print(f"fetch {item.key}  {item.size / 1e6:.0f} MB  {item.url}", flush=True)
-    n, md5 = _download(item.url, target)
+    try:
+        n, md5 = _download(item.url, target, MAX_DOWNLOAD_BYTES - spent)
+    except OverBudget as over:
+        ledger[item.key] = int(over.args[0])
+        write_json(LEDGER, ledger)
+        sys.exit(
+            f"STOP: {item.key} went past the 2 GB total after {over.args[0]} B; ask the owner (R73)"
+        )
     ledger[item.key] = n
     write_json(LEDGER, ledger)
     published = MD5.get(item.key, "")
