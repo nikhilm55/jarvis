@@ -2,14 +2,15 @@
 
 Rolling note so a fresh session (human or agent) picks up instantly. Overwrite it at the end of every working session; history lives in git.
 
-**Updated:** 2026-10-14 (M1 built; owner's first live run done; track W open)
+**Updated:** 2026-10-15 (M1 merged; dev pipeline documented; track W open)
 
 DONE:
 - M0 closed; FRS v0.3; frozen UI design; AI-assisted dev setup (ADRs 0001–0011).
 - **M1 built** — `docs/plans/2026-10-07-m1-voice-loop.md`, tasks 1–13: mic → Silero VAD → openWakeWord ONNX (lazy, only while speech) → whisper-server → first-word gate → certain-only fast path or a warm, isolated headless Claude Code brain that reaches the PC only through jarvisd's MCP server → deny-by-default, fail-closed policy gate → desktop worker → Kokoro TTS → HUD (ADR-0011) → activity log.
 - Every task had a task review (and fix rounds); then a whole-branch review and one final fix wave (SIGHUP/PDEATHSIG for whisper-server, brain stderr log, ToolError logging, settings bounds, reply-window sentinel, private log files).
 - **Acceptance Part A:** 17/17 scripted runs on real components; idle CPU ≈ 2.7% of one core (budget 3%) — `docs/milestones/M1-acceptance.md`.
-- PR stack #16 → #112, then the final-fixes and M1-wrap PRs, in order. Merge in order; rebase the rest after each squash.
+- All M1 PRs merged into `main` (#15 → #114, squash, in order).
+- Dev pipeline documented: `docs/ai/dev-pipeline.md`; local-model tool `scripts/local_model.py` (endpoint from `LOCAL_LLM_URL`).
 
 NEXT:
 - **Owner:** first live-mic run done (results and findings B1–B5 at the end of `docs/milestones/M1-acceptance.md`). Still untried live: checklist 1–5, "close it", "Jarvis, stop" while thinking, self-trigger.
@@ -31,4 +32,5 @@ OPEN:
 - OQ-008 (new): may Jarvis's brain touch the user's Claude Code state files (Claude Code writes `~/.claude*` even when isolated)?
 - OQ-004 licences now also cover espeak-ng (via Kokoro) and the stock wake model (dev-only).
 - OQ-001…006 unchanged; none blocks M2 planning.
-- Process: implementation tasks run "plan → Qwen implements (local model, Claude-free loop) → Sonnet finishes and checks → review"; see `docs/ai/workflow.md` §Orchestrated work.
+- Process: implementation tasks run "plan → local model implements (Claude-free loop) → Sonnet finishes → review"; see `docs/ai/dev-pipeline.md`.
+- Dependabot PRs #115–#121 are open (ruff, onnxruntime, pydantic, platformdirs, setup-uv, CodeQL); check each before merging, onnxruntime first.

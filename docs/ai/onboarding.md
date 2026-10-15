@@ -41,5 +41,6 @@ Put personal preferences in `CLAUDE.local.md` or `.claude/settings.local.json`. 
 ## 5. Where to learn more
 
 - `docs/ai/workflow.md`: the loop, model choice, context budgets
+- `docs/ai/dev-pipeline.md`: how milestones are built (orchestrator, local model, reviewers)
 - `docs/ai/policy.md`: data classes, approvals, attribution
 - FiftyFive AI Academy: https://ai-assisted-learning.z89.ownkube.app/
