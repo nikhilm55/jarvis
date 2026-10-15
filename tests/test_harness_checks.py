@@ -100,9 +100,37 @@ def test_should_accept_markers_without_the_space_or_with_another_length() -> Non
     assert hc.parse_edits(loose + short + tiny) == [hc.Edit("a\n", "b\n"), hc.Edit("c\n", "d\n")]
 
 
-def test_should_ignore_an_unterminated_block() -> None:
-    assert hc.parse_edits("<<<<<<< SEARCH\na\n=======\nb\n") == []
-    assert hc.parse_edits("<<<<<<< SEARCH\na\n") == []
+def test_should_report_an_unterminated_block_as_an_error_edit() -> None:
+    for reply in ("<<<<<<< SEARCH\na\n=======\nb\n", "<<<<<<< SEARCH\na\n"):
+        [edit] = hc.parse_edits(reply)
+        assert hc.apply_edits("a\n", [edit]) == ("a\n", ["edit 1: unterminated block"])
+
+
+def test_should_not_write_markers_into_the_file_when_a_broken_block_precedes_a_good_one() -> None:
+    reply = "<<<<<<< SEARCH\na\n=======\nb\n" + block("c\n", "d\n")
+    edits = hc.parse_edits(reply)
+    new, errors = hc.apply_edits("a\nc\n", edits)
+    assert (new, len(errors)) == ("a\nd\n", 1)
+    assert "marker" in errors[0]
+
+
+def test_should_reject_a_block_with_a_second_divider_such_as_a_setext_underline() -> None:
+    reply = block("Title\n=======\nbody\n", "Title\n=======\nnew\n")
+    new, errors = hc.apply_edits("Title\n=======\nbody\n", hc.parse_edits(reply))
+    assert (new, errors) == (
+        "Title\n=======\nbody\n",
+        ["edit 1: SEARCH or REPLACE contains a marker line"],
+    )
+
+
+def test_should_parse_a_crlf_reply() -> None:
+    reply = block("a\nb\n", "c\n").replace("\n", "\r\n")
+    assert hc.parse_edits(reply) == [hc.Edit("a\nb\n", "c\n")]
+
+
+def test_should_reject_a_block_with_no_divider() -> None:
+    [edit] = hc.parse_edits("<<<<<<< SEARCH\na\n>>>>>>> REPLACE\n")
+    assert hc.apply_edits("a\n", [edit])[1] == ["edit 1: no ======= between SEARCH and REPLACE"]
 
 
 def test_should_apply_edits_in_order_on_the_running_content() -> None:

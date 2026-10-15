@@ -25,6 +25,7 @@ summary.json. See harness/README.md.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -158,9 +159,22 @@ def json_values(text: str) -> Iterator[Any]:
             continue
 
 
-def valid_plan(value: Any) -> bool:
-    shape = {"files": dict, "tests": list}
-    return isinstance(value, dict) and all(isinstance(value.get(k), t) for k, t in shape.items())
+def canonical(repo: Path, rel: str) -> str:
+    """`./a/../b.py`, an absolute path inside the repo and `b.py` all become `b.py`."""
+    return Path(os.path.relpath((repo / rel).resolve(), repo)).as_posix()
+
+
+def is_test(rel: str) -> bool:
+    path = Path(rel)
+    return "tests" in path.parts[:-1] or path.name.startswith("test_") or path.name == "conftest.py"
+
+
+def valid_plan(value: Any, write: list[str]) -> bool:
+    """A plan names every file to write and maps requirements to at least one test."""
+    if not isinstance(value, dict) or not isinstance(value.get("files"), dict):
+        return False
+    named = {Path(os.path.normpath(k)).as_posix() for k in value["files"]}
+    return set(write) <= named and isinstance(value.get("tests"), list) and bool(value["tests"])
 
 
 class Implementer:
@@ -175,7 +189,7 @@ class Implementer:
         self.context = "\n\n".join(
             f"### {p} (read-only, existing)\n```python\n{self.current(p)}```" for p in opts.read
         )
-        self.tests = [p for p in opts.write if p.startswith("tests/")]
+        self.tests = [p for p in opts.write if is_test(p)]
         self.impl = [p for p in opts.write if p not in self.tests]
         self.order = self.tests + self.impl
         self.existing = {p for p in opts.write if (self.repo / p).exists()}
@@ -192,7 +206,8 @@ class Implementer:
         self.disputes: list[dict[str, str]] = []
         self.notes: dict[str, list[str]] = {}
         self.weakened: list[dict[str, Any]] = []
-        self.dirty: set[str] = set()
+        self.dirty: dict[str, str] = {}  # dirty before the run -> content hash
+        self.top, self.prefix = self.repo, ""
         self.stray: list[str] = []
 
     def read(self, rel: str) -> str | None:
@@ -226,7 +241,9 @@ class Implementer:
         prompt = f"{self.brief()}\n\n## Files to write\n" + "\n".join(self.opts.write)
         for attempt in (1, 2):
             reply = self.call(PLAN_FORMAT, prompt, f"plan-{attempt}")
-            self.plan = next((v for v in json_values(reply) if valid_plan(v)), None)
+            self.plan = next(
+                (v for v in json_values(reply) if valid_plan(v, self.opts.write)), None
+            )
             if self.plan:
                 (self.log / "plan.json").write_text(json.dumps(self.plan, indent=2), "utf-8")
                 return
@@ -318,18 +335,35 @@ class Implementer:
             why = "; ".join(problems)
             self.notes.setdefault(rel, []).append(f"reverted, the tests are locked: {why}")
 
-    def porcelain(self) -> str:
-        code, out = run(["git", "status", "--porcelain", "--untracked-files=all"], self.repo)
+    def locate(self) -> None:
+        """The git root and this repo's path inside it (porcelain paths are root-relative)."""
+        code, out = run(["git", "rev-parse", "--show-toplevel", "--show-prefix"], self.repo)
         if code:
             raise LocalModelError(f"--repo must be a git repository:\n{trim(out, 5)}")
-        return out
+        top, _, prefix = out.partition("\n")
+        self.top, self.prefix = Path(top), prefix.strip()
+
+    def plan_tests(self) -> list[dict[str, Any]]:
+        tests = (self.plan or {}).get("tests", [])
+        return [t for t in tests if isinstance(t, dict)]
+
+    def porcelain(self) -> str:
+        return run(["git", "status", "--porcelain", "--untracked-files=all"], self.repo)[1]
+
+    def digest(self, path: str) -> str:
+        file = self.top / path
+        return hashlib.sha256(file.read_bytes()).hexdigest() if file.is_file() else ""
 
     def out_of_scope(self) -> bool:
-        log = os.path.relpath(self.log.resolve(), self.repo).replace(os.sep, "/")
-        self.stray = hc.scope_violations(
-            self.porcelain(), set(self.opts.write), self.dirty, (f"{log}/",)
+        """Only the manifest may change. A file that was already dirty may not change further."""
+        log = os.path.relpath(self.log.resolve(), self.top).replace(os.sep, "/")
+        allowed = {self.prefix + w for w in self.opts.write}
+        stray = hc.scope_violations(self.porcelain(), allowed, set(self.dirty), (f"{log}/",))
+        stray += sorted(
+            p for p, h in self.dirty.items() if p not in allowed and self.digest(p) != h
         )
-        return bool(self.stray)
+        self.stray = stray
+        return bool(stray)
 
     def iterate(self) -> tuple[str, int, str]:
         """Round 0 then fix rounds. Returns (status, fix rounds, last failing report)."""
@@ -381,9 +415,12 @@ class Implementer:
 
     def run(self) -> int:
         start = time.time()
-        self.dirty = hc.porcelain_paths(self.porcelain())
+        self.locate()
+        self.dirty = {p: self.digest(p) for p in hc.porcelain_paths(self.porcelain())}
         self.make_plan()
         self.draft()
+        planned = {str(t.get("test")).rsplit("::", 1)[-1] for t in self.plan_tests()}
+        written = set().union(*(hc.test_names(self.read(t) or "") for t in self.tests))
         status, rounds, report = self.iterate()
         if status == "stalled" and self.disputes:
             status = "test_disputed"
@@ -391,6 +428,8 @@ class Implementer:
             status = "test_weakened"
         review, reviewed = self.review() if status == "green" else ([], False)
         missing = [str(i.get("requirement")) for i in review if i["status"] == "missing"]
+        needed = max(1, len({str(t.get("requirement")) for t in self.plan_tests()}))
+        complete = reviewed and len(review) >= needed
         summary = {
             "status": status,
             "plan": self.plan is not None,
@@ -402,6 +441,8 @@ class Implementer:
             "rounds": rounds,
             "review_missing": missing,
             "reviewed": reviewed,
+            "review_complete": complete,
+            "plan_tests_missing": sorted(planned - written),
             "scope_violations": self.stray,
             "minutes": round((time.time() - start) / 60, 1),
             "files": self.opts.write,
@@ -411,7 +452,7 @@ class Implementer:
         print(json.dumps({k: v for k, v in summary.items() if k != "remaining"}))
         if report:
             print(trim(report, 40))
-        return 0 if status == "green" and not missing else 1
+        return 0 if status == "green" and not missing and complete else 1
 
 
 def parse(argv: list[str]) -> argparse.Namespace:
@@ -453,6 +494,7 @@ def main(argv: list[str]) -> int:
         if outside:
             print(f"refusing to write outside the repo: {outside}", file=sys.stderr)
             return 2
+        opts.write = list(dict.fromkeys(canonical(repo, f) for f in opts.write))
         opts.log_dir.mkdir(parents=True, exist_ok=True)
         return Implementer(opts).run()
     except LocalModelError as exc:
