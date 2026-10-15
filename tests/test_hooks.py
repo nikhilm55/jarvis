@@ -300,3 +300,53 @@ def test_should_wire_the_delegation_guard_in_settings() -> None:
     command = entries[0]["hooks"][0]["command"]
     assert command.startswith("uv run --no-project --quiet python ")
     assert "guard_delegation.py" in command
+
+
+def render(**bodies: str) -> str:
+    """A brief with every section; `Done_when` stands for the `Done when` heading."""
+    full = dict.fromkeys(("Goal", "Context", "Constraints", "Done_when", "Report"), "real content")
+    full.update(bodies)
+    return "".join(f"## {name.replace('_', ' ')}\n{body}\n\n" for name, body in full.items())
+
+
+NO_CONTENT = "## Goal\n## Context\n## Constraints\n## Done when\n## Report\n"
+FENCED = "```\n" + BRIEF + "```\n"
+COMMENTED = "<!--\n" + BRIEF + "-->\nplease do the thing\n"
+INDENTED = "".join(f"    {line}\n" for line in BRIEF.splitlines())
+
+
+@pytest.mark.parametrize(
+    ("prompt", "problem"),
+    [
+        (NO_CONTENT, "no real content: Goal, Context, Constraints, Done when, Report"),
+        (FENCED, "Missing section(s): Goal, Context, Constraints, Done when, Report"),
+        (FENCED.rstrip("`\n"), "Missing section(s): Goal"),  # a fence that never closes
+        (COMMENTED, "Missing section(s): Goal, Context"),
+        (COMMENTED.replace("-->\n", ""), "Missing section(s): Goal"),  # a comment never closed
+        (INDENTED, "Missing section(s): Goal"),
+        (BRIEF.replace("## Goal\nx", "Goal: TBD"), "no real content: Goal"),
+        (render(Goal="TODO"), "no real content: Goal"),
+        (render(Context="..."), "no real content: Context"),
+        (render(Constraints="…"), "no real content: Constraints"),
+        (render(Done_when="- [ ]"), "no real content: Done when"),
+        (render(Report="<what to report>"), "no real content: Report"),
+        (render(Goal="\n\n", Report="N/A"), "no real content: Goal, Report"),
+    ],
+)
+def test_should_block_a_brief_with_empty_hidden_indented_or_placeholder_sections(
+    prompt: str, problem: str
+) -> None:
+    out = delegate(prompt)
+    assert decision(out) == "deny"
+    assert problem in reason(out)
+
+
+def test_should_allow_sections_whose_content_is_code_or_follows_a_label() -> None:
+    fenced = render(Context="```python\ndef f() -> int: ...\n```", Goal="")
+    assert decision(delegate(fenced.replace("## Goal\n\n", "**Goal:** make f work\n"))) == "allow"
+    assert decision(delegate(render(Done_when="- [ ] tests pass"))) == "allow"
+
+
+def test_should_check_a_fork_dispatch_like_any_other() -> None:
+    assert decision(delegate("do it", subagent_type="fork")) == "deny"
+    assert decision(delegate(BRIEF, subagent_type="fork")) == "allow"
