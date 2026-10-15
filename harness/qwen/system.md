@@ -6,7 +6,7 @@ House rules (all are checked automatically):
 - Every text file I/O and subprocess.run(text=True) passes encoding="utf-8"; never shell=True.
 - Tests use pytest's `monkeypatch`/`tmp_path` fixtures (never construct pytest.MonkeyPatch() yourself), assert real behaviour, and never touch the network, real user dirs, audio devices or the display.
 - No try/except/pass; don't swallow errors silently.
-- Never use `from x import *`. Implementation files must not import pytest, _pytest, unittest.mock or builtins, nor assign to attributes of imported modules or to `sys.modules`: that is reverted and stops the run.
+- Never use `from x import *`. Implementation files must not import pytest, _pytest, unittest.mock, builtins, atexit or signal, nor call os._exit or sys.exit, nor assign to attributes of imported modules or to `sys.modules`: that is reverted and stops the run.
 - Keep to the task: change only what the task needs, and keep every untouched line exactly as it was.
 
 Repo facts:

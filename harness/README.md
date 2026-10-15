@@ -37,6 +37,14 @@
 - **The local model loop** enforces plan → tests first → test lock → scope check → stall stop → self-review in code, and writes the result to `summary.json`. Its `status` is one of `green`, `red`, `stalled`, `scope_violation`, `test_weakened`, `sensor_tamper` (an implementation file imported pytest or unittest.mock, or assigned into an imported module: reverted), `test_error` (a test file's own lint/mypy error survived its one fix round) or `test_disputed` (stalled with a `TEST-DISPUTE:` line from the model: the test itself may be wrong, so a finisher decides).
 - **Reviewers** check the brief's requirement map against the tests and fail a task whose tests were weakened, whose scope grew, or whose CI is red.
 
+## Limits
+
+What the loop's sensors guarantee, and what they do not.
+
+- **The test lock is the hard guarantee.** A locked test file is compared as an AST; a weakened, skipped, reordered or rebound test is restored, and the run ends `test_weakened`.
+- **The implementation tamper rule is a deterrent, not a sandbox.** It catches accidental or lazy tampering (importing pytest, patching `_pytest`, `os._exit`, `sys.modules` stores). It is a denylist, so a deliberate escape (an aliased `import_module`, `getattr` tricks, `sys._getframe`, `gc`) can get past it. Where such an escape changes the result, the pytest-summary check catches it: pytest counts as green only when its last line reports `N passed`, nothing failed, and N is at least the number of locked tests. The rest is for the finisher and the task review.
+- **Appended round-0 tests can still mutate shared state** (through calls or aliases) in a test file that already existed. Reviewers check the new tests in existing files.
+
 ## Files
 
 | File | What |
