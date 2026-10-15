@@ -12,7 +12,6 @@ import re
 from collections import Counter
 from collections.abc import Collection
 from dataclasses import dataclass
-from pathlib import Path
 from typing import ClassVar
 
 MARKS = ("skip", "skipif", "xfail")
@@ -145,8 +144,13 @@ TRICKS = (
 )
 
 
-def _stores_into(tree: ast.AST, names: set[str]) -> bool:
-    """Does the code assign to (or delete) an attribute or item of one of `names`?"""
+ALLOWED_STORES = re.compile(r"os\.environ\b|sys\.(?:stdout|stderr|stdin)\b|logging\.")
+
+
+def _stores(tree: ast.AST, names: set[str], allowed: bool = False) -> list[str]:
+    """Each assignment to (or deletion of) an attribute or item of one of `names`, as source text
+    such as `sys.modules['x']`. `allowed` skips os.environ, sys.stdout/stderr/stdin and logging."""
+    found: list[str] = []
     for n in ast.walk(tree):
         if isinstance(n, ast.Assign):
             targets = n.targets
@@ -156,13 +160,18 @@ def _stores_into(tree: ast.AST, names: set[str]) -> bool:
             targets = n.targets
         else:
             continue
-        for sub in (s for t in targets for s in ast.walk(t)):
-            root = sub
-            while isinstance(root, (ast.Attribute, ast.Subscript)):
-                root = root.value
-            if root is not sub and isinstance(root, ast.Name) and root.id in names:
-                return True
-    return False
+        for target in targets:
+            for sub in ast.walk(target):
+                root = sub
+                while isinstance(root, (ast.Attribute, ast.Subscript)):
+                    root = root.value
+                text = ast.unparse(sub)
+                if root is sub or not isinstance(root, ast.Name) or root.id not in names:
+                    continue
+                if not (allowed and ALLOWED_STORES.match(text)):
+                    found.append(text)
+                break
+    return found
 
 
 def _mark_ok(dec: ast.expr) -> bool:
@@ -194,16 +203,23 @@ def _is_new_test(node: ast.stmt, names: set[str]) -> bool:
         and not any(
             isinstance(n, ast.Attribute) and n.attr in ("modules", "__dict__") for n in inside
         )
-        and not _stores_into(node, names | {"sys", "builtins"})
+        and not _stores(node, names | {"sys", "builtins"})
     )
 
 
-def _renamed(old: frozenset[Binding], new: frozenset[Binding], modules: Collection[str]) -> bool:
-    """A from-import whose module path was corrected to a manifest module, names unchanged."""
+def _renamed(
+    old: frozenset[Binding],
+    new: frozenset[Binding],
+    modules: Collection[str],
+    culprits: Collection[str],
+) -> bool:
+    """A from-import whose module path was corrected to a manifest module, names unchanged, and
+    only the statement the collection error named (`culprits`: its module or an imported name)."""
     if not new or any(level != 0 for level, _, _ in (*old, *new)):
         return False
+    named = any(mod in culprits or name in culprits for _, mod, name in old)
     inside = all(any(mod == m or mod.endswith("." + m) for m in modules) for _, mod, _ in new)
-    return inside and {n for _, _, n in old} == {n for _, _, n in new}
+    return named and inside and {n for _, _, n in old} == {n for _, _, n in new}
 
 
 def lock_violations(
@@ -212,7 +228,7 @@ def lock_violations(
     *,
     extend: bool = False,
     annotations: bool = False,
-    modules: Collection[str] = (),
+    rename: tuple[Collection[str], Collection[str]] = ((), ()),
 ) -> list[str]:
     """Why `new` may not replace the locked test file; [] when it may.
 
@@ -220,7 +236,8 @@ def lock_violations(
     helper, patch or early return can change. `extend` also allows new tests appended after the
     last locked statement (see `_is_new_test`); `annotations` ignores type annotations (a lint/mypy
     fix). Imports may change, but never rebind a name the locked file already imports (except to
-    correct a module path to one of `modules`, the implementation), and `import *` is never allowed.
+    correct a module path to a manifest module, in the one statement the collection error names:
+    `rename` is (manifest modules, names the error quotes)), and `import *` is never allowed.
     """
     try:
         old_tree, new_tree = ast.parse(locked), ast.parse(new)
@@ -249,7 +266,7 @@ def lock_violations(
     elif kept != [ast.dump(prep(n)) for n in _statements(old_tree)]:
         problems.append("locked statements were reordered")
     if any(
-        after.get(b) != v and not _renamed(v, after.get(b, frozenset()), modules)
+        after.get(b) != v and not _renamed(v, after.get(b, frozenset()), *rename)
         for b, v in before.items()
     ):
         problems.append("an import the test file already had was removed or rebound")
@@ -263,10 +280,15 @@ def lock_violations(
     return problems
 
 
+TAMPER_MODULES = ("pytest", "_pytest", "builtins", "atexit", "signal")
+
+
 def tamper_violations(source: str) -> list[str]:
-    """How an implementation file reaches the test machinery: it must not import pytest, _pytest,
-    unittest.mock or builtins, dynamic-import or exec, or assign into an imported module,
-    `sys.modules` or `builtins` (e.g. `_pytest.python.Function.runtest = ...`)."""
+    """A cheap deterrent, not a sandbox: how an implementation file reaches the test machinery.
+    Each message names its exact target, so one kind can never hide another. Flagged: importing
+    pytest, _pytest, unittest.mock, builtins, atexit or signal; os._exit and sys.exit; dynamic
+    import, exec and eval; assigning into an imported module, `sys.modules` or `builtins`
+    (os.environ, sys.stdout/stderr/stdin and logging are fine)."""
     try:
         tree = ast.parse(source)
     except SyntaxError:
@@ -278,20 +300,85 @@ def tamper_violations(source: str) -> list[str]:
         if isinstance(n, ast.Import):
             found = [(a.name, a.asname or a.name.split(".")[0]) for a in n.names]
         elif isinstance(n, ast.ImportFrom):
-            found = [(f"{n.module or ''}.{a.name}", a.asname or a.name) for a in n.names]
+            found = [(f"{n.module or ''}.{a.name}".strip("."), a.asname or a.name) for a in n.names]
         for full, name in found:
             bound.add(name)
-            if full.split(".")[0] in ("pytest", "_pytest", "builtins") or full.startswith(
-                "unittest.mock"
+            if (
+                full.split(".")[0] in TAMPER_MODULES
+                or full.startswith("unittest.mock")
+                or full in ("os._exit", "sys.exit")
             ):
-                problems.append(f"imports {full.strip('.')}")
+                problems.append(f"imports {full}")
         if isinstance(n, ast.Call):
             called = getattr(n.func, "id", getattr(n.func, "attr", ""))
             if called in ("__import__", "import_module", "exec", "eval"):
                 problems.append(f"calls {called}()")
-    if _stores_into(tree, bound):
-        problems.append("assigns into an imported module, sys.modules or builtins")
+        if isinstance(n, ast.Attribute) and ast.unparse(n) in ("os._exit", "sys.exit"):
+            problems.append(f"uses {ast.unparse(n)}")
+    problems += [f"stores into {t}" for t in _stores(tree, bound, allowed=True)]
     return sorted(set(problems))
+
+
+CLEAN_MSG = "pytest did not report a clean summary"
+
+
+def pytest_clean(output: str, minimum: int = 0) -> bool:
+    """Is pytest's last line a summary like `5 passed in 0.1s`, with nothing failed or in error
+    and at least `minimum` passed? The exit code alone can be forged (atexit, os._exit)."""
+    lines = output.strip().splitlines()
+    last = lines[-1] if lines else ""
+    if not re.search(r" in [\d.]+s\b", last):
+        return False
+    counts = {word: int(n) for n, word in re.findall(r"(\d+) (\w+)", last)}
+    broken = counts.get("failed", 0) + counts.get("error", 0) + counts.get("errors", 0)
+    return counts.get("passed", 0) >= max(minimum, 1) and not broken
+
+
+def collectable_tests(source: str) -> int:
+    """A lower bound on what pytest collects: top-level `test*` functions and the methods of
+    `Test*` classes, less the skip markers (parametrize can only add to it)."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return 0
+    funcs = (ast.FunctionDef, ast.AsyncFunctionDef)
+
+    def tests(body: list[ast.stmt]) -> int:
+        return sum(isinstance(n, funcs) and n.name.startswith("test") for n in body)
+
+    classes = [
+        c.body for c in tree.body if isinstance(c, ast.ClassDef) and c.name.startswith("Test")
+    ]
+    stats = test_stats(source)
+    return max(0, tests(tree.body) + sum(tests(b) for b in classes) - (stats.skips if stats else 0))
+
+
+def req_number(text: str) -> str | None:
+    """`1`, `requirement 2`, `R3.` -> the number; None when the text has none."""
+    m = re.match(r"\D*(\d+)", text)
+    return m.group(1) if m else None
+
+
+def plan_distinct(pairs: list[tuple[str, str]], required: list[str]) -> bool:
+    """Plan (requirement, test) pairs: with two or more requirements, each must have a test
+    that is not the one test named for every requirement."""
+    by: dict[str, set[str]] = {}
+    for req, test in pairs:
+        if (n := req_number(req)) is not None:
+            by.setdefault(n, set()).add(test)
+    reqs = [r for r in (required or sorted(by)) if r in by]
+    if len(reqs) < 2:
+        return True
+    common = set.intersection(*(by[r] for r in reqs))
+    return all(by[r] - common for r in reqs)
+
+
+def review_covers(reviewed: list[str], required: list[str], plan_requirements: int) -> bool:
+    """Do the review's items cover every numbered brief requirement (distinct numbers), or, with
+    no numbered requirements, at least as many distinct items as the plan has requirements?"""
+    if required:
+        return set(required) <= {n for r in reviewed if (n := req_number(r)) is not None}
+    return len(set(reviewed)) >= max(1, plan_requirements)
 
 
 def brief_requirements(spec: str) -> list[str]:
@@ -417,7 +504,8 @@ def errors_for_file(report: str, rel: str) -> dict[str, str]:
         kept = [
             line
             for line in body.splitlines()
-            if rel in line or (summary and line.startswith(("FAILED ", "ERROR ")))
+            if rel in line
+            or (summary and (line.startswith(("FAILED ", "ERROR ")) or CLEAN_MSG in line))
         ]
         if kept:
             routed[key] = "\n".join(kept)
@@ -428,27 +516,37 @@ def _quoted_modules(message: str) -> list[str]:
     return re.findall(r"'([\w.]+)'", message)
 
 
+def _collect_blocks(report: str) -> dict[str, tuple[list[str], str, str]]:
+    """Each `ERROR collecting <file>` block: its traceback frames' files, error type, message."""
+    blocks = re.split(r"^_{3,} ERROR collecting (\S+) _{3,}$", report, flags=re.M)
+    found = {}
+    for rel, raw in zip(blocks[1::2], blocks[2::2], strict=True):
+        body = re.split(r"^(?:_{3,} |={3,} )", raw, flags=re.M)[0]
+        error = re.findall(r"^E\s+(\w*(?:Error|Exception)): (.*)$", body, re.M)
+        kind, message = error[-1] if error else ("", "")
+        found[rel] = (re.findall(r"^(\S+?):\d+: in ", body, re.M), kind, message)
+    return found
+
+
 def collection_errors(report: str, modules: Collection[str] = ()) -> set[str]:
     """Test files whose own import is at fault. A file whose collection failed because an
     implementation module (`modules`, e.g. `jarvis.new`) lacks a name or is missing is not
     returned: the implementation must change, never the locked test."""
     found: set[str] = set()
-    blocks = re.split(r"^_{3,} ERROR collecting (\S+) _{3,}$", report, flags=re.M)
-    for rel, raw in zip(blocks[1::2], blocks[2::2], strict=True):
-        body = re.split(r"^(?:_{3,} |={3,} )", raw, flags=re.M)[0]
-        frames = re.findall(r"^(\S+?):\d+: in ", body, re.M)
-        error = re.findall(r"^E\s+(\w*(?:Error|Exception)): (.*)$", body, re.M)
-        kind, message = error[-1] if error else ("", "")
+    for rel, (frames, kind, message) in _collect_blocks(report).items():
         ours = any(
             m == mod or m.endswith("." + mod) for m in _quoted_modules(message) for mod in modules
         )
         if kind in ("ImportError", "ModuleNotFoundError") and ours:
             continue
-        if (frames and frames[-1].endswith(rel)) or (
-            kind in ("SyntaxError", "IndentationError") and Path(rel).name in body
-        ):
+        if (frames and frames[-1].endswith(rel)) or kind in ("SyntaxError", "IndentationError"):
             found.add(rel)
     return found
+
+
+def collection_culprits(report: str, rel: str) -> set[str]:
+    """The names a collection error quotes for `rel` (e.g. the missing module `jarvis.helpres`)."""
+    return set(_quoted_modules(_collect_blocks(report).get(rel, ([], "", ""))[2]))
 
 
 def only_test_errors(report: str, tests: Collection[str]) -> set[str]:

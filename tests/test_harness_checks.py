@@ -431,13 +431,32 @@ def test_should_allow_a_new_test_with_pytest_marks_and_count_a_skipif_as_a_skip(
 def test_should_allow_a_module_path_fix_only_to_a_manifest_module_with_the_same_names() -> None:
     typo = LOCKED.replace("from jarvis.new import f", "from jarvis.helpres import f")
     fixed = typo.replace("helpres", "helpers")
+    rename = (["helpers"], ["jarvis.helpres"])
     assert hc.lock_violations(typo, fixed)
-    assert hc.lock_violations(typo, fixed, modules=["jarvis.helpers"]) == []
-    assert hc.lock_violations(typo, fixed, modules=["helpers"]) == []
+    assert hc.lock_violations(typo, fixed, rename=rename) == []
+    assert hc.lock_violations(typo, fixed, rename=(["jarvis.helpers"], ["jarvis.helpres"])) == []
     elsewhere = typo.replace("jarvis.helpres import f", "os.path import f")
     other_name = typo.replace("jarvis.helpres import f", "jarvis.helpers import g")
     for bad in (elsewhere, other_name):
-        assert hc.lock_violations(typo, bad, modules=["jarvis.helpers"])
+        assert hc.lock_violations(typo, bad, rename=rename)
+
+
+def test_should_allow_the_path_fix_only_in_the_statement_the_collection_error_names() -> None:
+    both = "from jarvis.policy import allowed\n" + LOCKED.replace("jarvis.new", "jarvis.helpres")
+    redirect = both.replace("from jarvis.policy import", "from jarvis.new import")
+    fixed = both.replace("helpres", "helpers")
+    rename = (["helpers", "new"], ["jarvis.helpres"])
+    assert hc.lock_violations(both, fixed, rename=rename) == []
+    assert hc.lock_violations(both, redirect, rename=rename)
+    assert hc.lock_violations(both, fixed, rename=(["helpers"], []))
+
+
+def test_should_read_the_names_a_collection_error_quotes() -> None:
+    report = collect_block(
+        "tests/test_b.py", IMPORT_FRAME, "ModuleNotFoundError: No module named 'jarvis.helpres'"
+    )
+    assert hc.collection_culprits(report, "tests/test_b.py") == {"jarvis.helpres"}
+    assert hc.collection_culprits(report, "tests/other.py") == set()
 
 
 def pytest_outcome(tmp_path: Path, test_source: str) -> int:
@@ -486,6 +505,11 @@ TAMPERING = {
     "assigns into an imported module": "import os\n\nos.sep = '!'\n",
     "dynamic import": "m = __import__('pytest')\n",
     "exec": "exec('x = 1')\n",
+    "registers an atexit hook": "import atexit\n\natexit.register(print)\n",
+    "imports signal": "import signal\n",
+    "calls os._exit": "import os\n\nos._exit(0)\n",
+    "imports os._exit": "from os import _exit\n",
+    "calls sys.exit": "import sys\n\nsys.exit(0)\n",
 }
 
 
@@ -506,3 +530,93 @@ def test_should_list_the_numbered_requirements_under_the_requirements_heading() 
     spec = "## Goal\n1. no\n## Requirements\n1. one\n 2. two\ntext\n10. ten\n## Limits\n3. no\n"
     assert hc.brief_requirements(spec) == ["1", "2", "10"]
     assert hc.brief_requirements("# Task\n1. x\n") == []
+
+
+def test_should_allow_the_stores_ordinary_code_makes_and_name_every_target() -> None:
+    fine = (
+        "import logging\nimport os\nimport sys\n\nos.environ['X'] = '1'\nsys.stdout = sys.stderr\n"
+        "logging.root.level = 10\ndel os.environ['X']\n"
+    )
+    assert hc.tamper_violations(fine) == []
+    assert hc.tamper_violations("import sys\n\nsys.modules['x'] = None\n") == [
+        "stores into sys.modules['x']"
+    ]
+    two = "import os\nimport sys\n\nsys.modules['x'] = 1\nos.sep = '!'\n"
+    assert hc.tamper_violations(two) == ["stores into os.sep", "stores into sys.modules['x']"]
+
+
+def test_should_not_let_an_old_finding_hide_a_new_kind() -> None:
+    old = "import os\nimport sys\n\nos.environ['X'] = '1'\nsys.exit(1)\n"
+    new = old + "sys.modules['x'] = None\n"
+    known = hc.tamper_violations(old)
+    assert [p for p in hc.tamper_violations(new) if p not in known] == [
+        "stores into sys.modules['x']"
+    ]
+
+
+SUMMARIES = {
+    "5 passed in 0.12s": (True, 5),
+    "5 passed, 1 skipped, 2 warnings in 1.50s": (True, 5),
+    "1 failed, 4 passed in 0.30s": (False, 5),
+    "5 passed, 1 error in 0.30s": (False, 5),
+    "1 failed in 0.01s": (False, 1),
+    "2 passed in 0.01s": (False, 3),  # fewer than the locked tests
+    "no tests ran in 0.01s": (False, 1),
+    "5 passed": (False, 5),
+    "": (False, 0),
+}
+
+
+@pytest.mark.parametrize("last", SUMMARIES)
+def test_should_accept_only_a_clean_final_summary_line(last: str) -> None:
+    clean, minimum = SUMMARIES[last]
+    assert hc.pytest_clean(f"..F\nsome output\n{last}\n", minimum) is clean
+
+
+def test_should_not_take_a_summary_from_the_middle_of_the_output() -> None:
+    assert not hc.pytest_clean("5 passed in 0.1s\nsomething printed after pytest\n", 1)
+
+
+def test_should_route_the_unclean_summary_note_to_every_file() -> None:
+    report = f"PYTEST:\n{hc.CLEAN_MSG} (exit 0, last line: '')\n"
+    assert hc.CLEAN_MSG in hc.errors_for_file(report, "src/any.py")["PYTEST"]
+
+
+def test_should_count_a_lower_bound_of_collectable_tests() -> None:
+    source = (
+        "import pytest\n\n\ndef test_a(): pass\n\n\n@pytest.mark.skip\ndef test_b(): pass\n\n\n"
+        "class TestX:\n    def test_c(self): pass\n\n    def helper(self): pass\n\n\n"
+        "class Other:\n    def test_d(self): pass\n\n\ndef test_e():\n    def test_inner(): pass\n"
+    )
+    assert hc.collectable_tests(source) == 3
+    assert hc.collectable_tests("def test_a(:") == 0
+
+
+@pytest.mark.parametrize(
+    ("pairs", "required", "distinct"),
+    [
+        ([("1", "test_a"), ("2", "test_a")], ["1", "2"], False),
+        ([("1", "test_a"), ("2", "test_b")], ["1", "2"], True),
+        ([("1", "test_a"), ("1", "test_b"), ("2", "test_a")], ["1", "2"], False),
+        ([("1", "test_a"), ("1", "test_b"), ("2", "test_a"), ("2", "test_c")], ["1", "2"], True),
+        ([("1", "test_a"), ("1", "test_b"), ("2", "test_a"), ("2", "test_b")], ["1", "2"], False),
+        ([("1", "test_a"), ("2", "test_a")], [], False),
+        ([("1", "test_a")], ["1"], True),
+    ],
+)
+def test_should_require_a_test_that_is_not_the_one_named_for_every_requirement(
+    pairs: list[tuple[str, str]], required: list[str], distinct: bool
+) -> None:
+    assert hc.plan_distinct(pairs, required) is distinct
+
+
+@pytest.mark.parametrize(
+    ("reviewed", "covers"),
+    [(["1", "2"], True), (["2", "1", "2"], True), (["1", "1", "1"], False), (["1"], False)],
+)
+def test_should_count_review_items_by_distinct_requirement_number(
+    reviewed: list[str], covers: bool
+) -> None:
+    assert hc.review_covers(reviewed, ["1", "2"], 2) is covers
+    assert hc.review_covers(["a", "a"], [], 2) is False
+    assert hc.review_covers(["a", "b"], [], 2) is True

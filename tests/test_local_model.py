@@ -273,6 +273,15 @@ def test_should_blame_the_implementation_when_it_lacks_a_name_the_test_imports(
     assert (code, summary["weakening_events"]) == (0, [])
 
 
+def missing_name(name: str, n: int = 0) -> str:
+    bad = f"ImportError: cannot import name '{name}' from 'jarvis.nowhere'"
+    return broken(n).replace("ModuleNotFoundError: No module named 'src'", bad)
+
+
+def missing(module: str, n: int = 0) -> str:
+    return broken(n).replace("No module named 'src'", f"No module named '{module}'")
+
+
 TYPO = "from jarvis.helpres import f\n\n\ndef test_a() -> None:\n    assert f() == 1\n"
 
 
@@ -282,7 +291,11 @@ def test_should_allow_one_import_path_fix_to_a_manifest_module_and_no_second_one
     fixed = TYPO.replace("helpres", "helpers")
     again = TYPO.replace("helpres", "other")
     model = FakeModel({"tests/test_new.py": [fenced(TYPO), fenced(fixed), fenced(again)]})
-    checks = FakeChecks((False, broken(1)), (False, broken(2)), (False, broken(3)))
+    checks = FakeChecks(
+        (False, missing("jarvis.helpres", 1)),
+        (False, missing_name("f", 2)),
+        (False, missing_name("f", 3)),
+    )
     write = ["tests/test_new.py", "src/helpers.py", "src/other.py"]
     _, summary, _ = implement(repo, monkeypatch, model, checks, write=write, rounds=2)
     assert (repo / "tests" / "test_new.py").read_text(encoding="utf-8") == fixed
@@ -290,6 +303,20 @@ def test_should_allow_one_import_path_fix_to_a_manifest_module_and_no_second_one
         (2, "tests/test_new.py")
     ]
     assert "rebound" in summary["weakening_events"][0]["problems"][0]
+
+
+def test_should_not_let_the_path_fix_redirect_an_import_the_error_did_not_name(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    both = "from jarvis.policy import allowed\n" + TYPO
+    redirect = both.replace("jarvis.policy", "jarvis.new").replace("helpres", "helpers")
+    model = FakeModel({"tests/test_new.py": [fenced(both), fenced(redirect)]})
+    checks = FakeChecks((False, missing("jarvis.helpres", 1)), (True, ""))
+    write = ["tests/test_new.py", "src/helpers.py", "src/new.py"]
+    code, summary, _ = implement(repo, monkeypatch, model, checks, write=write)
+    assert (repo / "tests" / "test_new.py").read_text(encoding="utf-8") == both
+    assert [e["round"] for e in summary["weakening_events"]] == [1]
+    assert (code, summary["status"]) == (1, "test_weakened")
 
 
 ASSERT_TRUE = "def test_a() -> None:\n    assert True\n    assert 2\n"
@@ -725,12 +752,13 @@ def test_should_restore_a_test_file_that_is_tampered_with_during_the_final_check
 DISARM = "import _pytest.python as p\n\np.Function.runtest = lambda self: None\n"
 
 
-def test_should_remove_a_new_implementation_file_that_imports_pytest_and_stop_as_sensor_tamper(
+def test_should_keep_a_new_implementation_file_that_imports_pytest_and_stop_as_sensor_tamper(
     repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    model = FakeModel({"src/new.py": fenced("import pytest\n" + IMPL_SRC)})
+    bad = "import pytest\n" + IMPL_SRC
+    model = FakeModel({"src/new.py": fenced(bad)})
     code, summary, _ = implement(repo, monkeypatch, model, FakeChecks((True, "")))
-    assert not (repo / "src" / "new.py").exists()
+    assert (repo / "src" / "new.py").read_text(encoding="utf-8") == bad
     assert [(e["round"], e["file"]) for e in summary["tamper_events"]] == [(0, "src/new.py")]
     assert (code, summary["status"]) == (1, "sensor_tamper")
 
@@ -754,4 +782,21 @@ def test_should_restore_an_existing_implementation_file_to_its_pre_run_content(
         repo, monkeypatch, model, FakeChecks((True, "")), write=["src/old.py"]
     )
     assert (repo / "src" / "old.py").read_text(encoding="utf-8") == "A = 1\nB = 2\n"
+    assert (code, summary["status"]) == (1, "sensor_tamper")
+
+
+def test_should_not_let_an_old_tamper_finding_hide_a_new_kind(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (repo / "src" / "old.py").write_text("import sys\n\nsys.exit(1)\n", encoding="utf-8")
+    edit = (
+        "<<<<<<< SEARCH\nsys.exit(1)\n=======\nsys.exit(1)\nsys.modules['x'] = None\n"
+        ">>>>>>> REPLACE\n"
+    )
+    model = FakeModel({"src/old.py": edit})
+    code, summary, _ = implement(
+        repo, monkeypatch, model, FakeChecks((True, "")), write=["src/old.py"]
+    )
+    [event] = summary["tamper_events"]
+    assert event["problems"] == ["stores into sys.modules['x']"]
     assert (code, summary["status"]) == (1, "sensor_tamper")
