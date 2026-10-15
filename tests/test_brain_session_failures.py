@@ -49,6 +49,9 @@ def test_should_time_out_and_restart_when_a_turn_hangs(
         assert first.error is not None
         assert first.error.code == "TIMEOUT"
         assert process_gone(pid1)
+        # The 1 s budget only detects the hang. The restarted turn also pays for a cold claude
+        # start (~1 s on a Windows runner, so a 1 s clock timed it out ~10% of the time).
+        rig.settings.turn_timeout_s = 60
         assert (await rig.turn(turn_id="t2")).status == "success"
         assert len(fake.spawns()) == 2
         assert rig.brain.pid != pid1

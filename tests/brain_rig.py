@@ -73,6 +73,7 @@ class Rig:
     brain: ClaudeCodeBrain
     desktop: FakeDesktop
     cb: Callbacks
+    settings: BrainSettings
 
     async def turn(self, command: str = "open calculator", turn_id: str = "t1") -> FinalResponse:
         """Run one brain turn."""
@@ -82,7 +83,8 @@ class Rig:
 @asynccontextmanager
 async def running_brain(fake: FakeClaude, **brain: Any) -> AsyncIterator[Rig]:
     """Yield a running brain rig, cleaning up on exit."""
-    settings = Settings(brain=BrainSettings(**{"claude_bin": fake.bin, **brain}))
+    brain_settings = BrainSettings(**{"claude_bin": fake.bin, **brain})
+    settings = Settings(brain=brain_settings)
     desktop = FakeDesktop()
     holder: list[ClaudeCodeBrain] = []
 
@@ -94,7 +96,7 @@ async def running_brain(fake: FakeClaude, **brain: Any) -> AsyncIterator[Rig]:
     brain_obj = ClaudeCodeBrain(settings, server, desktop, extra_env=fake_env())
     holder.append(brain_obj)
     try:
-        yield Rig(brain=brain_obj, desktop=desktop, cb=Callbacks())
+        yield Rig(brain=brain_obj, desktop=desktop, cb=Callbacks(), settings=brain_settings)
     finally:
         await brain_obj.close()
         await server.close()
