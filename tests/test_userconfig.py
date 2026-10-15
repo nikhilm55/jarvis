@@ -1,5 +1,7 @@
 """Tests for jarvis.userconfig: edit one `name` line, touch nothing else."""
 
+import os
+import sys
 import tomllib
 from pathlib import Path
 
@@ -145,7 +147,12 @@ def test_should_round_trip_tricky_names_through_tomllib(
     assert tomllib.loads(_get(replaced))["user"]["name"] == stored
 
 
-@pytest.mark.parametrize("bad", ["", "   ", "a" * 41, "a\nb", "a\tb", "a\x7fb", "a\rb"])
+# control, lone surrogate (argv can carry one), bidi/zero-width, and line separators
+BAD_NAMES = ["", "   ", "a" * 41, "a\nb", "a\tb", "a\x7fb", "a\rb", "a\udcffb", "a\u202eb"]
+BAD_NAMES += ["a\u200bb", "a\u2028b", "a\u2029b", "\ufeffAna"]
+
+
+@pytest.mark.parametrize("bad", BAD_NAMES)
 def test_should_reject_bad_names_without_creating_or_changing_the_file(
     tmp_path: Path, bad: str
 ) -> None:
@@ -186,9 +193,103 @@ def test_should_restore_the_original_when_the_edit_would_corrupt_the_file(tmp_pa
     assert sorted(p.name for p in tmp_path.iterdir()) == ["config.toml"]
 
 
-def test_should_refuse_when_user_is_defined_in_a_form_it_cannot_edit(tmp_path: Path) -> None:
-    original = 'user = { name = "Old" }\n'
+UNEDITABLE = [
+    '[ user ]\nname = "Old"\n',
+    '["user"]\nname = "Old"\n',
+    '[user]\n"name" = "Old"\n',
+    'user = { name = "Old" }\n',
+    'user.name = "Old"\n',
+    '[user]\nnote = """\nname = x\nkeep\n"""\nname = "Old"\n',  # a "name =" line inside a string
+]
+
+
+@pytest.mark.parametrize("original", UNEDITABLE)
+@pytest.mark.parametrize("new", ["Alice", None])
+def test_should_refuse_with_a_remedy_when_user_is_written_in_a_form_it_cannot_edit(
+    tmp_path: Path, original: str, new: str | None
+) -> None:
     path = _put(tmp_path / "config.toml", original)
-    with pytest.raises(InvalidNameError):
+    with pytest.raises(InvalidNameError, match=r"can't edit safely.*plain `\[user\]` header"):
+        set_user_name(path, new)
+    assert _get(path) == original
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["config.toml"]
+
+
+def test_should_not_delete_a_name_looking_line_inside_a_multiline_string(tmp_path: Path) -> None:
+    original = '[user]\nnote = """\nname = x\nkeep\n"""\n'
+    path = _put(tmp_path / "config.toml", original)
+    set_user_name(path, None)  # there is no name to remove: nothing to do, nothing lost
+    assert _get(path) == original
+    with pytest.raises(InvalidNameError):  # setting would overwrite the line in the string
         set_user_name(path, "Alice")
     assert _get(path) == original
+
+
+def test_should_refuse_a_file_that_is_not_utf8_with_a_remedy(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_bytes(b'[user]\nname = "\xff"\n')
+    with pytest.raises(InvalidNameError, match=r"not valid UTF-8.*save"):
+        set_user_name(path, "Alice")
+    assert path.read_bytes() == b'[user]\nname = "\xff"\n'
+
+
+def test_should_leave_no_temp_file_and_keep_the_original_when_the_write_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _put(tmp_path / "config.toml", LF_FILE)
+
+    def boom(*_args: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "replace", boom)
+    with pytest.raises(OSError, match="disk full"):
+        set_user_name(path, "New")
+    assert _get(path) == LF_FILE
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["config.toml"]
+
+
+def test_should_not_use_or_clobber_a_fixed_temp_file_name(tmp_path: Path) -> None:
+    path = _put(tmp_path / "config.toml", LF_FILE)
+    bystander = _put(tmp_path / "config.toml.tmp", "someone else's file")
+    set_user_name(path, "New")
+    assert _get(bystander) == "someone else's file"
+    assert _get(path) == LF_FILE.replace("Old", "New")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["config.toml", "config.toml.tmp"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
+def test_should_keep_the_file_mode_of_an_existing_config(tmp_path: Path) -> None:
+    path = _put(tmp_path / "config.toml", LF_FILE)
+    path.chmod(0o600)
+    set_user_name(path, "New")
+    assert path.stat().st_mode & 0o777 == 0o600
+    path.chmod(0o640)
+    set_user_name(path, None)
+    assert path.stat().st_mode & 0o777 == 0o640
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")
+def test_should_update_the_target_of_a_symlinked_config_and_keep_the_link(tmp_path: Path) -> None:
+    (tmp_path / "dotfiles").mkdir()
+    target = _put(tmp_path / "dotfiles" / "config.toml", LF_FILE)
+    link = tmp_path / "config.toml"
+    link.symlink_to(target)
+    set_user_name(link, "New")
+    assert link.is_symlink()
+    assert _get(target) == LF_FILE.replace("Old", "New")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["config.toml", "dotfiles"]
+    assert sorted(p.name for p in target.parent.iterdir()) == ["config.toml"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")
+def test_should_create_through_a_dangling_symlink(tmp_path: Path) -> None:
+    link = tmp_path / "config.toml"
+    link.symlink_to(tmp_path / "elsewhere" / "real.toml")
+    set_user_name(link, "New")
+    assert link.is_symlink()
+    assert _get(tmp_path / "elsewhere" / "real.toml") == '[user]\nname = "New"\n'
+
+
+def test_should_accept_the_joiners_that_some_names_need() -> None:
+    name = "नमस्ते" + chr(0x200C) + "जी"  # ZWNJ is part of how some Indic and Persian names are spelt
+    assert clean_name(name) == name
