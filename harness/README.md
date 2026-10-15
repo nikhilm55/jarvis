@@ -15,7 +15,7 @@
 
 1. **Brief** ([`brief.md`](brief.md)). Written by whoever delegates. It has to say what "done" means before any code exists: the goal, the spec references, exact interfaces, the file manifest, the verify commands, the limits, and what's out of scope. A vague brief is the most common reason a good model produces bad work.
 2. **Plan first.** The worker restates the task, lists the files and public signatures it will produce, and maps **every requirement in the brief to a named test**. For the local model this is a separate planning call; its output feeds every later prompt.
-3. **Tests first, then lock them.** Tests are written from the brief before the implementation. After that, fix rounds may change implementation files only. A test file may change only when the test itself is broken (it won't import or collect), and the number of tests and asserts may never drop. This blocks the classic failure: "fixing" a red test by weakening it.
+3. **Tests first, then lock them.** Tests are written from the brief before the implementation. After that, fix rounds may change implementation files only. A test file may change only when the test itself is broken: its own import fails (imports only), or once for its own lint/mypy errors (annotations and imports only). A test that fails because the implementation lacks a name is the implementation's problem. Every other top-level statement of a locked test file stays identical (compared as an AST), so no assert can be softened, skipped or moved. This blocks the classic failure: "fixing" a red test by weakening it.
 4. **Small edits.** New files are written whole. Existing files are changed with exact search/replace blocks, never rewritten from memory, so untouched code stays untouched.
 5. **Sensors after every step.** Format, lint, type-check, test, scope check. Success is silent; failures go back verbatim (trimmed to the relevant file). If the same failure repeats twice, the worker stops and escalates instead of thrashing.
 6. **Separate generation from evaluation.** Once green, a fresh context reviews the diff against the brief and the review checklist. Self-grading in the same context skews positive.
@@ -34,7 +34,7 @@
 ## Enforcement
 
 - **Delegation hook.** `.claude/hooks/guard_delegation.py` (PreToolUse on the subagent tool) rejects a dispatch whose prompt lacks the brief's required sections: `Goal`, `Context`, `Constraints`, `Done when`, `Report`. Read-only search agents are exempt.
-- **The local model loop** enforces plan → tests first → test lock → scope check → stall stop → self-review in code, and writes the result to `summary.json`.
+- **The local model loop** enforces plan → tests first → test lock → scope check → stall stop → self-review in code, and writes the result to `summary.json`. Its `status` is one of `green`, `red`, `stalled`, `scope_violation`, `test_weakened`, `test_error` (a test file's own lint/mypy error survived its one fix round) or `test_disputed` (stalled with a `TEST-DISPUTE:` line from the model: the test itself may be wrong, so a finisher decides).
 - **Reviewers** check the brief's requirement map against the tests and fail a task whose tests were weakened, whose scope grew, or whose CI is red.
 
 ## Files

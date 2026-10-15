@@ -218,12 +218,37 @@ def broken(n: int = 0) -> str:
     )
 
 
-def test_should_fix_a_test_file_once_per_round_when_it_fails_to_collect(
+NO_NAME = (
+    "PYTEST:\n___ ERROR collecting tests/test_new.py ___\ntests/test_new.py:1: in <module>\n"
+    "    from jarvis.new import g\nE   ImportError: cannot import name 'g' from 'jarvis.new'\n"
+    "=== short test summary info ===\nERROR tests/test_new.py - ImportError: cannot import name 'g'"
+)
+LINT = "MYPY:\ntests/test_new.py:3: error: bad  [misc]"
+
+
+def test_should_fix_a_test_file_when_its_own_import_fails_to_collect(
     repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     model = FakeModel()
     implement(repo, monkeypatch, model, FakeChecks((False, broken()), (True, "")))
-    assert len(model.prompts("tests/test_new.py")) == 2
+    [_, fix] = model.prompts("tests/test_new.py")
+    assert "only the import lines" in fix
+
+
+def test_should_blame_the_implementation_when_it_lacks_a_name_the_test_imports(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model = FakeModel(
+        {"tests/test_new.py": [fenced(TEST_SRC), fenced("def test_a():\n    assert True\n")]}
+    )
+    code, summary, _ = implement(repo, monkeypatch, model, FakeChecks((False, NO_NAME), (True, "")))
+    assert len(model.prompts("tests/test_new.py")) == 1
+    assert "cannot import name 'g'" in model.prompts("src/new.py")[1]
+    assert (repo / "tests" / "test_new.py").read_text(encoding="utf-8") == TEST_SRC
+    assert (code, summary["weakening_events"]) == (0, [])
+
+
+ASSERT_TRUE = "def test_a() -> None:\n    assert True\n    assert 2\n"
 
 
 @pytest.mark.parametrize(
@@ -231,23 +256,99 @@ def test_should_fix_a_test_file_once_per_round_when_it_fails_to_collect(
     [
         ("def test_a() -> None:\n    assert 1\n", "asserts"),
         ("import pytest\n\n\n@pytest.mark.skip\n" + TEST_SRC, "skip"),
+        (ASSERT_TRUE, "locked statement"),
+        ("def test_a(:\n", "does not parse"),
     ],
 )
 def test_should_restore_a_test_file_that_got_weaker_and_report_it(
     repo: Path, monkeypatch: pytest.MonkeyPatch, weaker: str, word: str
 ) -> None:
     model = FakeModel({"tests/test_new.py": [fenced(TEST_SRC), fenced(weaker)]})
-    checks = FakeChecks((False, broken(1)), (False, broken(2)))
-    code, summary, _ = implement(repo, monkeypatch, model, checks, rounds=1)
+    checks = FakeChecks((False, broken(1)), (True, ""))
+    code, summary, _ = implement(repo, monkeypatch, model, checks)
     assert (repo / "tests" / "test_new.py").read_text(encoding="utf-8") == TEST_SRC
     [event] = summary["weakening_events"]
-    assert (event["file"], event["round"], word in event["problems"][0]) == (
-        "tests/test_new.py",
-        1,
-        True,
-    )
+    assert (event["file"], event["round"]) == ("tests/test_new.py", 1)
+    assert any(word in problem for problem in event["problems"])
     assert summary["tests_locked_counts"]["tests/test_new.py"]["asserts"] == 2
     assert (code, summary["status"]) == (1, "test_weakened")
+
+
+def test_should_restore_the_last_locked_content_and_prefer_test_weakened_to_stalled(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    weak = [fenced(ASSERT_TRUE), fenced("def test_a() -> None:\n    assert 2\n")]
+    model = FakeModel({"tests/test_new.py": [fenced(TEST_SRC), *weak]})
+    code, summary, _ = implement(repo, monkeypatch, model, FakeChecks((False, broken())))
+    assert (repo / "tests" / "test_new.py").read_text(encoding="utf-8") == TEST_SRC
+    assert [e["round"] for e in summary["weakening_events"]] == [1]
+    assert (code, summary["status"]) == (1, "test_weakened")
+
+
+def test_should_hold_an_existing_test_file_to_its_pre_run_content_in_round_0(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    old = "def test_x() -> None:\n    assert 1\n\n\ndef test_y() -> None:\n    assert 2\n"
+    (repo / "tests" / "test_old.py").write_text(old, encoding="utf-8")
+    drop = "<<<<<<< SEARCH\n\n\ndef test_y() -> None:\n    assert 2\n=======\n>>>>>>> REPLACE\n"
+    model = FakeModel({"tests/test_old.py": drop})
+    code, summary, _ = implement(
+        repo, monkeypatch, model, FakeChecks((True, "")), write=["tests/test_old.py"]
+    )
+    assert (repo / "tests" / "test_old.py").read_text(encoding="utf-8") == old
+    assert [e["round"] for e in summary["weakening_events"]] == [0]
+    assert (code, summary["status"]) == (1, "test_weakened")
+
+
+def test_should_let_an_existing_test_file_gain_a_new_test_in_round_0(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (repo / "tests" / "test_old.py").write_text(TEST_SRC, encoding="utf-8")
+    more = (
+        "<<<<<<< SEARCH\n    assert 2\n=======\n    assert 2\n\n\n"
+        "def test_b() -> None:\n    assert 3\n>>>>>>> REPLACE\n"
+    )
+    model = FakeModel({"tests/test_old.py": more})
+    code, summary, _ = implement(
+        repo, monkeypatch, model, FakeChecks((True, "")), write=["tests/test_old.py"]
+    )
+    assert "def test_b" in (repo / "tests" / "test_old.py").read_text(encoding="utf-8")
+    assert (code, summary["weakening_events"]) == (0, [])
+
+
+def test_should_give_a_test_file_one_lint_round_that_may_only_change_annotations(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    untyped = TEST_SRC.replace(" -> None", "")
+    model = FakeModel({"tests/test_new.py": [fenced(TEST_SRC), fenced(untyped)]})
+    code, summary, _ = implement(repo, monkeypatch, model, FakeChecks((False, LINT), (True, "")))
+    assert "only the type annotations and imports" in model.prompts("tests/test_new.py")[1]
+    assert (repo / "tests" / "test_new.py").read_text(encoding="utf-8") == untyped
+    assert (code, summary["weakening_events"], model.prompts("src/new.py")[1:]) == (0, [], [])
+
+
+@pytest.mark.parametrize(
+    ("reply", "status"),
+    [(TEST_SRC.replace(" -> None", " -> int"), "test_error"), (ASSERT_TRUE, "test_weakened")],
+)
+def test_should_stop_after_the_one_lint_round_whether_or_not_it_kept_the_lock(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, reply: str, status: str
+) -> None:
+    model = FakeModel({"tests/test_new.py": [fenced(TEST_SRC), fenced(reply)]})
+    code, summary, _ = implement(repo, monkeypatch, model, FakeChecks((False, LINT)))
+    assert len(model.prompts("tests/test_new.py")) == 2
+    assert (code, summary["status"], summary["rounds"]) == (1, status, 1)
+
+
+def test_should_collect_test_disputes_and_end_as_test_disputed_when_stalled(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dispute = fenced(IMPL_SRC) + "\nTEST-DISPUTE: the test expects 'supercali' for max_len=10\n"
+    model = FakeModel({"src/new.py": dispute})
+    code, summary, _ = implement(repo, monkeypatch, model, FakeChecks((False, FAILED)))
+    assert (code, summary["status"]) == (1, "test_disputed")
+    assert summary["test_disputes"][0]["file"] == "src/new.py"
+    assert "supercali" in summary["test_disputes"][0]["text"]
 
 
 def test_should_edit_an_existing_file_with_blocks_and_send_a_rejected_one_back(
