@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import ast
 import re
+from collections import Counter
+from collections.abc import Collection
 from dataclasses import dataclass
+from pathlib import Path
 from typing import ClassVar
 
 MARKS = ("skip", "skipif", "xfail")
@@ -78,6 +81,98 @@ def weakening(before: TestStats, after: TestStats) -> list[str]:
     if after.skips > before.skips:
         msgs.append(f"skips increased from {before.skips} to {after.skips}")
     return msgs
+
+
+def _statements(tree: ast.Module) -> list[ast.stmt]:
+    return [n for n in tree.body if not isinstance(n, (ast.Import, ast.ImportFrom))]
+
+
+def _defined(tree: ast.Module) -> set[str]:
+    """Names the file's non-import top-level statements define."""
+    names: set[str] = set()
+    for node in _statements(tree):
+        names |= {n.name for n in [node] if hasattr(n, "name")}
+        names |= {
+            t.id
+            for n in ast.walk(node)
+            for t in getattr(n, "targets", [])
+            if isinstance(t, ast.Name)
+        }
+    return names
+
+
+def _bindings(tree: ast.Module) -> dict[str, frozenset[object]]:
+    """What each top-level import binds, with a leading `src.` ignored."""
+    found: dict[str, set[object]] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                found.setdefault((a.asname or a.name).split(".")[0], set()).add(
+                    a.name.removeprefix("src.")
+                )
+        elif isinstance(node, ast.ImportFrom):
+            mod = (node.level, (node.module or "").removeprefix("src."))
+            for a in node.names:
+                found.setdefault(a.asname or a.name, set()).add((*mod, a.name))
+    return {k: frozenset(v) for k, v in found.items()}
+
+
+def _bare(node: ast.stmt) -> ast.stmt:
+    """The statement with every type annotation dropped."""
+    for n in ast.walk(node):
+        if isinstance(n, ast.arg):
+            n.annotation = None
+        elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            n.returns = None
+        elif isinstance(n, ast.AnnAssign):
+            n.annotation = ast.Constant(None)
+    return node
+
+
+def _is_new_test(node: ast.stmt, taken: set[str]) -> bool:
+    return (
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name.startswith("test")
+        and node.name not in taken
+        and not any("fixture" in ast.dump(d) for d in node.decorator_list)
+    )
+
+
+def lock_violations(
+    locked: str, new: str, *, extend: bool = False, annotations: bool = False
+) -> list[str]:
+    """Why `new` may not replace the locked test file; [] when it may.
+
+    Every top-level non-import statement must be identical by `ast.dump`, so no assert, decorator,
+    helper, patch or early return can change. `extend` also allows new, undecorated `test*`
+    functions (a test file that already existed); `annotations` ignores type annotations (a
+    lint/mypy fix). Imports may change, but never rebind a name the locked file already imports.
+    """
+    try:
+        old_tree, new_tree = ast.parse(locked), ast.parse(new)
+    except SyntaxError:
+        return ["the test file does not parse"]
+    prep = _bare if annotations else (lambda n: n)
+    old = Counter(ast.dump(prep(n)) for n in _statements(old_tree))
+    taken, kept, problems = _defined(old_tree), [], []
+    for node in _statements(new_tree):
+        if extend and _is_new_test(node, taken):
+            taken.add(getattr(node, "name", ""))
+        else:
+            kept.append(ast.dump(prep(node)))
+    if Counter(kept) != old:
+        problems.append(
+            f"{sum((old - Counter(kept)).values())} locked statement(s) changed or removed, "
+            f"{sum((Counter(kept) - old).values())} unexpected"
+        )
+    elif kept != [ast.dump(prep(n)) for n in _statements(old_tree)]:
+        problems.append("locked statements were reordered")
+    before, after = _bindings(old_tree), _bindings(new_tree)
+    if any(after.get(b) != v for b, v in before.items()):
+        problems.append("an import the test file already had was removed or rebound")
+    if (set(after) - set(before)) & _defined(old_tree):
+        problems.append("a new import shadows a name the tests define")
+    return problems
 
 
 @dataclass(frozen=True)
@@ -165,11 +260,57 @@ def errors_for_file(report: str, rel: str) -> dict[str, str]:
     return routed
 
 
-def collection_errors(report: str) -> set[str]:
-    """Test files whose own collection or import failed (a file-level pytest ERROR)."""
-    found = {m.group(1) for m in re.finditer(r"ERROR collecting (\S+)", report)}
-    found |= {m.group(1) for m in re.finditer(r"^ERROR (\S+\.py)(?: - .*)?$", report, re.M)}
+def _quoted_modules(message: str) -> list[str]:
+    return re.findall(r"'([\w.]+)'", message)
+
+
+def collection_errors(report: str, modules: Collection[str] = ()) -> set[str]:
+    """Test files whose own import is at fault. A file whose collection failed because an
+    implementation module (`modules`, e.g. `jarvis.new`) lacks a name or is missing is not
+    returned: the implementation must change, never the locked test."""
+    found: set[str] = set()
+    blocks = re.split(r"^_{3,} ERROR collecting (\S+) _{3,}$", report, flags=re.M)
+    for rel, raw in zip(blocks[1::2], blocks[2::2], strict=True):
+        body = re.split(r"^(?:_{3,} |={3,} )", raw, flags=re.M)[0]
+        frames = re.findall(r"^(\S+?):\d+: in ", body, re.M)
+        error = re.findall(r"^E\s+(\w*(?:Error|Exception)): (.*)$", body, re.M)
+        kind, message = error[-1] if error else ("", "")
+        ours = any(
+            m == mod or m.endswith("." + mod) for m in _quoted_modules(message) for mod in modules
+        )
+        if kind in ("ImportError", "ModuleNotFoundError") and ours:
+            continue
+        if (frames and frames[-1].endswith(rel)) or (
+            kind in ("SyntaxError", "IndentationError") and Path(rel).name in body
+        ):
+            found.add(rel)
     return found
+
+
+def only_test_errors(report: str, tests: Collection[str]) -> set[str]:
+    """Test files holding every ruff/mypy error, when those are the report's only failures."""
+    sections = split_report(report)
+    failing = re.search(r"^(?:FAILED|ERROR) ", sections.get("PYTEST", ""), re.M)
+    paths = {
+        m.group(1)
+        for key in ("RUFF", "MYPY")
+        for line in sections.get(key, "").splitlines()
+        if (m := RUFF_LINE.match(line) or MYPY_LINE.match(line))
+    }
+    return paths if paths and paths <= set(tests) and not failing else set()
+
+
+def test_names(source: str) -> set[str]:
+    """Names of every `test*` function or method in the source (empty when it does not parse)."""
+    try:
+        nodes = ast.walk(ast.parse(source))
+    except SyntaxError:
+        return set()
+    return {
+        n.name
+        for n in nodes
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name.startswith("test")
+    }
 
 
 def porcelain_paths(porcelain: str) -> set[str]:

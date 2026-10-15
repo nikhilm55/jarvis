@@ -208,12 +208,21 @@ def test_should_draft_the_tests_first_and_only_fix_implementation_files(
     assert code == 0
 
 
+def broken(n: int = 0) -> str:
+    """A pytest report where tests/test_new.py fails to import `src` (its own mistake)."""
+    return (
+        "PYTEST:\n___ ERROR collecting tests/test_new.py ___\n"
+        "tests/test_new.py:1: in <module>\n    from src.new import f\n"
+        "E   ModuleNotFoundError: No module named 'src'\n"
+        f"=== short test summary info ===\nERROR tests/test_new.py - x\nFAILED t.py::t{n}"
+    )
+
+
 def test_should_fix_a_test_file_once_per_round_when_it_fails_to_collect(
     repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    broken = "PYTEST:\nERROR collecting tests/test_new.py\nImportError: nope"
     model = FakeModel()
-    implement(repo, monkeypatch, model, FakeChecks((False, broken), (True, "")))
+    implement(repo, monkeypatch, model, FakeChecks((False, broken()), (True, "")))
     assert len(model.prompts("tests/test_new.py")) == 2
 
 
@@ -227,9 +236,8 @@ def test_should_fix_a_test_file_once_per_round_when_it_fails_to_collect(
 def test_should_restore_a_test_file_that_got_weaker_and_report_it(
     repo: Path, monkeypatch: pytest.MonkeyPatch, weaker: str, word: str
 ) -> None:
-    broken = "PYTEST:\nERROR collecting tests/test_new.py\nImportError: nope"
     model = FakeModel({"tests/test_new.py": [fenced(TEST_SRC), fenced(weaker)]})
-    checks = FakeChecks((False, broken), (False, broken + " again"))
+    checks = FakeChecks((False, broken(1)), (False, broken(2)))
     code, summary, _ = implement(repo, monkeypatch, model, checks, rounds=1)
     assert (repo / "tests" / "test_new.py").read_text(encoding="utf-8") == TEST_SRC
     [event] = summary["weakening_events"]

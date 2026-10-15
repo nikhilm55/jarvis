@@ -182,13 +182,179 @@ def test_should_route_nothing_when_no_line_mentions_the_file_and_nothing_failed(
     assert hc.errors_for_file("RUFF:\nsrc/b.py:1:1: E1 x", "src/a.py") == {}
 
 
-def test_should_find_test_files_that_fail_to_collect_but_not_failing_tests() -> None:
-    report = (
-        "___ ERROR collecting tests/test_b.py ___\nImportError\n"
-        "ERROR tests/test_b.py - ImportError: nope\nERROR tests/test_c.py::test_z - boom\n"
-        "FAILED tests/test_d.py::test_q\n"
+def collect_block(rel: str, frames: str, error: str) -> str:
+    return (
+        f"=== ERRORS ===\n___ ERROR collecting {rel} ___\nTraceback:\n{frames}\nE   {error}\n"
+        f"=== short test summary info ===\nERROR {rel} - {error}\n"
     )
-    assert hc.collection_errors(report) == {"tests/test_b.py"}
+
+
+IMPORT_FRAME = "tests/test_b.py:3: in <module>\n    from jarvis.new import g"
+
+
+@pytest.mark.parametrize(
+    ("frames", "error", "ours"),
+    [
+        (IMPORT_FRAME, "ModuleNotFoundError: No module named 'src'", True),
+        (IMPORT_FRAME, "ImportError: cannot import name 'g' from 'jarvis.new' (x.py)", False),
+        (IMPORT_FRAME, "ModuleNotFoundError: No module named 'jarvis.new'", False),
+        (
+            "src/jarvis/new.py:2: in <module>\n    import nothing",
+            "ImportError: bad 'nothing'",
+            False,
+        ),
+        ("tests/test_b.py:3: in <module>\n    x", "NameError: name 'q' is not defined", True),
+    ],
+)
+def test_should_unlock_a_test_file_only_when_its_own_import_is_at_fault(
+    frames: str, error: str, ours: bool
+) -> None:
+    found = hc.collection_errors(collect_block("tests/test_b.py", frames, error), ["jarvis.new"])
+    assert found == ({"tests/test_b.py"} if ours else set())
+
+
+def test_should_unlock_a_test_file_with_a_syntax_error_and_ignore_failing_tests() -> None:
+    syntax = 'E     File "/r/tests/test_b.py", line 3\nE   SyntaxError: invalid syntax'
+    report = collect_block("tests/test_b.py", "/usr/lib/importlib.py:90: in import", syntax)
+    assert hc.collection_errors(report.replace("E   E ", "E   ")) == {"tests/test_b.py"}
+    assert (
+        hc.collection_errors("FAILED tests/test_d.py::test_q\nERROR tests/test_c.py::z - x")
+        == set()
+    )
+
+
+def test_should_find_the_test_files_holding_every_ruff_or_mypy_error() -> None:
+    lint = "RUFF:\ntests/test_a.py:3:1: F841 unused\n\nMYPY:\ntests/test_a.py:7: error: bad  [misc]"
+    assert hc.only_test_errors(lint, {"tests/test_a.py"}) == {"tests/test_a.py"}
+    assert (
+        hc.only_test_errors(lint + "\nsrc/x.py:1: error: y  [misc]", {"tests/test_a.py"}) == set()
+    )
+    assert (
+        hc.only_test_errors(lint + "\n\nPYTEST:\nFAILED tests/test_a.py::t", {"tests/test_a.py"})
+        == set()
+    )
+    assert hc.only_test_errors("PYTEST:\n.", {"tests/test_a.py"}) == set()
+
+
+def test_should_list_the_test_function_names_in_a_source() -> None:
+    assert hc.test_names(
+        "def test_a(): pass\nclass T:\n    def test_b(self): pass\ndef h(): pass"
+    ) == {
+        "test_a",
+        "test_b",
+    }
+    assert hc.test_names("def test_a(:") == set()
+
+
+LOCKED = """import pytest
+from jarvis.new import f
+
+THRESHOLD = 3
+
+
+def test_a():
+    assert f(1) == 2
+    assert f(2) == 3
+    with pytest.raises(ValueError):
+        f(-1)
+
+
+def test_b():
+    assert f(10) > THRESHOLD
+"""
+B_BODY = "def test_b():\n    assert f(10) > THRESHOLD\n"
+# the reviewer's table: each way a model "fixes" a red test by making it weaker (all must be caught)
+ATTEMPTS = {
+    "assert True": LOCKED.replace("assert f(1) == 2", "assert True"),
+    "or True": LOCKED.replace("assert f(1) == 2", "assert f(1) == 2 or True"),
+    "raises(Exception)": LOCKED.replace("raises(ValueError)", "raises(Exception)"),
+    "empty parametrize": LOCKED.replace(
+        B_BODY, '@pytest.mark.parametrize("x", [])\ndef test_b(x):\n    assert f(10) > THRESHOLD\n'
+    ),
+    "if False": LOCKED.replace(
+        B_BODY, "def test_b():\n    if False:\n        assert f(10) > THRESHOLD\n"
+    ),
+    "early return": LOCKED.replace(
+        B_BODY, "def test_b():\n    return\n    assert f(10) > THRESHOLD\n"
+    ),
+    "monkeypatch the unit": LOCKED.replace(
+        B_BODY,
+        "def test_b(monkeypatch):\n    monkeypatch.setattr(f, 'x', 1)\n"
+        "    assert f(10) > THRESHOLD\n",
+    ),
+    "assert on a MagicMock": "from unittest.mock import MagicMock\n"
+    + LOCKED.replace(B_BODY, "def test_b():\n    assert MagicMock().f(10)\n"),
+    "try/except": LOCKED.replace(
+        B_BODY,
+        "def test_b():\n    try:\n        assert f(10) > THRESHOLD\n"
+        "    except Exception:\n        pass\n",
+    ),
+    "delete and add a trivial test": LOCKED.replace(B_BODY, "def test_c():\n    assert 1\n"),
+    "asserts moved to an uncalled helper": LOCKED.replace(
+        B_BODY, "def _check():\n    assert f(10) > THRESHOLD\n\n\ndef test_b():\n    pass\n"
+    ),
+    "nested test": LOCKED.replace(
+        B_BODY, "def test_b():\n    def test_inner():\n        assert f(10) > THRESHOLD\n"
+    ),
+    "lowered threshold": LOCKED.replace("THRESHOLD = 3", "THRESHOLD = 0"),
+    "from pytest import skip": "from pytest import skip\n"
+    + LOCKED.replace(B_BODY, "def test_b():\n    skip()\n    assert f(10) > THRESHOLD\n"),
+    "import pytest as pt": "import pytest as pt\n"
+    + LOCKED.replace("def test_b", "@pt.mark.skip\ndef test_b"),
+    "unittest.skip": "import unittest\n"
+    + LOCKED.replace("def test_b", '@unittest.skip("x")\ndef test_b'),
+    "one assert removed": LOCKED.replace("    assert f(2) == 3\n", ""),
+}
+
+
+@pytest.mark.parametrize("name", ATTEMPTS)
+@pytest.mark.parametrize("flags", [{}, {"extend": True}, {"annotations": True}])
+def test_should_catch_every_way_of_weakening_a_locked_test(
+    name: str, flags: dict[str, bool]
+) -> None:
+    assert hc.lock_violations(LOCKED, ATTEMPTS[name], **flags)
+
+
+def test_should_catch_an_import_that_rebinds_the_function_under_test() -> None:
+    hijack = LOCKED.replace("from jarvis.new import f", "from unittest.mock import MagicMock as f")
+    assert hc.lock_violations(LOCKED, hijack)
+    shadow = LOCKED + "from other import THRESHOLD\n"
+    assert hc.lock_violations(LOCKED, shadow)
+
+
+def test_should_allow_import_fixes_and_report_nothing_for_an_identical_file() -> None:
+    assert hc.lock_violations(LOCKED, LOCKED) == []
+    fixed = LOCKED.replace("from jarvis.new import f", "from src.jarvis.new import f")
+    assert hc.lock_violations(LOCKED, fixed) == []
+    assert hc.lock_violations(LOCKED, "import os\n" + LOCKED) == []
+
+
+def test_should_ignore_annotations_only_when_asked() -> None:
+    typed = LOCKED.replace("def test_b():", "def test_b() -> None:")
+    assert hc.lock_violations(LOCKED, typed)
+    assert hc.lock_violations(LOCKED, typed, annotations=True) == []
+
+
+def test_should_let_an_existing_test_file_grow_by_plain_new_tests_only() -> None:
+    grown = LOCKED + "\n\ndef test_new():\n    assert f(5) == 6\n"
+    assert hc.lock_violations(LOCKED, grown) != []
+    assert hc.lock_violations(LOCKED, grown, extend=True) == []
+    fixture = LOCKED + "\n\n@pytest.fixture(autouse=True)\ndef test_x(monkeypatch):\n    pass\n"
+    again = LOCKED + "\n\ndef test_a():\n    assert True\n"
+    helper = LOCKED + "\n\ndef helper():\n    pass\n"
+    for bad in (fixture, again, helper):
+        assert hc.lock_violations(LOCKED, bad, extend=True)
+
+
+def test_should_flag_a_test_file_that_no_longer_parses_or_was_reordered() -> None:
+    assert hc.lock_violations(LOCKED, "def test_a(:") == ["the test file does not parse"]
+    swapped = (
+        LOCKED.replace("THRESHOLD = 3\n", "")
+        .replace("import pytest\n", "import pytest\n")
+        .rstrip("\n")
+        + "\n\nTHRESHOLD = 3\n"
+    )
+    assert "reordered" in hc.lock_violations(LOCKED, swapped)[0]
 
 
 def test_should_read_paths_from_porcelain_output() -> None:
