@@ -326,6 +326,7 @@ def test_should_let_an_existing_test_file_gain_a_new_test_in_round_0(
         repo, monkeypatch, model, FakeChecks((True, "")), write=["tests/test_old.py"]
     )
     assert "def test_b" in (repo / "tests" / "test_old.py").read_text(encoding="utf-8")
+    assert "existing tests are locked" in model.prompts("tests/test_old.py")[0]
     assert (code, summary["weakening_events"]) == (0, [])
 
 
@@ -595,6 +596,8 @@ def test_should_not_accept_a_plan_without_every_file_or_without_tests(
     _, summary, _ = implement(repo, monkeypatch, model, FakeChecks((True, "")))
     assert summary["plan"] is False
     assert sum("JSON object" in system for system, _ in model.calls) == 2
+    retry = model.calls[1][1]
+    assert "tests/test_new.py, src/new.py" in retry
 
 
 def test_should_list_planned_tests_that_were_never_drafted(

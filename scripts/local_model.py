@@ -247,7 +247,11 @@ class Implementer:
             if self.plan:
                 (self.log / "plan.json").write_text(json.dumps(self.plan, indent=2), "utf-8")
                 return
-            prompt += "\n\nYour last reply was not the required JSON object. Return only it."
+            prompt += (
+                "\n\nYour last reply was not the required JSON object. Return only it, with an "
+                f"entry under files for every one of: {', '.join(self.opts.write)} (an existing "
+                "locked test file too), and a non-empty tests list."
+            )
         print("plan: no valid JSON after a retry; continuing without one", file=sys.stderr)
 
     def write(self, rel: str, prompt: str, tag: str) -> None:
@@ -278,7 +282,11 @@ class Implementer:
             done = "\n\n".join(
                 f"### {q} (written so far)\n```python\n{self.current(q)}```" for q in self.order[:i]
             )
-            kind = "tests (the implementation does not exist yet)" if rel in self.tests else "code"
+            kind = "code"
+            if rel in self.tests:
+                kind = "tests (the implementation does not exist yet)"
+                if rel in self.existing:
+                    kind = "tests (its existing tests are locked: add new ones only, or no blocks)"
             prompt = (
                 f"{self.brief()}\n\n{done}\n\n## Current content of {rel}\n"
                 f"```python\n{self.current(rel)}```\n\nWrite the {kind} for `{rel}`."
