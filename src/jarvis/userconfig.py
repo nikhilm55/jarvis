@@ -175,10 +175,14 @@ def _comparable(data: dict[str, Any], drop_legacy: bool) -> dict[str, Any]:
 
 def _verify(before: dict[str, Any], new_text: str, value: str | None, drop_legacy: bool) -> bool:
     """True when `new_text` parses, holds exactly `value` as user.name, and differs from the
-    original in nothing else (bar the legacy key when `drop_legacy`)."""
+    original in nothing else. With `drop_legacy` the legacy key must also be really gone from the
+    parsed result (so a cleanup that deleted nothing is not mistaken for one that worked)."""
     try:
         after = tomllib.loads(new_text)
     except tomllib.TOMLDecodeError:
+        return False
+    brain = after.get("brain")
+    if drop_legacy and isinstance(brain, dict) and "address_as" in brain:
         return False
     user = after.get("user")
     name = user.get("name") if isinstance(user, dict) else None
@@ -217,7 +221,8 @@ def set_user_name(path: Path, name: str | None) -> str | None:
         return None  # nothing to remove
     name_line = None if value is None else f"name = {json.dumps(value, ensure_ascii=False)}"
     brain = before.get("brain")
-    legacy = value is not None and isinstance(brain, dict) and "address_as" in brain
+    old_address = brain.get("address_as") if isinstance(brain, dict) else None  # TOML has no null
+    legacy = value is not None and old_address is not None
     lines, ending = _split_lines(original), _file_ending(original)
     for drop in (True, False) if legacy else (False,):  # try the cleanup, then the name alone
         new_text = _edit(lines, name_line, ending, drop)
@@ -230,5 +235,6 @@ def set_user_name(path: Path, name: str | None) -> str | None:
     if not legacy:
         return None
     if drop:
-        return "Removed the old brain.address_as setting from config.toml."
+        old = json.dumps(old_address, ensure_ascii=False)
+        return f"Removed the old brain.address_as setting ({old}) from config.toml."
     return "brain.address_as is still in config.toml and is no longer supported: delete that line."

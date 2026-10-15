@@ -127,7 +127,8 @@ def test_should_remove_a_leftover_address_as_and_say_so(
     assert cli.main(["setup", "--name", "Nik"]) == 0
     assert _config().read_bytes() == b'[brain]\nmodel = "opus"\n\n[user]\nname = "Nik"\n'
     assert capsys.readouterr().out == (
-        "Jarvis will call you Nik.\nRemoved the old brain.address_as setting from config.toml.\n"
+        "Jarvis will call you Nik.\n"
+        'Removed the old brain.address_as setting ("Boss") from config.toml.\n'
     )
     assert load_settings().user.name == "Nik"  # the config loads again
 
@@ -141,6 +142,21 @@ def test_should_tell_the_user_to_delete_address_as_when_it_cannot_be_removed_saf
     assert cli.main(["setup", "--name", "Nik"]) == 0
     assert _config().read_bytes() == (original + '\n[user]\nname = "Nik"\n').encode()
     assert "delete that line" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "original", ['brain = { address_as = "Boss" }\n', '[brain]\n"address_as" = "Boss"\n']
+)
+def test_should_not_say_removed_when_address_as_is_in_a_form_it_cannot_delete(
+    capsys: pytest.CaptureFixture[str], original: str
+) -> None:
+    _config().parent.mkdir(parents=True)
+    _config().write_bytes(original.encode())
+    assert cli.main(["setup", "--name", "Nik"]) == 0
+    out = capsys.readouterr().out
+    assert "Removed" not in out
+    assert "delete that line" in out
+    assert _config().read_bytes() == (original + '\n[user]\nname = "Nik"\n').encode()
 
 
 @pytest.mark.parametrize("bad", ["a\udcffb", "a\u202eb", "a\u2028b"])
