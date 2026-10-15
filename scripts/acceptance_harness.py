@@ -21,17 +21,32 @@ from acceptance_report import (
 
 from jarvis.activity import ActivityLog, TurnRecord
 from jarvis.audio.sources import SAMPLE_RATE, Pcm
+from jarvis.brain import BrainUnavailable
+from jarvis.brain.dispatch import OnAsk, OnSay
+from jarvis.contract import FinalResponse, TurnEnvelope
 from jarvis.desktop.x11 import WindowInfo, list_windows
 from jarvis.orchestrator.hud import HudEvent
+from jarvis.orchestrator.ports import BrainPort
 
+MAX_BRAIN_TURNS = 5  # the most live Claude Code turns one run may use
+FIRST_WORD_DROP = "gate rejected the first word"
+CALCULATOR_CLASSES = frozenset({"gnome-calculator", "org.gnome.calculator"})
+NO_LATENCY: dict[str, Any] = {
+    "eos_to_audio_ms": None,
+    "eos_to_speech_ms": None,
+    "action_ms": None,
+}
 FAST_TIMEOUT_S = 30.0
 BRAIN_TIMEOUT_S = 180.0
 EOS_SETTLE_S = 8.0  # how long "nothing happens" is watched for after speech ends
 
 
 def is_calculator(window: WindowInfo) -> bool:
-    """True for a GNOME Calculator window (any common class spelling)."""
-    return "calc" in f"{window.wm_class} {window.wm_instance}".lower()
+    """True for a GNOME Calculator window; LibreOffice Calc and the like must not match."""
+    return (
+        window.wm_class.lower() in CALCULATOR_CLASSES
+        or window.wm_instance.lower() in CALCULATOR_CLASSES
+    )
 
 
 def calculator_windows() -> list[WindowInfo]:
@@ -59,6 +74,53 @@ def judge(expected_route: str, record: TurnRecord | None, problem: str | None) -
     if problem:
         return f"FAIL: {problem}"
     return "PASS"
+
+
+def judge_dropped(ran: bool, calculator_open: bool, records: list[TurnRecord]) -> str | None:
+    """None when the utterance was heard and dropped by the first-word rule, else the problem."""
+    if ran:
+        return "a turn ran"
+    if calculator_open:
+        return "Calculator opened"
+    dropped = [r for r in records if r.route == "dropped"]
+    if not dropped:
+        return "nothing was dropped, so the utterance was never heard"
+    if dropped[-1].drop_reason != FIRST_WORD_DROP:
+        return f"dropped for {dropped[-1].drop_reason!r}, not the first-word rule"
+    return None
+
+
+class BrainGate:
+    """The real brain behind a switch and a cap: only the brain cases get a live turn."""
+
+    def __init__(self, inner: BrainPort, limit: int = MAX_BRAIN_TURNS) -> None:
+        self._inner = inner
+        self._limit = limit
+        self.open = False
+        self.turns = 0
+        self.refused = 0
+
+    async def start(self) -> None:
+        await self._inner.start()
+
+    async def turn(self, envelope: TurnEnvelope, on_say: OnSay, on_ask: OnAsk) -> FinalResponse:
+        if not self.open or self.turns >= self._limit:
+            self.refused += 1
+            return BrainUnavailable(
+                "the acceptance run allows no live brain turn here",
+                ["Only the brain cases, and at most five turns, may use Claude Code."],
+            ).to_response()
+        self.turns += 1
+        return await self._inner.turn(envelope, on_say, on_ask)
+
+    async def dispatch(self, policy_name: str, args: dict[str, object]) -> object:
+        return await self._inner.dispatch(policy_name, args)
+
+    async def reset(self) -> None:
+        await self._inner.reset()
+
+    async def close(self) -> None:
+        await self._inner.close()
 
 
 def ms_between(start: float, playback: Playback | None) -> int | None:
@@ -154,6 +216,10 @@ async def turn_case(  # noqa: PLR0913, PLR0917 - a case is exactly these parts
 ) -> None:
     """Say one command, wait for its turn, check the effect, record the row."""
     seen = len(h.log.turns())
+    if route == "brain" and sum(r.route == "brain" for r in h.log.turns()) >= MAX_BRAIN_TURNS:
+        outcome = f"FAIL: skipped, {MAX_BRAIN_TURNS} live brain turns already used"
+        h.rows.append(row_from_record(case, run, None, outcome=outcome, **NO_LATENCY))
+        return
     eos = await h.say(fixture)
     record = await h.new_turn(seen, BRAIN_TIMEOUT_S if route == "brain" else FAST_TIMEOUT_S)
     problem = await check(record) if record is not None else None
