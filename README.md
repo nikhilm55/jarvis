@@ -32,10 +32,11 @@ You need:
 uv sync
 uv run jarvis models fetch                       # VAD, wake, speech-to-text and voice models
 export JARVIS_WHISPER_SERVER=/path/to/whisper.cpp/build/bin/whisper-server
+uv run jarvis setup --name "<your name>"         # what Jarvis calls you (optional; no name is used until you set one)
 uv run jarvis run                                # add --no-brain or --no-hud if you like
 ```
 
-Then say "Jarvis, what time is it?". `uv run jarvis --help` lists the other commands (`say`, `listen`, `models`). The wake model is still the stock dev `hey_jarvis` model; a custom "Jarvis" model is in progress.
+Then say "Jarvis, what time is it?". `uv run jarvis --help` lists the other commands (`say`, `listen`, `models`, `setup`). The wake model is still the stock dev `hey_jarvis` model; a custom "Jarvis" model is in progress.
 
 ## Docs
 

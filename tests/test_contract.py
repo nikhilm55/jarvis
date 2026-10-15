@@ -169,3 +169,10 @@ def test_should_serialise_envelope_as_compact_unescaped_utf8() -> None:
     assert "राहुल को लिखो" in text
     assert "\n" not in text
     assert TurnEnvelope.model_validate_json(text) == envelope
+
+
+def test_should_accept_an_envelope_whose_user_has_no_name() -> None:
+    data = _load("envelope.json")
+    data["context"]["user"] = {"name": None, "address_as": None}
+    user = TurnEnvelope.model_validate(data).context.user
+    assert (user.name, user.address_as) == (None, None)

@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from jarvis import paths
-from jarvis.config import ConfigError, Settings, load_settings
+from jarvis.config import ConfigError, Settings, UserSettings, load_settings
 
 
 def write_toml(path: Path, text: str) -> Path:
@@ -77,19 +77,16 @@ def test_should_default_the_brain_session_settings_when_file_is_missing() -> Non
     brain = load_settings().brain
     assert (brain.model, brain.max_steps, brain.turn_timeout_s) == ("sonnet", 25, 120)
     assert brain.claude_bin is None
-    assert brain.address_as is None
 
 
 def test_should_read_brain_overrides_from_toml(tmp_path: Path) -> None:
     path = write_toml(
         tmp_path / "c.toml",
-        "[brain]\nmodel = 'opus'\nmax_steps = 5\nturn_timeout_s = 30\n"
-        "claude_bin = '/opt/claude'\naddress_as = 'Nik'\n",
+        "[brain]\nmodel = 'opus'\nmax_steps = 5\nturn_timeout_s = 30\nclaude_bin = '/opt/claude'\n",
     )
     brain = load_settings(path).brain
     assert (brain.model, brain.max_steps, brain.turn_timeout_s) == ("opus", 5, 30)
     assert brain.claude_bin == "/opt/claude"
-    assert brain.address_as == "Nik"
 
 
 @pytest.mark.parametrize("key", ["max_steps", "turn_timeout_s"])
@@ -115,4 +112,30 @@ def test_should_read_the_output_latency(
 def test_should_reject_a_bad_output_latency(tmp_path: Path, literal: str) -> None:
     path = write_toml(tmp_path / "c.toml", f"[tts]\noutput_latency = {literal}\n")
     with pytest.raises(ConfigError, match=r"tts\.output_latency"):
+        load_settings(path)
+
+
+def test_should_default_to_no_user_name_whatever_the_os_account_is() -> None:
+    assert Settings().user == UserSettings(name=None)
+    assert load_settings().user.name is None
+
+
+@pytest.mark.parametrize(
+    ("literal", "expected"), [("'Nikhil'", "Nikhil"), ("'  Ana  '", "Ana"), ("'José'", "José")]
+)
+def test_should_read_the_user_name_from_toml(tmp_path: Path, literal: str, expected: str) -> None:
+    path = write_toml(tmp_path / "c.toml", f"[user]\nname = {literal}\n")
+    assert load_settings(path).user.name == expected
+
+
+@pytest.mark.parametrize("literal", ["''", "'   '", f"'{'a' * 41}'", '"a\\nb"', "5"])
+def test_should_reject_a_bad_user_name(tmp_path: Path, literal: str) -> None:
+    path = write_toml(tmp_path / "c.toml", f"[user]\nname = {literal}\n")
+    with pytest.raises(ConfigError, match=r"user\.name"):
+        load_settings(path)
+
+
+def test_should_reject_the_removed_brain_address_as_key(tmp_path: Path) -> None:
+    path = write_toml(tmp_path / "c.toml", "[brain]\naddress_as = 'Nik'\n")
+    with pytest.raises(ConfigError, match=r"brain\.address_as"):
         load_settings(path)

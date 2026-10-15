@@ -9,12 +9,12 @@ from jarvis.cli import main
 from tests.audio_utils import silence, tone
 
 
-def test_should_list_the_four_subcommands_in_help(capsys: pytest.CaptureFixture[str]) -> None:
+def test_should_list_the_subcommands_in_help(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as exit_info:
         main(["--help"])
     assert exit_info.value.code == 0
     out = capsys.readouterr().out
-    for command in ("run", "say", "listen", "models"):
+    for command in ("run", "say", "listen", "models", "setup"):
         assert command in out
 
 

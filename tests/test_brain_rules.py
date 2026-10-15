@@ -95,3 +95,16 @@ def test_should_ask_for_minimal_respond_when_the_action_is_simple() -> None:
     text = build_rules()
     assert "Keep respond minimal" in text
     assert "actions_taken or display" in text
+
+
+def test_should_use_the_configured_name_only_occasionally_when_rules_built() -> None:
+    text = " ".join(build_rules().split())
+    assert "If context.user.address_as is set, address the user by it occasionally" in text
+    assert "not in every reply" in text
+
+
+def test_should_forbid_guessing_a_name_when_none_is_set() -> None:
+    text = " ".join(build_rules().split())
+    assert "If it is null, never address the user by name and never guess one" in text
+    assert "the account" in text
+    assert "home folder" in text

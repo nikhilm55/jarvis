@@ -355,6 +355,7 @@ The brain talks to Jarvis through a **fixed, validated contract** instead of fre
 
 - `policy.grants` tells the brain what it may already touch, so it asks for the *missing* scopes up front (FR-CON-03) and doesn't plan around a source marked `never`. In YOLO every scope except `never` reads `"yolo"`.
 
+- `context.user.name` / `address_as` are the user's chosen name from Settings (FR-TALK-05), or `null` when none is set. They are never taken from the OS account, and the brain is told never to guess one.
 - `selection_text` and screen context are included only when the user opts in (§7.4).
 - `recent_entities` lets "reply to **him**" or "open **that** file" resolve deterministically.
 
@@ -424,7 +425,7 @@ On failure:
 | FR-TALK-02 | **Acknowledge fast:** if the brain hasn't spoken within 1.2 s of end of speech, Jarvis plays a short "thinking" earcon or a quick ack ("On it."). | M |
 | FR-TALK-03 | **Ask, don't guess, when it matters:** ambiguous people, files or destructive targets → `jarvis.ask`. Ambiguity about harmless things (which Chrome window) → pick the most likely and say so. | M |
 | FR-TALK-04 | **Reading long content** (messages, emails, articles): chunked. Read the first 3 items, then "That's 3 of 9 — say 'next' or 'stop'." The follow-up window covers "next", "reply", "skip", "stop". | M |
-| FR-TALK-05 | Style: brief, polite, slightly dry — "Jarvis", not "chatbot". Addresses the user by their chosen name occasionally, not every turn. Personality can be tuned: concise / friendly / butler. | S |
+| FR-TALK-05 | Style: brief, polite, slightly dry — "Jarvis", not "chatbot". Addresses the user by their chosen name occasionally, not every turn. The name comes only from Settings (`[user] name`, set in setup); Jarvis never derives it from the OS account; with none set it uses no name. Personality can be tuned: concise / friendly / butler. | S |
 | FR-TALK-06 | **"Why?" follow-ups:** "Jarvis, why didn't that work?" / "what did you just do?" → answered from the activity log (§5.18), including the tool calls made. | S |
 | FR-TALK-07 | **Privacy aware:** never read passwords, OTPs or card numbers aloud. They're replaced by "a one-time code from HDFC". With people nearby (C: presence detection), sensitive content is HUD-only. | M |
 
@@ -693,7 +694,7 @@ Built on the beyondMeetings doctor framework: one checklist, one progress ring, 
 | 7 | **Desktop control** | Windows: UI Automation available. Linux: AT-SPI enabled, xdotool (X11) or ydotool + uinput permission (Wayland), compositor helper, portals | Enables accessibility toolkit setting; installs helpers; one sudo step for the uinput udev rule, **explained in plain words** before asking | ✔ |
 | 8 | **Integrations** | Enabled MCP servers healthy | Opens the catalog. Recommended starter set pre-ticked: Files, Browser, Microsoft 365 or Google (detected from installed apps) | — |
 | 9 | **Safety and permissions** | Mode chosen; consent defaults set | Pick Safe / Balanced / YOLO, with a plain-language table of what each does, including "YOLO doesn't ask before reading your data". YOLO requires reading and ticking the guardrail summary. Then the consent step (FR-CON-18): everything on **Ask** by default, with optional one-tick pre-allows per source. | ✔ |
-| 10 | **About you** | Name, address-as, default apps, language | Simple form. Default apps are pre-detected. | — |
+| 10 | **About you** | Name, address-as, default apps, language | Simple form. Default apps are pre-detected. Early CLI slice (pre-M4, built): `jarvis setup --name NAME` / `--clear-name`, or `jarvis setup` to be asked; it writes `[user] name` in `config.toml` and edits only that line. `jarvis run` hints at it while no name is set. | — |
 | 11 | **Launcher, autostart, hotkeys** | Start Menu / `.desktop` entry, run at login, hotkeys registered (Wayland: global-shortcuts portal or the DE's custom shortcut) | Create shortcuts, enable autostart, bind keys | — |
 | 12 | **First command** | — | Interactive tutorial: "Say: Jarvis, what time is it?" → "Jarvis, open Notepad/Text Editor" → "Jarvis, close it" | — |
 

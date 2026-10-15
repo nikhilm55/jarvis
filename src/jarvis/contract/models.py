@@ -107,8 +107,9 @@ class SttInfo(_Strict):
 
 
 class UserInfo(_Strict):
-    name: str
-    address_as: str
+    # Both come only from the user's own setting; None means "no name set" (never a guess).
+    name: str | None = None
+    address_as: str | None = None
 
 
 class ActiveWindow(_Strict):

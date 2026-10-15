@@ -25,10 +25,14 @@ from jarvis.hud.runtime import running_hud
 from jarvis.orchestrator.assemble import build_components
 from jarvis.orchestrator.core import Orchestrator
 from jarvis.orchestrator.hud import HudEvent, HudSink
+from jarvis.paths import config_dir
 from jarvis.policy import Mode
 from jarvis.stt import SttUnavailable
 from jarvis.tts import Speaker
 from jarvis.tts.earcons import EARCON_NAMES
+from jarvis.userconfig import InvalidNameError, clean_name, set_user_name
+
+NAME_TIP = "Tip: tell Jarvis your name with: jarvis setup --name <your name>"
 
 
 async def _print_hud(event: HudEvent) -> None:
@@ -59,6 +63,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
     source: AudioSource | None = None
     try:
         settings = load_settings()
+        if settings.user.name is None:
+            print(NAME_TIP)
         source = (
             WavFileSource(args.source, realtime=True)
             if args.source
@@ -78,6 +84,30 @@ def _cmd_run(args: argparse.Namespace) -> int:
     finally:
         if source is not None:
             source.close()
+    return 0
+
+
+def _cmd_setup(args: argparse.Namespace) -> int:
+    path = config_dir() / "config.toml"
+    try:
+        if args.clear_name:
+            set_user_name(path, None)
+            print("Jarvis will not address you by name.")
+            return 0
+        name = args.name
+        if name is None:
+            try:
+                name = input("What should Jarvis call you? ")
+            except EOFError:
+                name = ""
+            if not name.strip():
+                print("Name left unchanged.")
+                return 0
+        set_user_name(path, name)
+        print(f"Jarvis will call you {clean_name(name)}.")
+    except (InvalidNameError, OSError) as error:
+        print(f"jarvis setup: {error}", file=sys.stderr)
+        return 2
     return 0
 
 
@@ -171,7 +201,7 @@ def _cmd_models_fetch(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="jarvis", description="Voice control for your whole PC.")
     parser.add_argument("--version", action="version", version=f"jarvis {__version__}")
-    commands = parser.add_subparsers(dest="command", metavar="{run,say,listen,models}")
+    commands = parser.add_subparsers(dest="command", metavar="{run,say,listen,models,setup}")
     run = commands.add_parser("run", help="run the voice loop")
     run.add_argument("--source", type=Path, metavar="FILE.wav", help="read a WAV, not the mic")
     run.add_argument("--mode", choices=("safe", "balanced", "yolo"), default="balanced")
@@ -188,6 +218,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     listen.add_argument("--source", type=Path, metavar="FILE.wav", help="read a WAV, not the mic")
     listen.set_defaults(handler=_cmd_listen)
+    setup = commands.add_parser("setup", help="tell Jarvis about you (asks when given no option)")
+    who = setup.add_mutually_exclusive_group()
+    who.add_argument("--name", metavar="NAME", help="what Jarvis calls you")
+    who.add_argument("--clear-name", action="store_true", help="stop addressing you by name")
+    setup.set_defaults(handler=_cmd_setup)
     models_parser = commands.add_parser("models", help="list or download model files")
     actions = models_parser.add_subparsers(dest="action", required=True)
     actions.add_parser("list", help="show known models and cached sizes").set_defaults(

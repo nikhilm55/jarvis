@@ -1,20 +1,21 @@
 """Tests for jarvis.orchestrator.envelope."""
 
 import datetime
+import inspect
 import re
 
 import pytest
 
-from jarvis.config import BrainSettings, Settings
+from jarvis.config import BrainSettings, Settings, UserSettings
 from jarvis.contract import TurnEnvelope
+from jarvis.contract.models import UserInfo
+from jarvis.orchestrator import envelope as envelope_module
 from jarvis.orchestrator.envelope import (
     build_envelope,
     display_server,
-    first_name,
     locale_tag,
     new_turn_id,
     os_label,
-    user_info,
 )
 from jarvis.stt import Transcript
 
@@ -53,45 +54,6 @@ def test_should_return_expected_locale_tag_when_environ_has_given_values(
     assert locale_tag(environ) == expected
 
 
-@pytest.mark.parametrize(
-    ("gecos", "expected"),
-    [
-        ("Nikhil Malhotra,,,", "Nikhil"),
-        ("", ""),
-        (",,,", ""),
-        ("  Ada Lovelace", "Ada"),
-    ],
-)
-def test_should_return_expected_first_name_when_gecos_has_given_value(
-    gecos: str, expected: str
-) -> None:
-    assert first_name(gecos) == expected
-
-
-def test_should_prefer_address_as_setting_when_setting_is_present() -> None:
-    info = user_info("Boss", "Nikhil Malhotra,,,", "nikhil")
-    assert info.name == "Nikhil"
-    assert info.address_as == "Boss"
-
-
-def test_should_use_gecos_first_name_when_no_address_as_setting() -> None:
-    info = user_info(None, "Nikhil Malhotra,,,", "nikhil")
-    assert info.name == "Nikhil"
-    assert info.address_as == "Nikhil"
-
-
-def test_should_use_login_when_gecos_is_empty() -> None:
-    info = user_info(None, "", "nikhil")
-    assert info.name == "nikhil"
-    assert info.address_as == ""
-
-
-def test_should_use_default_user_when_nothing_is_known() -> None:
-    info = user_info(None, "", "")
-    assert info.name == "user"
-    assert info.address_as == ""
-
-
 def test_should_return_expected_os_label_when_platform_reports_linux(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -103,7 +65,7 @@ def test_should_return_expected_os_label_when_platform_reports_linux(
 def test_should_build_envelope_with_fixed_inputs() -> None:
     now = datetime.datetime(2026, 10, 7, 9, 30, 15, tzinfo=datetime.UTC)
     environ = {"XDG_SESSION_TYPE": "x11", "LANG": "en_IN.UTF-8"}
-    settings = Settings(brain=BrainSettings(address_as="Boss", max_steps=7))
+    settings = Settings(brain=BrainSettings(max_steps=7), user=UserSettings(name="Boss"))
     transcript = Transcript(text="x", engine="whisper.cpp/tiny.en", seconds=0.1)
 
     envelope = build_envelope(
@@ -124,7 +86,7 @@ def test_should_build_envelope_with_fixed_inputs() -> None:
     assert envelope.input_mode == "voice"
     assert envelope.context.display_server == "x11"
     assert envelope.context.locale == "en-IN"
-    assert envelope.context.user.address_as == "Boss"
+    assert envelope.context.user == UserInfo(name="Boss", address_as="Boss")
     assert envelope.policy.mode == "balanced"
     assert envelope.policy.max_steps == 7
     parsed_local_time = datetime.datetime.fromisoformat(envelope.context.local_time)
@@ -174,3 +136,31 @@ def test_should_carry_the_pending_question_into_the_context() -> None:
         pending_question="Which one?",
     )
     assert envelope.context.pending_question == "Which one?"
+
+
+def _envelope(settings: Settings) -> TurnEnvelope:
+    transcript = Transcript(text="x", engine="whisper.cpp/tiny.en", seconds=0.1)
+    return build_envelope(
+        command="status",
+        raw_transcript="hello",
+        transcript=transcript,
+        settings=settings,
+        mode="balanced",
+    )
+
+
+def test_should_send_no_name_when_the_user_has_not_set_one() -> None:
+    user = _envelope(Settings()).context.user
+    assert user == UserInfo(name=None, address_as=None)
+    assert '"user":{"name":null,"address_as":null}' in _envelope(Settings()).to_json()
+
+
+def test_should_send_the_configured_name_and_nothing_derived_from_the_os_account() -> None:
+    user = _envelope(Settings(user=UserSettings(name="Boss"))).context.user
+    assert (user.name, user.address_as) == ("Boss", "Boss")
+
+
+def test_should_not_read_the_os_account_name_at_all() -> None:
+    source = inspect.getsource(envelope_module)
+    for forbidden in ("pwd", "gecos", "getuser", "getlogin", "getpwuid", "expanduser"):
+        assert forbidden not in source
