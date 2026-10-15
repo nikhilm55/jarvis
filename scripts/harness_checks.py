@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import re
+import shlex
 from collections import Counter
 from collections.abc import Collection
 from dataclasses import dataclass
@@ -144,7 +145,9 @@ TRICKS = (
 )
 
 
-ALLOWED_STORES = re.compile(r"os\.environ\b|sys\.(?:stdout|stderr|stdin)\b|logging\.")
+ALLOWED_STORES = re.compile(
+    r"os\.environ\[[^\]]+\]|sys\.(?:stdout|stderr|stdin)|logging(?:\.root)?\.\w+"
+)
 
 
 def _stores(tree: ast.AST, names: set[str], allowed: bool = False) -> list[str]:
@@ -168,7 +171,7 @@ def _stores(tree: ast.AST, names: set[str], allowed: bool = False) -> list[str]:
                 text = ast.unparse(sub)
                 if root is sub or not isinstance(root, ast.Name) or root.id not in names:
                     continue
-                if not (allowed and ALLOWED_STORES.match(text)):
+                if not (allowed and ALLOWED_STORES.fullmatch(text)):
                     found.append(text)
                 break
     return found
@@ -280,13 +283,15 @@ def lock_violations(
     return problems
 
 
+SKIP_ESCAPES = ("os._exit", "sys.exit", "unittest.SkipTest", "pytest.skip", "pytest.xfail")
 TAMPER_MODULES = ("pytest", "_pytest", "builtins", "atexit", "signal")
 
 
 def tamper_violations(source: str) -> list[str]:
     """A cheap deterrent, not a sandbox: how an implementation file reaches the test machinery.
     Each message names its exact target, so one kind can never hide another. Flagged: importing
-    pytest, _pytest, unittest.mock, builtins, atexit or signal; os._exit and sys.exit; dynamic
+    pytest, _pytest, unittest.mock, builtins, atexit or signal; os._exit and sys.exit; SkipTest
+    and pytest.skip/xfail (a skip hides a failure from the summary check); dynamic
     import, exec and eval; assigning into an imported module, `sys.modules` or `builtins`
     (os.environ, sys.stdout/stderr/stdin and logging are fine)."""
     try:
@@ -306,15 +311,17 @@ def tamper_violations(source: str) -> list[str]:
             if (
                 full.split(".")[0] in TAMPER_MODULES
                 or full.startswith("unittest.mock")
-                or full in ("os._exit", "sys.exit")
+                or full in ("os._exit", "sys.exit", "unittest.SkipTest")
             ):
                 problems.append(f"imports {full}")
         if isinstance(n, ast.Call):
             called = getattr(n.func, "id", getattr(n.func, "attr", ""))
             if called in ("__import__", "import_module", "exec", "eval"):
                 problems.append(f"calls {called}()")
-        if isinstance(n, ast.Attribute) and ast.unparse(n) in ("os._exit", "sys.exit"):
+        if isinstance(n, ast.Attribute) and ast.unparse(n) in SKIP_ESCAPES:
             problems.append(f"uses {ast.unparse(n)}")
+        if isinstance(n, ast.Name) and n.id == "SkipTest":
+            problems.append("uses SkipTest")
     problems += [f"stores into {t}" for t in _stores(tree, bound, allowed=True)]
     return sorted(set(problems))
 
@@ -322,16 +329,25 @@ def tamper_violations(source: str) -> list[str]:
 CLEAN_MSG = "pytest did not report a clean summary"
 
 
-def pytest_clean(output: str, minimum: int = 0) -> bool:
-    """Is pytest's last line a summary like `5 passed in 0.1s`, with nothing failed or in error
-    and at least `minimum` passed? The exit code alone can be forged (atexit, os._exit)."""
+def pytest_clean(output: str, minimum: int = 0, skips: int = 0) -> bool:
+    """Is pytest's last line a summary like `5 passed in 0.1s`, with nothing failed or in error,
+    at least `minimum` passed, and no more skipped/xfailed than the locked tests' own `skips`?
+    The exit code alone can be forged (atexit, os._exit), and a skip hides a failure."""
     lines = output.strip().splitlines()
     last = lines[-1] if lines else ""
     if not re.search(r" in [\d.]+s\b", last):
         return False
     counts = {word: int(n) for n, word in re.findall(r"(\d+) (\w+)", last)}
     broken = counts.get("failed", 0) + counts.get("error", 0) + counts.get("errors", 0)
-    return counts.get("passed", 0) >= max(minimum, 1) and not broken
+    skipped = counts.get("skipped", 0) + counts.get("xfailed", 0)
+    return counts.get("passed", 0) >= max(minimum, 1) and not broken and skipped <= skips
+
+
+def quiet_addopts(addopts: str) -> str:
+    """A repo's pytest addopts without its verbosity flags (-q, -qq, -v, --quiet, ...), so the
+    loop can add exactly one -q: two of them (-qq) drop the summary line pytest_clean reads."""
+    drop = re.compile(r"-[qv]+|--quiet|--verbose")
+    return shlex.join(t for t in shlex.split(addopts) if not drop.fullmatch(t))
 
 
 def collectable_tests(source: str) -> int:

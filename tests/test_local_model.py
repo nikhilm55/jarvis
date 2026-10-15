@@ -123,12 +123,17 @@ class FakeChecks:
         self.results = list(results)
         self.effect = effect
         self.runs = 0
-        self.minimums: list[int] = []
+        self.expects: list[tuple[int, int]] = []
 
     def __call__(
-        self, repo: Path, files: list[str], tests: list[str], cache: Path, minimum: int = 0
+        self,
+        repo: Path,
+        files: list[str],
+        tests: list[str],
+        cache: Path,
+        expect: tuple[int, int] = (0, 0),
     ) -> object:
-        self.minimums.append(minimum)
+        self.expects.append(expect)
         if self.effect:
             self.effect(repo)
         self.runs += 1
@@ -814,16 +819,24 @@ def test_should_not_let_an_old_tamper_finding_hide_a_new_kind(
     assert (code, summary["status"]) == (1, "sensor_tamper")
 
 
-def fake_uv(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Run `uv run --quiet pytest ...` as the current interpreter's pytest; lint and types pass."""
-    real: Callable[[list[str], Path], tuple[int, str]] = local_model.run
+def fake_uv(monkeypatch: pytest.MonkeyPatch, stdout: str | None = None) -> list[list[str]]:
+    """Run `uv run --quiet pytest ...` as the current interpreter's pytest (lint and types pass);
+    returns the list the pytest commands are recorded in. With `stdout`, pytest is not run."""
+    real: Callable[[list[str], Path], tuple[int, str, str]] = local_model.run_split
+    pytest_commands: list[list[str]] = []
 
-    def run(cmd: list[str], repo: Path) -> tuple[int, str]:
-        if cmd[:3] == ["uv", "run", "--quiet"]:
-            return real([sys.executable, "-m", *cmd[3:]], repo) if cmd[3] == "pytest" else (0, "")
-        return real(cmd, repo)
+    def run_split(cmd: list[str], repo: Path) -> tuple[int, str, str]:
+        if cmd[:3] != ["uv", "run", "--quiet"]:
+            return real(cmd, repo)
+        if cmd[3] != "pytest":
+            return 0, "", ""
+        pytest_commands.append(cmd)
+        if stdout is not None:
+            return 0, stdout, ""
+        return real([sys.executable, "-m", *cmd[3:]], repo)
 
-    monkeypatch.setattr(local_model, "run", run)
+    monkeypatch.setattr(local_model, "run_split", run_split)
+    return pytest_commands
 
 
 @pytest.mark.parametrize(
@@ -848,7 +861,7 @@ def test_should_trust_pytest_only_when_it_prints_a_clean_summary(
     (tmp_path / "test_impl.py").write_text(
         "from impl import f\n\n\ndef test_f():\n    assert f() == 2\n", encoding="utf-8"
     )
-    ok, report = local_model.check(tmp_path, ["impl.py"], ["test_impl.py"], tmp_path / "c", 1)
+    ok, report = local_model.check(tmp_path, ["impl.py"], ["test_impl.py"], tmp_path / "c", (1, 0))
     assert ok is green
     assert ("did not report a clean summary" in report) is forged
 
@@ -858,4 +871,99 @@ def test_should_ask_for_at_least_the_locked_tests_collected_count_to_pass(
 ) -> None:
     checks = FakeChecks((True, ""))
     implement(repo, monkeypatch, FakeModel(), checks)
-    assert checks.minimums[-1] == 1
+    assert checks.expects[-1] == (1, 0)
+
+
+def test_should_allow_as_many_skips_as_the_locked_tests_have_themselves(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    skipped = "import pytest\n\n\n@pytest.mark.skip\ndef test_a() -> None:\n    assert 1\n"
+    model = FakeModel({"tests/test_new.py": fenced(skipped)})
+    checks = FakeChecks((True, ""))
+    implement(repo, monkeypatch, model, checks)
+    assert checks.expects[-1] == (0, 1)
+
+
+PARAM_TESTS = (
+    "import pytest\nfrom impl import f\n\n\ndef test_value():\n    assert f(0) == 0\n\n\n"
+    "@pytest.mark.parametrize('x', [1, 2, 3])\ndef test_param(x):\n    assert f(x) == x\n"
+)
+SKIPPER = (
+    "import unittest\n\n\ndef f(x):\n    if x == 3:\n        raise unittest.SkipTest('flaky')\n"
+    "    return x\n"
+)
+
+
+def test_should_not_call_green_a_run_where_the_implementation_skips_a_failing_case(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_uv(monkeypatch)
+    (tmp_path / "impl.py").write_text(SKIPPER, encoding="utf-8")
+    (tmp_path / "test_impl.py").write_text(PARAM_TESTS, encoding="utf-8")
+    ok, report = local_model.check(tmp_path, ["impl.py"], ["test_impl.py"], tmp_path / "c", (2, 0))
+    assert not ok
+    assert "did not report a clean summary" in report
+    assert "3 passed, 1 skipped" in report  # exit 0, and still not clean
+    assert local_model.hc.tamper_violations(SKIPPER)
+
+
+def test_should_stay_green_when_the_locked_test_has_a_skip_of_its_own(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_uv(monkeypatch)
+    (tmp_path / "impl.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    source = (
+        "import pytest\nfrom impl import f\n\n\n@pytest.mark.skip\ndef test_a():\n    assert 0\n"
+        "\n\ndef test_b():\n    assert f() == 1\n"
+    )
+    (tmp_path / "test_impl.py").write_text(source, encoding="utf-8")
+    expect = (1, 1)
+    ok, _ = local_model.check(tmp_path, ["impl.py"], ["test_impl.py"], tmp_path / "c", expect)
+    assert ok
+    assert not local_model.check(tmp_path, ["impl.py"], ["test_impl.py"], tmp_path / "c", (1, 0))[0]
+
+
+def test_should_read_the_summary_from_stdout_only_but_keep_stderr_in_the_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_uv(monkeypatch)
+    hook = "import atexit, sys\natexit.register(lambda: print('noise', file=sys.stderr))\n"
+    (tmp_path / "impl.py").write_text(hook + "def f():\n    return 2\n", encoding="utf-8")
+    test = "from impl import f\n\n\ndef test_f():\n    assert f() == 2\n"
+    (tmp_path / "test_impl.py").write_text(test, encoding="utf-8")
+    assert local_model.check(tmp_path, ["impl.py"], ["test_impl.py"], tmp_path / "c", (1, 0))[0]
+    shout = hook.replace("noise", "boom")
+    (tmp_path / "impl.py").write_text(shout + "def f():\n    return 1\n", encoding="utf-8")
+    ok, report = local_model.check(tmp_path, ["impl.py"], ["test_impl.py"], tmp_path / "c", (1, 0))
+    assert not ok
+    assert "boom" in report
+
+
+TOML = "[tool.pytest.ini_options]\naddopts = {}\n"
+
+
+@pytest.mark.parametrize(
+    ("files", "expected"),
+    [
+        (
+            {"pyproject.toml": TOML.format("'-q --strict-markers -p no:randomly'")},
+            "--strict-markers -p no:randomly",
+        ),
+        ({"pyproject.toml": TOML.format("['-ra', '-vv']")}, "-ra"),
+        ({"pytest.ini": "[pytest]\naddopts = -v --maxfail=3\n"}, "--maxfail=3"),
+        ({"setup.cfg": "[tool:pytest]\naddopts = -qq -x\n"}, "-x"),
+        ({"pyproject.toml": "[tool.other]\nx = 1\n"}, ""),
+        ({}, ""),
+    ],
+)
+def test_should_run_pytest_with_the_target_repos_addopts_and_exactly_one_q(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, files: dict[str, str], expected: str
+) -> None:
+    for name, text in files.items():
+        (tmp_path / name).write_text(text, encoding="utf-8")
+    commands = fake_uv(monkeypatch, stdout="1 passed in 0.1s\n")
+    local_model.check(tmp_path, [], ["tests"], tmp_path / "c")
+    [cmd] = commands
+    assert f"addopts={expected}" in cmd
+    assert cmd.count("-q") == 1
+    assert not any(arg.startswith("-q") and arg != "-q" for arg in cmd)

@@ -510,6 +510,15 @@ TAMPERING = {
     "calls os._exit": "import os\n\nos._exit(0)\n",
     "imports os._exit": "from os import _exit\n",
     "calls sys.exit": "import sys\n\nsys.exit(0)\n",
+    "raises unittest.SkipTest": "import unittest\n\nraise unittest.SkipTest('x')\n",
+    "imports SkipTest": "from unittest import SkipTest\n",
+    "raises a bare SkipTest": "def f(x):\n    raise SkipTest('flaky')\n",
+    "calls pytest.skip through an alias": "import pytest as p\n\np.skip('x')\n",
+    "calls pytest.xfail": "import pytest\n\npytest.xfail('x')\n",
+    # the second review's bypasses of the allowlist
+    "reaches sys.modules through logging": "import logging\n\n"
+    "logging.sys.modules['_pytest.python'].Function.runtest = lambda self: None\n",
+    "patches os.environ's class": "import os\n\nos.environ.__class__.__getitem__ = print\n",
 }
 
 
@@ -538,6 +547,8 @@ def test_should_allow_the_stores_ordinary_code_makes_and_name_every_target() -> 
         "logging.root.level = 10\ndel os.environ['X']\n"
     )
     assert hc.tamper_violations(fine) == []
+    forms = "import logging\nimport os\n\nos.environ['A'] = '1'\nlogging.raiseExceptions = False\n"
+    assert hc.tamper_violations(forms) == []
     assert hc.tamper_violations("import sys\n\nsys.modules['x'] = None\n") == [
         "stores into sys.modules['x']"
     ]
@@ -555,8 +566,10 @@ def test_should_not_let_an_old_finding_hide_a_new_kind() -> None:
 
 
 SUMMARIES = {
+    "3 passed, 1 skipped in 0.12s": (False, 2),
+    "3 passed, 1 xfailed in 0.12s": (False, 2),
     "5 passed in 0.12s": (True, 5),
-    "5 passed, 1 skipped, 2 warnings in 1.50s": (True, 5),
+    "5 passed, 2 warnings in 1.50s": (True, 5),
     "1 failed, 4 passed in 0.30s": (False, 5),
     "5 passed, 1 error in 0.30s": (False, 5),
     "1 failed in 0.01s": (False, 1),
@@ -620,3 +633,25 @@ def test_should_count_review_items_by_distinct_requirement_number(
     assert hc.review_covers(reviewed, ["1", "2"], 2) is covers
     assert hc.review_covers(["a", "a"], [], 2) is False
     assert hc.review_covers(["a", "b"], [], 2) is True
+
+
+def test_should_allow_the_skips_the_locked_tests_have_and_no_more() -> None:
+    line = "1 passed, 1 skipped in 0.1s"
+    assert hc.pytest_clean(line, 1, skips=1)
+    assert not hc.pytest_clean(line, 1, skips=0)
+    assert not hc.pytest_clean("1 passed, 1 skipped, 1 xfailed in 0.1s", 1, skips=1)
+    assert hc.pytest_clean("2 passed in 0.1s", 2, skips=1)
+
+
+@pytest.mark.parametrize(
+    ("addopts", "kept"),
+    [
+        ("-q --strict-markers -p no:randomly", "--strict-markers -p no:randomly"),
+        ("-qq -vv --quiet --verbose -x", "-x"),
+        ("-ra --tb=short -q", "-ra --tb=short"),
+        ("-m 'not slow' -v", "-m 'not slow'"),
+        ("", ""),
+    ],
+)
+def test_should_drop_only_the_verbosity_flags_from_a_repos_addopts(addopts: str, kept: str) -> None:
+    assert hc.quiet_addopts(addopts) == kept
