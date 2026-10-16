@@ -6,12 +6,13 @@ from jarvis import policy
 from jarvis.contract import ErrorInfo, FinalResponse
 from jarvis.fastpath import responses
 from jarvis.fastpath.intents import VolumeStep
+from jarvis.policy import registry
 from tests.fastpath_fakes import FakeDesktop, allow_gate, run
 
 
 @pytest.fixture(autouse=True)
 def clean_registry(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(policy, "_REGISTRY", dict(policy._REGISTRY))
+    monkeypatch.setattr(registry, "_REGISTRY", dict(registry._REGISTRY))
 
 
 def error_of(response: FinalResponse) -> ErrorInfo:

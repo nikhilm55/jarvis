@@ -9,15 +9,15 @@ from typing import Any
 import pytest
 
 from jarvis import log as jlog
-from jarvis import paths, policy
-from jarvis.policy import Mode, Tier, ToolSpec, gate, get, register
+from jarvis import paths
+from jarvis.policy import Mode, Tier, ToolSpec, gate, get, legacy, register, registry
 
 MODES: tuple[Mode, ...] = ("safe", "balanced", "yolo")
 
 
 @pytest.fixture(autouse=True)
 def clean_registry(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(policy, "_REGISTRY", dict(policy._REGISTRY))
+    monkeypatch.setattr(registry, "_REGISTRY", dict(registry._REGISTRY))
 
 
 @pytest.fixture(autouse=True)
@@ -276,7 +276,7 @@ def test_should_deny_when_audit_fails(
     def boom(*args: object, **kwargs: object) -> None:
         raise RuntimeError("secret-token-abc")
 
-    monkeypatch.setattr(policy, "audit", boom)
+    monkeypatch.setattr(legacy, "audit", boom)
     d = gate("desktop.volume_get", {}, "yolo")
     assert d.allowed is False
     assert d.reason == "policy error: audit unavailable"
@@ -304,7 +304,7 @@ def test_should_deny_when_decision_logic_raises(
     def boom(*args: object, **kwargs: object) -> None:
         raise ValueError("boom")
 
-    monkeypatch.setattr(policy, "_decide", boom)
+    monkeypatch.setattr(legacy, "_decide", boom)
     d = gate("desktop.volume_get", {}, "balanced")
     assert d.allowed is False
     assert d.reason == "policy error: ValueError"
@@ -318,7 +318,7 @@ def test_should_deny_for_every_mode_when_audit_fails(
     def boom(*args: object, **kwargs: object) -> None:
         raise RuntimeError("x")
 
-    monkeypatch.setattr(policy, "audit", boom)
+    monkeypatch.setattr(legacy, "audit", boom)
     d = gate("desktop.volume_get", {}, mode)
     assert d.allowed is False
     assert d.reason == "policy error: audit unavailable"
@@ -330,7 +330,7 @@ def test_should_not_swallow_keyboard_interrupt(
     def boom(*args: object, **kwargs: object) -> None:
         raise KeyboardInterrupt()
 
-    monkeypatch.setattr(policy, "audit", boom)
+    monkeypatch.setattr(legacy, "audit", boom)
     with pytest.raises(KeyboardInterrupt):
         gate("desktop.volume_get", {}, "yolo")
 
