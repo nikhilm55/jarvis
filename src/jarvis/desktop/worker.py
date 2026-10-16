@@ -39,17 +39,17 @@ def _bool_arg(args: dict[str, object], name: str) -> bool:
 
 def _dispatch(backend: DesktopBackend, op: str, args: dict[str, object]) -> dict[str, object]:
     if op == "open_app":
-        return backend.open_app(_str_arg(args, "query"))
+        return backend.open_app(_str_arg(args, "query"))  # gate-ok: worker runs the op
     if op == "close_app":
-        return backend.close_app(_str_arg(args, "query"))
+        return backend.close_app(_str_arg(args, "query"))  # gate-ok: worker runs the op
     if op == "volume_get":
-        return backend.volume_get()
+        return backend.volume_get()  # gate-ok: worker runs the op
     if op == "volume_set":
-        return backend.volume_set(_int_arg(args, "pct"))
+        return backend.volume_set(_int_arg(args, "pct"))  # gate-ok: worker runs the op
     if op == "volume_step":
-        return backend.volume_step(_int_arg(args, "delta"))
+        return backend.volume_step(_int_arg(args, "delta"))  # gate-ok: worker runs the op
     if op == "mute":
-        return backend.mute(_bool_arg(args, "on"))
+        return backend.mute(_bool_arg(args, "on"))  # gate-ok: worker runs the op
     raise WorkerError("INTERNAL", f"unknown op {op!r}")
 
 
