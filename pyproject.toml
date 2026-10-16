@@ -52,6 +52,7 @@ ignore = ["PLR2004"]
 ".claude/hooks/**" = ["S603", "S607", "E501"]  # one-line veto messages read best
 "scripts/**" = ["S603", "S607"]
 "spikes/**" = ["S603", "S607", "S101", "E501", "T201", "PLC0415", "PLR0915"]  # throwaway measurement code
+"tools/**" = ["S603", "S607", "S101", "S311", "E501", "T201", "PLC0415", "PLR0915"]  # dev-only pipelines, same as spikes/**
 
 # ── Types ──────────────────────────────────────────────────────────────────
 [tool.mypy]

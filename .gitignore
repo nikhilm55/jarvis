@@ -38,6 +38,7 @@ models/
 *.wav
 !tests/fixtures/**/*.wav
 spikes/**/output/
+tools/wakeword/data/
 spikes/**/data/
 
 # OS / editors
