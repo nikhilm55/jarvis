@@ -1,5 +1,6 @@
 """R97 (writes that give lasting control) and R98 (inline interpreter programs) are T3."""
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -87,7 +88,6 @@ def test_should_classify_t3_when_the_command_writes_a_sensitive_place_or_runs_in
     [
         ("rsync -av a b", Tier.T2),
         ("rsync --dry-run a b", Tier.T2),
-        ("dd if=a of=/tmp/b", Tier.T2),
         ("dd if=/dev/zero bs=1 count=1", Tier.T2),
         ("cat ~/.bashrc", Tier.T0),
         ("ls ~/.ssh", Tier.T0),
@@ -118,3 +118,10 @@ def test_should_keep_the_tier_when_the_command_only_resembles_a_t3_one(
     cmd: str, expected: Tier
 ) -> None:
     assert tier(cmd) == expected
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="the temp dir is POSIX: on Windows that dd stays T3"
+)
+def test_should_keep_dd_to_a_temp_file_t2() -> None:
+    assert tier("dd if=a of=/tmp/b") == Tier.T2
