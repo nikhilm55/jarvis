@@ -7,12 +7,17 @@ Candidates:
   A  openWakeWord stock "hey_jarvis" model, scored on plain "Jarvis" (several thresholds)
   B  Whisper first-word gate alone (whisper.cpp tiny.en / base.en): accept iff first word ~ "jarvis"
   C  A at a low threshold, confirmed by B (the FRS design: detector + STT first-word gate)
+  D  C with a fuzzy first-word match
+  E  a custom wake model, given as --model PATH (an openWakeWord-format ONNX classifier), scored
+     alone and behind D's gate on the same cached transcripts. Its scores are cached per file hash.
 Assumes ideal utterance segmentation (one clip = one utterance); real VAD is M1 work.
 """
 
 from __future__ import annotations
 
+import argparse
 import csv
+import hashlib
 import json
 import os
 import re
@@ -25,7 +30,9 @@ from pathlib import Path
 from openwakeword.model import Model
 
 HERE = Path(__file__).resolve().parent
-DATA = HERE / "data"
+DATA = Path(
+    os.environ.get("M0A_DATA", HERE / "data")
+)  # point at a scratch copy to keep the original read-only
 CLIPS = DATA / "clips"
 OWW = DATA / "models" / "oww"
 WHISPER_BIN = Path.home() / "whispercpp" / "whisper.cpp" / "build" / "bin" / "whisper-cli"
@@ -34,6 +41,7 @@ WHISPER_MODELS = {
     "base.en": DATA / "models" / "whisper" / "ggml-base.en.bin",
 }
 THRESHOLDS = [0.05, 0.1, 0.2, 0.3, 0.5]
+E_THRESHOLDS = [0.005, 0.02, 0.05, 0.1, 0.2, 0.3, 0.5, 0.7, 0.9]
 PROMPT = "Jarvis"
 VARIANTS = {"jarvis", "jervis", "jarvas", "jarviss", "jarvi", "javis"}
 POSITIVE = ("jarvis_command", "jarvis_alone")
@@ -49,9 +57,11 @@ def wav_path(row: dict[str, str]) -> Path:
     return CLIPS / row["category"] / f"{row['clip']}.wav"
 
 
-def score_oww(rows: list[dict[str, str]]) -> tuple[dict[str, float], float]:
+def score_oww(
+    rows: list[dict[str, str]], classifier: Path = OWW / "hey_jarvis_v0.1.onnx"
+) -> tuple[dict[str, float], float]:
     model = Model(
-        wakeword_models=[str(OWW / "hey_jarvis_v0.1.onnx")],
+        wakeword_models=[str(classifier)],
         inference_framework="onnx",
         melspec_model_path=str(OWW / "melspectrogram.onnx"),
         embedding_model_path=str(OWW / "embedding_model.onnx"),
@@ -148,6 +158,18 @@ def rate(hits: list[bool]) -> str:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("--model", type=Path, help="candidate E: a custom wake model (.onnx)")
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        nargs="*",
+        default=[],
+        help="extra E thresholds, e.g. the one chosen on validation data before looking at M0a",
+    )
+    args = parser.parse_args()
+    if args.model is not None and not args.model.is_file():
+        parser.error(f"--model {args.model}: no such file")
     rows = manifest()
     by_cat: dict[str, list[dict[str, str]]] = defaultdict(list)
     for row in rows:
@@ -213,18 +235,37 @@ def main() -> int:
 
     # D: tolerate near-misses ("darvis", "garvis") while rejecting real sound-alike words.
     # NOTE: REAL_WORDS was partly chosen from misses seen on this same set -> optimistic; validate on held-out/real voice.
-    def fuzzy(m: str, max_edits: int):  # type: ignore[no-untyped-def]
+    def fuzzy(scores: dict[str, float], threshold: float, m: str, max_edits: int):  # type: ignore[no-untyped-def]
         def accept(r: dict[str, str]) -> bool:
             word = first_word(saved["whisper"][m]["texts"].get(r["clip"], "")).removesuffix("'s")
             near = word not in REAL_WORDS and levenshtein(word, "jarvis") <= max_edits
-            return oww[r["clip"]] >= 0.005 and (word in VARIANTS or near)
+            return scores[r["clip"]] >= threshold and (word in VARIANTS or near)
 
         return accept
 
     table(
         "D — oww ≥ 0.005 + Whisper gate with fuzzy first-word match",
-        [(f"{m}, ≤{k} edits", fuzzy(m, k)) for k in (1, 2) for m in ("tiny.en+prompt", "base.en")],
+        [
+            (f"{m}, ≤{k} edits", fuzzy(oww, 0.005, m, k))
+            for k in (1, 2)
+            for m in ("tiny.en+prompt", "base.en")
+        ],
     )
+
+    if args.model is not None:
+        # E: the custom model. Same set, same cached transcripts; D's gate is the "+ gate" rows.
+        key = hashlib.sha256(args.model.read_bytes()).hexdigest()[:12]
+        custom, _ = cached(f"oww-custom-{key}", lambda: score_oww(rows, args.model))
+        thresholds = sorted({*E_THRESHOLDS, *args.threshold})
+        print(f"\ncandidate E: {args.model.name} (sha256 {key}…)")
+        table(
+            "E — custom model alone",
+            [(f"threshold {t}", lambda r, t=t: custom[r["clip"]] >= t) for t in thresholds],
+        )
+        table(
+            "E+gate — custom model + Whisper tiny.en+prompt, fuzzy first word ≤ 2 edits",
+            [(f"E ≥ {t} + gate", fuzzy(custom, t, "tiny.en+prompt", 2)) for t in thresholds],
+        )
 
     misses = [
         first_word(saved["whisper"]["base.en"]["texts"].get(r["clip"], ""))
