@@ -24,6 +24,8 @@ def _words(text: str) -> frozenset[str]:
 # so no input can make the (uncancellable) classification run long.
 MAX_COMMAND_LENGTH = 4096
 _BUDGET_UNITS = 3 * MAX_COMMAND_LENGTH
+_MAX_WORDS_FOR_SCOPES = 128
+_ACCESS = ("read", "write")
 TOO_LONG_REASON = "too long to check"
 TOO_COMPLEX_REASON = "too complex to check"
 _budget: ContextVar[list[int] | None] = ContextVar("shell_budget", default=None)
@@ -519,4 +521,7 @@ def classify_shell(
 ) -> tuple[Tier, tuple[str, ...]]:
     """Return the tier of a shell command line and the consent scopes its paths touch."""
     tier, segments, _ = _run(cmd)
+    if sum(len(seg) for seg in segments) > _MAX_WORDS_FOR_SCOPES:
+        # Too many words to resolve one by one (each is a filesystem lookup): assume the worst.
+        return tier, tuple(sorted(f"{src}:{mode}" for src in folders.values() for mode in _ACCESS))
     return tier, _scopes(segments, folders, allow)

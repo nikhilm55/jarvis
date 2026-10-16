@@ -9,6 +9,7 @@ import time
 
 import pytest
 
+from jarvis.config import DEFAULT_CONSENT_FOLDERS
 from jarvis.policy.model import Tier
 from jarvis.policy.shell import (
     MAX_COMMAND_LENGTH,
@@ -18,6 +19,7 @@ from jarvis.policy.shell import (
     shell_limit_reason,
 )
 
+_FOLDER_SOURCES = DEFAULT_CONSENT_FOLDERS.values()
 LIMIT_S = 0.25 if os.environ.get("CI") else 0.05  # a generous factor for shared CI runners
 
 
@@ -31,6 +33,7 @@ def corpus() -> dict[str, str]:
         "deep backticks": "echo " + "`echo " * 300 + "ls" + "`" * 300,
         "deep <(": "cat " + "<(cat " * 500 + "ls" + ")" * 500,
         "many tokens": "ls " + "a " * 2040,
+        "many distinct tokens": "ls " + " ".join(f"d{i}/f" for i in range(600)),
         "many commands": "ls;" * 1300,
         "many pipes": "ls |" * 1000 + " wc",
         "rm -f repeated": "rm -f " * 680,
@@ -115,3 +118,10 @@ def test_should_read_a_path_as_a_path_and_a_bare_word_as_a_possible_command(
     cmd: str, expected: Tier
 ) -> None:
     assert classify_shell(cmd)[0] == expected
+
+
+def test_should_assume_every_consent_folder_when_there_are_too_many_words_to_resolve() -> None:
+    few = classify_shell("cat a b c")[1]
+    assert few == ()
+    many = classify_shell("cat " + "a " * 200)[1]
+    assert many == tuple(sorted(f"{s}:{m}" for s in _FOLDER_SOURCES for m in ("read", "write")))
