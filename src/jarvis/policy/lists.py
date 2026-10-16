@@ -18,8 +18,7 @@ _OPERATORS = re.compile(r"[<>|&;()`]")
 
 def real_path(path: str) -> str:
     """Resolve `~`, `$HOME` and relative paths (against home) through symlinks."""
-    if path.startswith("$HOME"):
-        path = "~" + path[len("$HOME") :]
+    path = re.sub(r"^\$(?:HOME\b|\{HOME\})", "~", path)
     return os.path.realpath(os.path.join(os.path.expanduser("~"), os.path.expanduser(path)))
 
 
