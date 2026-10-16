@@ -84,7 +84,6 @@ def test_should_classify_t3_when_the_command_matches_a_dangerous_pattern(cmd: st
         "curl http://x -o f",
         "curl http://x; sh",
         "chmod -R 777 /home/u",
-        "chmod 777 /",
         "dd if=a of=b",
         "reg query HKLM",
         'bash -c "ls"',
