@@ -19,7 +19,7 @@ from jarvis.tts.engines import (
 )
 from jarvis.tts.handle import SpeechHandle
 from jarvis.tts.sink import BLOCK_S, Sink, SoundDeviceSink
-from jarvis.tts.text import split_sentences
+from jarvis.tts.text import split_for_speech
 
 logger = get_logger(__name__)
 
@@ -176,7 +176,7 @@ class Speaker:
             target=_synthesise_into,
             args=(
                 _locked(self._synth_lock, engine.synthesize),
-                split_sentences(job.text),
+                split_for_speech(job.text),
                 clips,
                 stop,
             ),
