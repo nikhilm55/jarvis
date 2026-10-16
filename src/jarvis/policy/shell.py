@@ -19,7 +19,9 @@ def _words(text: str) -> frozenset[str]:
 
 
 _SHELLS = _words("sh bash zsh dash ksh fish")
-_ALWAYS_T3 = _words("sudo doas pkexec format diskpart shutdown reboot poweroff halt")
+_ALWAYS_T3 = _words(
+    "sudo doas pkexec su format diskpart shutdown reboot poweroff halt shred wipefs"
+)
 _T0 = _words("ls cat head tail wc pwd df du ps uptime which echo date whoami git")
 _READ = _words("ls cat head tail wc pwd git du df ps which date whoami")
 _GIT_SUBS = _words("status log diff branch show")
@@ -71,6 +73,19 @@ _GIT_SAFE_SHORT = re.compile(r"-(?:[0-9]+|[nsbpuvq]|U[0-9]+|n[0-9]+)")
 _SHELL_C = re.compile(r"-[a-z]*c[a-z]*")
 _RECURSIVE = re.compile(r"-[A-Za-z]*R[A-Za-z]*|--recursive")
 _FORK_BOMB = ":(){:|:&};:"
+_INTERPRETER = re.compile(r"python[0-9.]*|perl|ruby|nodejs|node|php|lua")
+# The flag that hands an interpreter its program text, per language (R94).
+_CODE_FLAG = re.compile(
+    r"python[0-9.]*:-[A-Za-z]*c|perl:-[A-Za-z]*[eE]|ruby:-[A-Za-z]*e|node(?:js)?:(?:-[ep]|--eval|--print)"
+    r"|php:-r|lua:-e"
+)
+_DESTRUCTIVE_CODE = re.compile(
+    r"rmtree|os\.(?:remove|rmdir|unlink|removedirs)|unlink|removedirs|rmSync|rimraf"
+    r"|\brm\s+-[A-Za-z]*[rRfF]|\brm\s+--(?:recursive|force)|\bshred\b"
+)
+_EXEC_FLAGS = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
+_DELETERS = frozenset({"rm", "rmdir", "shred", "unlink"})
+_STOPPING = frozenset({"stop", "disable", "mask"})
 _UNPARSEABLE_T3 = _words("sudo doas pkexec shutdown reboot poweroff")
 
 
@@ -171,10 +186,89 @@ def _del(args: list[str]) -> bool:
     return any(a.lower() == "/s" for a in args)
 
 
+def _is_root(resolved: str) -> bool:
+    """A filesystem root: `/` (or `C:\\` on Windows)."""
+    return os.path.dirname(resolved) == resolved
+
+
+def _is_home_or_root(path: str) -> bool:
+    resolved = real_path(path)
+    return _is_root(resolved) or resolved == real_path("~")
+
+
+def _is_top_level(path: str) -> bool:
+    """Home, a root, or a directory directly under one (/etc)."""
+    return _is_home_or_root(path) or _is_root(os.path.dirname(real_path(path)))
+
+
+def _chperm(args: list[str]) -> bool:
+    """`chmod`/`chown` of `/` or home, or recursively of `/*`."""
+    return _chmod(args) or any(_is_home_or_root(word) for word in _flags(args)[1])
+
+
+def _mv(args: list[str]) -> bool:
+    """`mv` of home, `/` or a top-level directory (a variable could be any of them)."""
+    flags, words = _flags(args)
+    if "-t" in flags:
+        words = words[1:]  # `-t DIR` names the destination, not a source
+    return any("$" in word or "`" in word or _is_top_level(word) for word in words)
+
+
+def _find(args: list[str]) -> bool:
+    """`find … -delete`, or `-exec rm` (and friends)."""
+    if "-delete" in args:
+        return True
+    return any(
+        arg in _EXEC_FLAGS and os.path.basename(args[i + 1]).lower() in _DELETERS
+        for i, arg in enumerate(args[:-1])
+    )
+
+
+def _git(args: list[str]) -> bool:
+    """`git clean` that forces and removes directories or ignored files."""
+    if "clean" not in args:
+        return False
+    flags = _flags(args[args.index("clean") + 1 :])[0]
+    return bool(flags & {"-f", "--force"}) and bool(flags & {"-d", "-x", "-X"})
+
+
+def _kill(args: list[str]) -> bool:
+    """`kill`/`pkill` aimed at PID 1 or at every process (`-1`)."""
+    return any(arg in {"1", "-1"} for arg in args)
+
+
+def _firewall(args: list[str]) -> bool:
+    return bool(_flags(args)[0] & {"-F", "--flush"}) or "flush" in args
+
+
+def _interpreter_code(name: str, args: list[str]) -> bool:
+    """An interpreter's inline program (`python -c`, `perl -e`...) that deletes files.
+
+    A code flag with no program after it cannot be read, so it counts as destructive.
+    """
+    for i, arg in enumerate(args):
+        if arg.startswith("-") and _CODE_FLAG.fullmatch(f"{name}:{arg}"):
+            return i + 1 >= len(args) or bool(_DESTRUCTIVE_CODE.search(args[i + 1]))
+    return False
+
+
 _T3_CHECKS: dict[str, Callable[[list[str]], bool]] = {
     "rm": _rm,
-    "chmod": _chmod,
-    "chown": _chmod,
+    "chmod": _chperm,
+    "chown": _chperm,
+    "mv": _mv,
+    "find": _find,
+    "git": _git,
+    "crontab": lambda args: "-r" in _flags(args)[0],
+    "kill": _kill,
+    "pkill": _kill,
+    "killall": _kill,
+    "systemctl": lambda args: bool(_STOPPING & set(args)),
+    "ufw": lambda args: "disable" in args,
+    "setenforce": lambda args: bool({"0", "permissive"} & {a.lower() for a in args}),
+    "iptables": _firewall,
+    "ip6tables": _firewall,
+    "nft": _firewall,
     "dd": lambda args: any(a.startswith("of=/dev/") for a in args),
     "reg": _reg,
     "del": _del,
@@ -193,7 +287,10 @@ def _is_t3(segments: list[list[str]], seps: list[str]) -> bool:
         for pos, token in enumerate(seg):  # every position: wrappers, `cat <(rm x)`, `if`, `time`
             name = os.path.basename(token).lower()
             check = _T3_CHECKS.get(name)
-            if name in _ALWAYS_T3 or name.startswith("mkfs") or (check and check(seg[pos + 1 :])):
+            args = seg[pos + 1 :]
+            if name in _ALWAYS_T3 or name.startswith("mkfs") or (check and check(args)):
+                return True
+            if _INTERPRETER.fullmatch(name) and _interpreter_code(name, args):
                 return True
         if seps[i] == "|" and _pipes_to_shell(seg, segments[i + 1]):
             return True
