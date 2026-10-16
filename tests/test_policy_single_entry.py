@@ -43,6 +43,8 @@ def _is_tool_impl(node: ast.AST) -> TypeGuard[ast.FunctionDef | ast.AsyncFunctio
 
 
 def _callee_of_decorator(node: ast.expr) -> str | None:
+    if isinstance(node, ast.Call):  # `@tool_impl("name")`
+        return _callee_of_decorator(node.func)
     if isinstance(node, ast.Name):
         return node.id
     return node.attr if isinstance(node, ast.Attribute) else None
@@ -112,7 +114,7 @@ def test_should_find_no_call_that_bypasses_gated_dispatch_in_the_product_code() 
             "outside a tool",
         ),
         (
-            "@tool_impl\nasync def run(a):\n    return 1\n\nasync def f():\n    return run({})\n",
+            "@tool_impl('x')\nasync def run(a):\n    return 1\nasync def f():\n    run(1)\n",
             "mcp/server.py",
             "directly",
         ),
@@ -133,7 +135,7 @@ def test_should_flag_a_call_that_routes_around_the_gate(
 @pytest.mark.parametrize(
     ("source", "path"),
     [
-        ("@tool_impl\nasync def run(a):\n    return await d.open_app('x')\n", "fastpath/x.py"),
+        ("@tool_impl('x')\nasync def run(a):\n    return await d.open_app('x')\n", "fastpath/x.py"),
         (
             "from jarvis.policy import decide\ndef f(c, m, x):\n    return decide(c, m, x)\n",
             "policy/gated.py",
