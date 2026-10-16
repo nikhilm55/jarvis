@@ -6,7 +6,7 @@ import pytest
 
 from jarvis.config import PolicySettings
 from jarvis.policy import Tier, ToolSpec
-from jarvis.policy.lists import denied, path_scopes
+from jarvis.policy.lists import UNRESOLVABLE_REASON, denied, path_scopes
 from jarvis.policy.model import max_tier
 
 
@@ -61,7 +61,6 @@ def test_should_deny_when_a_symlink_points_into_a_denied_path(home: Path) -> Non
         {"path": "~/work/a"},
         {"path": "~/secrets-old/a"},
         {"cmd": "ls ~/work"},
-        {"text": "~/secrets/key"},
         {"cmd": 7},
     ],
 )
@@ -118,3 +117,73 @@ def test_should_reject_a_classifier_that_is_not_callable() -> None:
     with pytest.raises(ValueError, match="classify"):
         ToolSpec("x.tool", Tier.T1, classify="nope")  # type: ignore[arg-type]
     assert ToolSpec("x.tool", Tier.T1, undoable=True).undoable is True
+
+
+ESCAPES: list[dict[str, object]] = [
+    {"cmd": "cat ${HOME}/secrets/k"},
+    {"cmd": "cat ~/work/{secrets,x}/k"},
+    {"cmd": "cd ~/work && cat secrets/k"},
+    {"cmd": "pushd ~/work; cat secrets/k"},
+    {"cmd": "tar -C~/work -cf x secrets"},
+    {"cmd": "grep -f~/secrets/k x"},
+    {"cmd": "cat $X/k"},
+    {"cmd": "cat `echo ~/secrets`/k"},
+    {"cmd": "cat <(echo x)"},
+    {"cmd": "echo 'unclosed"},
+    {"cmd": ["cat", "~/work/x"]},
+    {"command": {"run": "cat ~/work/x"}},
+    {"path": "$X/secrets"},
+    {"path": "~/work/{secrets,x}"},
+    {"files": ["~/work/a", "${Y}/b"]},
+    {"note": "~/secrets/k"},
+    {"opts": {"a": [{"b": "~/secrets/k"}]}},
+    {"args": [["~/secrets/k"]]},
+    {"deep": [[[[[[[[[["~/work/x"]]]]]]]]]]},
+]
+
+
+@pytest.mark.parametrize("args", ESCAPES, ids=[str(a)[:50] for a in ESCAPES])
+def test_should_deny_an_escape_when_a_deny_list_is_set_and_allow_it_when_none_is(
+    home: Path, args: dict[str, object]
+) -> None:
+    assert denied(args, deny()) is not None
+    assert denied(args, deny(paths=[], commands=["^never$"])) is not None
+    assert denied(args, PolicySettings()) is None
+
+
+def test_should_say_the_call_cannot_be_traced_when_it_is_denied_for_that() -> None:
+    reason = denied({"cmd": "cd ~/work && ls"}, deny())
+    assert reason == UNRESOLVABLE_REASON
+    assert "spell the path out" in reason
+
+
+@pytest.mark.parametrize("depth", range(0, 7))
+@pytest.mark.parametrize("shape", ["list", "dict", "mixed"])
+@pytest.mark.parametrize("key", ["path", "text", "anything", "cmd"])
+def test_should_deny_a_deny_listed_path_at_any_key_and_depth(
+    home: Path, key: str, shape: str, depth: int
+) -> None:
+    value: object = "~/secrets/k" if key != "cmd" else "cat ~/secrets/k"
+    for level in range(depth):
+        wrap = shape if shape != "mixed" else ("list" if level % 2 else "dict")
+        value = [value] if wrap == "list" else {"k": value}
+    args: dict[str, object] = {key: value}
+    if key == "cmd" and depth:
+        assert denied(args, deny()) is not None  # a nested command is a list or object: refused
+    else:
+        reason = denied(args, deny())
+        assert reason is not None
+        assert reason == UNRESOLVABLE_REASON or "deny list" in reason
+
+
+def test_should_keep_allowing_a_traced_call_that_stays_off_the_deny_list(home: Path) -> None:
+    cases: list[dict[str, object]] = [
+        {"cmd": "ls ~/work"},
+        {"cmd": "cat $HOME/work/a"},
+        {"cmd": "cat ${HOME}/work/a"},
+        {"cmd": "grep -rn x ~/work"},
+        {"path": "~/work/a", "n": 3, "flag": True, "none": None},
+        {"files": ["~/work/a", "~/work/b"], "opts": {"a": ["b"]}},
+    ]
+    for args in cases:
+        assert denied(args, deny()) is None, args
