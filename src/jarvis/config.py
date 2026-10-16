@@ -107,6 +107,14 @@ class PolicySettings(_Section):
         return patterns
 
 
+class ConsentSettings(_Section):
+    """Consent behaviour (FRS 5.11): how long a question waits and when grants expire."""
+
+    ask_timeout_s: float = Field(default=15, gt=0, le=300)  # no answer in time is a no (FR-CON-07)
+    always_expiry_days: int | None = Field(default=None, ge=1, le=3650)  # None: until revoked
+    yolo_asks_first_touch: bool = False  # FR-CON-10: YOLO asks once per source when on
+
+
 class Settings(_Section):
     audio: AudioSettings = Field(default_factory=AudioSettings)
     wake: WakeSettings = Field(default_factory=WakeSettings)
@@ -117,6 +125,7 @@ class Settings(_Section):
     hud: HudSettings = Field(default_factory=HudSettings)
     user: UserSettings = Field(default_factory=UserSettings)
     policy: PolicySettings = Field(default_factory=PolicySettings)
+    consent: ConsentSettings = Field(default_factory=ConsentSettings)
 
 
 def _describe(problem: ErrorDetails) -> str:
