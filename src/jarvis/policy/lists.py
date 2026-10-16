@@ -59,18 +59,38 @@ def _shell_paths(cmd: str) -> list[str]:
     return paths
 
 
-def shell_target(cmd: str) -> tuple[str, str | None]:
-    """The command word and the last path-like argument of a command line's last command."""
+_LEADING = frozenset({"sudo", "doas", "env", "nohup", "time", "nice", "command", "exec"})
+
+
+def shell_targets(cmd: str) -> tuple[str, list[str]]:
+    """The command and the non-option words after it, for a command line's last command."""
     last = [part for part in re.split(r"[;&|\n]+", cmd) if part.strip()][-1:]
     try:
         words = shlex.split(last[0]) if last else []
     except ValueError:
         words = last[0].split() if last else []
-    words = [w for w in words if "=" not in w.split("/")[0]]
+    words = [w for w in words if "=" not in w.split("/")[0] and os.path.basename(w) not in _LEADING]
+    words = [w for w in words if not w.startswith("-") or w is words[0]]
     if not words:
-        return "run", None
-    rest = [w for w in words[1:] if not w.startswith("-")]
-    return os.path.basename(words[0]), (rest[-1] if rest else None)
+        return "run", []
+    return os.path.basename(words[0]), words[1:]
+
+
+def speak_targets(verb: str, targets: list[str]) -> str:
+    """ "confirm rm ~/a", "confirm rm 2 paths: ~/a, ~/b", or "confirm rm 5 paths in ~/x"."""
+    names = [t.rstrip("/") or t for t in targets]
+    if not names:
+        return f"confirm {verb}"
+    if len(names) == 1:
+        return f"confirm {verb} {names[0]}"
+    if len(names) <= 3:
+        return f"confirm {verb} {len(names)} paths: {', '.join(names)}"
+    parents = [os.path.dirname(n) or "." for n in names]
+    try:
+        common = os.path.commonpath(parents) or "."
+    except ValueError:  # paths on different drives
+        common = "several places"
+    return f"confirm {verb} {len(names)} paths in {common}"
 
 
 def path_args(args: Mapping[str, object]) -> list[str]:

@@ -21,12 +21,13 @@ from typing import TypeGuard
 
 import pytest
 
+import jarvis.fastpath
+import jarvis.mcp.tools  # noqa: F401  (registers jarvis.*)
+from jarvis.policy import Tier, ToolSpec, registry
+
 SRC = Path(__file__).resolve().parent.parent / "src" / "jarvis"
 GATE = "policy/gated.py"
 
-_OPERATIONS = frozenset(
-    {"open_app", "close_app", "volume_get", "volume_set", "volume_step", "mute"}
-)
 _DECIDERS = frozenset({"decide", "gate"})
 _DISPATCHES = frozenset({"dispatch", "_dispatch"})
 _MARKER = re.compile(r"#\s*gate-ok:\s*(\S.*?)\s*$")
@@ -96,73 +97,110 @@ def _collect(tree: ast.Module, impls: set[str]) -> set[str]:
     return handlers
 
 
-def scan(source: str, path: str, impl_names: frozenset[str] = frozenset()) -> Scan:
-    """Every way `source` (a module at `path` under src/jarvis) reaches a tool outside the gate."""
-    tree = ast.parse(source)
-    result = Scan(marked=_markers(source))
-    impls = {n.name for n in ast.walk(tree) if _is_impl(n)}
-    impls |= {  # an impl from another module counts where this one imports it (under any name)
-        a.asname or a.name
-        for n in ast.walk(tree)
-        if isinstance(n, ast.ImportFrom)
-        for a in n.names
-        if a.name in impl_names
-    }
-    handlers = _collect(tree, impls)
+class _Scanner:
+    """Walks one module and records every way it reaches a tool outside the gate."""
 
-    statement = [0, 0]  # line range of the innermost simple statement being visited
+    def __init__(
+        self, source: str, path: str, impl_names: frozenset[str], operations: frozenset[str]
+    ) -> None:
+        self.tree = ast.parse(source)
+        self.path = path
+        self.operations = operations
+        self.result = Scan(marked=_markers(source))
+        self.consumed: set[int] = set()  # a marker excuses exactly one finding
+        self.statement = [0, 0]  # line range of the innermost simple statement being visited
+        self.impls = {n.name for n in ast.walk(self.tree) if _is_impl(n)}
+        self.impls |= {  # an impl from another module counts where this one imports it
+            a.asname or a.name
+            for n in ast.walk(self.tree)
+            if isinstance(n, ast.ImportFrom)
+            for a in n.names
+            if a.name in impl_names
+        }
+        self.handlers = _collect(self.tree, self.impls)
 
-    def flag(node: ast.AST, what: str) -> None:
-        """Record a finding unless a marker sits on a line of the statement it is in."""
+    def flag(self, node: ast.AST, what: str) -> None:
+        """Record a finding unless an unused marker sits on a line of the statement it is in."""
         line = getattr(node, "lineno", 0)
-        lo, hi = (
-            (statement[0], statement[1]) if statement[0] <= line <= statement[1] else (line, line)
-        )
-        marks = [m for m in range(lo, hi + 1) if m in result.marked]
+        inside = self.statement[0] <= line <= self.statement[1]
+        lo, hi = (self.statement[0], self.statement[1]) if inside else (line, line)
+        marks = [m for m in range(lo, hi + 1) if m in self.result.marked and m not in self.consumed]
         if marks:
-            result.used.append((marks[0], result.marked[marks[0]]))
+            self.consumed.add(marks[0])
+            self.result.used.append((marks[0], self.result.marked[marks[0]]))
         else:
-            result.findings.append(f"{path}:{line}: {what}")
+            self.result.findings.append(f"{self.path}:{line}: {what}")
 
-    def check_call(node: ast.Call, inside: bool) -> None:
+    def call(self, node: ast.Call, inside: bool) -> None:
         func, name = node.func, _callee(node.func)
-        if name in _DECIDERS and path != GATE and _decides(node, tree):
-            flag(node, f"{name}() decides outside the gate")
-        if isinstance(func, ast.Attribute) and name in _DISPATCHES and not inside:
-            flag(node, f".{name}() dispatches outside a tool implementation")
-        if name == "TurnTools" or (name in handlers and not inside):
-            flag(node, f"{name}() uses a TurnTools turn handler")
-        if isinstance(func, ast.Name) and func.id in impls:
-            flag(node, f"{func.id}() calls a tool implementation directly")
+        if name in _DECIDERS and self.path != GATE and _decides(node, self.tree):
+            self.flag(node, f"{name}() decides outside the gate")
+        if name == "TurnTools" or (name in self.handlers and not inside):
+            self.flag(node, f"{name}() uses a TurnTools turn handler")
+        if isinstance(func, ast.Name) and func.id in self.impls:
+            self.flag(node, f"{func.id}() calls a tool implementation directly")
         if isinstance(func, ast.Subscript) or (
             isinstance(func, ast.Call) and _callee(func.func) in {"get", "pop", "setdefault"}
         ):
-            flag(node, "calls a function taken out of a table")
-        if path != GATE and any(k.arg == "impls" for k in node.keywords):
-            flag(node, "builds the impl table (impls=...) outside the gate")
+            self.flag(node, "calls a function taken out of a table")
+        if self.path != GATE and any(k.arg == "impls" for k in node.keywords):
+            self.flag(node, "builds the impl table (impls=...) outside the gate")
         if name == "TurnContext" and len(node.args) >= 6:
-            flag(node, "builds the impl table (6th TurnContext argument) outside the gate")
+            self.flag(node, "builds the impl table (6th TurnContext argument) outside the gate")
 
-    def visit(node: ast.AST, inside_impl: bool) -> None:
+    def attribute(self, node: ast.Attribute, inside: bool) -> None:
+        if node.attr == "impls" and self.path != GATE:
+            self.flag(node, "reads or sets .impls outside the gate")
+        taken = node.attr in _DISPATCHES and isinstance(node.ctx, ast.Load)
+        if taken and not inside:
+            self.flag(node, f".{node.attr} (the brain's dispatch) taken outside an implementation")
+        if node.attr in self.operations and not inside:
+            self.flag(node, f".{node.attr} (a tool operation) used outside gated_dispatch")
+
+    def imports(self, node: ast.Import | ast.ImportFrom) -> None:
+        if isinstance(node, ast.ImportFrom) and any(a.name == "call_desktop" for a in node.names):
+            self.flag(node, "call_desktop imported outside gated_dispatch")
+        if self.path.startswith("policy/"):
+            return
+        names = [a.name for a in node.names]
+        module_decide = isinstance(node, ast.ImportFrom) and _imports_decide(node)
+        if module_decide or any(n.endswith((".decide", "._decide")) for n in names):
+            self.flag(node, "decide imported outside the policy package (any alias)")
+
+    def visit(self, node: ast.AST, inside_impl: bool) -> None:
         inside = inside_impl or _is_impl(node)
         if isinstance(node, ast.stmt) and not hasattr(node, "body"):
-            statement[:] = [node.lineno, node.end_lineno or node.lineno]
+            self.statement[:] = [node.lineno, node.end_lineno or node.lineno]
         if isinstance(node, ast.Call):
-            check_call(node, inside)
+            self.call(node, inside)
         elif isinstance(node, ast.Attribute):
-            if node.attr == "impls" and path != GATE:
-                flag(node, "reads or sets .impls outside the gate")
-            if node.attr in _OPERATIONS and not inside:
-                flag(node, f".{node.attr} (a tool operation) used outside gated_dispatch")
+            self.attribute(node, inside)
         elif isinstance(node, ast.Name) and node.id == "call_desktop" and not inside:
-            flag(node, "call_desktop used outside gated_dispatch")
-        elif isinstance(node, ast.ImportFrom) and any(a.name == "call_desktop" for a in node.names):
-            flag(node, "call_desktop imported outside gated_dispatch")
+            self.flag(node, "call_desktop used outside gated_dispatch")
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            self.imports(node)
         for child in ast.iter_child_nodes(node):
-            visit(child, inside)
+            self.visit(child, inside)
 
-    visit(tree, False)
-    return result
+
+def scan(
+    source: str,
+    path: str,
+    impl_names: frozenset[str] = frozenset(),
+    operations: frozenset[str] | None = None,
+) -> Scan:
+    """Every way `source` (a module at `path` under src/jarvis) reaches a tool outside the gate."""
+    scanner = _Scanner(
+        source, path, impl_names, product_operations() if operations is None else operations
+    )
+    scanner.visit(scanner.tree, False)
+    return scanner.result
+
+
+def _imports_decide(node: ast.ImportFrom) -> bool:
+    return (node.module or "").endswith(".decide") or any(
+        a.name in {"decide", "_decide"} for a in node.names
+    )
 
 
 def _decides(node: ast.Call, tree: ast.Module) -> bool:
@@ -177,6 +215,46 @@ def _decides(node: ast.Call, tree: ast.Module) -> bool:
     if isinstance(func, ast.Name):
         return func.id in imported
     return isinstance(func, ast.Attribute) and _callee(func.value) in {"policy", "decide", "legacy"}
+
+
+def derive_operations(sources: dict[str, str]) -> frozenset[str]:
+    """The tool operations, read off the impls rather than listed by hand.
+
+    An operation is a method an `@tool_impl` function calls on a client, plus the registered
+    tool names (the part after the dot) in a namespace whose impls call such methods.
+    """
+    methods: set[str] = set()
+    namespaces: set[str] = set()
+    for text in sources.values():
+        for node in ast.walk(ast.parse(text)):
+            if not _is_impl(node):
+                continue
+            called = {
+                c.func.attr
+                for c in ast.walk(node)
+                if isinstance(c, ast.Call)
+                and isinstance(c.func, ast.Attribute)
+                and c.func.attr not in _DISPATCHES
+            }
+            methods |= called
+            for deco in node.decorator_list:
+                if isinstance(deco, ast.Call) and deco.args and called:
+                    first = deco.args[0]
+                    if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                        namespaces.add(first.value.split(".")[0])
+    registered = {
+        name.split(".", 1)[1] for name in registry._REGISTRY if name.split(".")[0] in namespaces
+    }
+    return frozenset(methods | registered)
+
+
+_OPS_CACHE: list[frozenset[str]] = []
+
+
+def product_operations() -> frozenset[str]:
+    if not _OPS_CACHE:
+        _OPS_CACHE.append(derive_operations(_product()))
+    return _OPS_CACHE[0]
 
 
 def _product() -> dict[str, str]:
@@ -223,7 +301,7 @@ def test_should_list_every_gate_ok_marker_and_keep_none_that_is_stale() -> None:
         (
             "async def f(b):\n    return await b.dispatch('desktop.close_app', {})\n",
             "x.py",
-            "dispatches",
+            "dispatch",
         ),
         ("def f(h):\n    return TurnTools('t', h, None, 3)\n", "orchestrator/new.py", "TurnTools"),
         (
@@ -274,7 +352,7 @@ def test_should_list_every_gate_ok_marker_and_keep_none_that_is_stale() -> None:
             "desktop/worker.py",
             "tool operation",
         ),
-        ("async def f(s):\n    return await s._dispatch('n', {})\n", "mcp/server.py", "dispatches"),
+        ("async def f(s):\n    return await s._dispatch('n', {})\n", "mcp/server.py", "dispatch"),
         # the M1 gate's roads
         (
             "from jarvis.policy import decide\ndef f(c, m, x):\n    return decide(c, m, x)\n",
@@ -326,3 +404,69 @@ def test_should_report_a_marker_that_hides_nothing_as_stale() -> None:
     result = scan("x = 1  # gate-ok: nothing here\n", "x.py")
     assert result.marked == {1: "nothing here"}
     assert result.used == []
+
+
+def test_should_derive_the_tool_operations_from_the_impls_not_from_a_list() -> None:
+    assert product_operations() == {
+        "open_app",
+        "close_app",
+        "volume_get",
+        "volume_set",
+        "volume_step",
+        "mute",
+    }  # not `time`, `date` or `say`: those namespaces' impls call no client method
+
+
+def test_should_cover_a_new_tool_the_moment_its_impl_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tasks 2-12 add tools: a registered impl makes its client methods operations at once."""
+    new_tool = (
+        "@tool_impl('windows.close')\n"
+        "async def close(args):\n"
+        "    return await client.close_window(args['id'])\n"
+    )
+    monkeypatch.setattr(registry, "_REGISTRY", {**registry._REGISTRY})
+    registry.register(ToolSpec("windows.focus", Tier.T1))
+    ops = derive_operations({"windows/tools.py": new_tool})
+    assert ops == {"close_window", "focus"}
+    caller = "async def f(c):\n    return await c.close_window(1)\n"
+    assert any(
+        "close_window" in f for f in scan(caller, "orchestrator/new.py", operations=ops).findings
+    )
+    alias = "def f(c):\n    return c.focus\n"
+    assert scan(alias, "orchestrator/new.py", operations=ops).findings
+    assert scan(new_tool, "windows/tools.py", operations=ops).findings == []
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("async def f(b):\n    g = b.dispatch\n    return await g('n', {})\n", "dispatch"),
+        ("def f(b):\n    return functools.partial(b.dispatch, 'n')\n", "dispatch"),
+        ("def f(b):\n    return map(b._dispatch, [])\n", "dispatch"),
+        ("from jarvis.policy.decide import decide as d\n", "decide imported"),
+        ("from jarvis.policy import decide as run_policy\n", "decide imported"),
+        ("from jarvis.policy.decide import _decide\n", "decide imported"),
+        ("from jarvis.policy import decide\n", "decide imported"),
+        ("import jarvis.policy.decide as d\n", "decide imported"),
+        ("from jarvis.policy.decide import Mode\n", "decide imported"),
+    ],
+)
+def test_should_flag_a_dispatch_taken_as_a_value_and_any_import_of_decide(
+    source: str, expected: str
+) -> None:
+    found = scan(source, "orchestrator/new.py").findings
+    assert any(expected in f for f in found), found
+
+
+def test_should_let_a_marker_excuse_one_call_and_flag_a_second_one_in_the_statement() -> None:
+    one = "async def f(d):\n    return await d.open_app(\n        'x'\n    )  # gate-ok: one call\n"
+    two = (
+        "async def f(d):\n"
+        "    return [await d.open_app('x'), await d.close_app('y')]  # gate-ok: one call\n"
+    )
+    assert scan(one, "x.py").findings == []
+    found = scan(two, "x.py").findings
+    assert len(found) == 1 and "close_app" in found[0]
+    assert len(scan(two, "x.py").used) == 1
