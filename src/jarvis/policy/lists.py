@@ -7,6 +7,7 @@ import shlex
 from collections.abc import Mapping
 
 from jarvis.config import PolicySettings
+from jarvis.policy.commandline import command_like, dir_changes, tree_walkers
 
 _PATH_KEYS = frozenset(
     {"path", "paths", "file", "files", "src", "dst", "source", "dest", "destination"}
@@ -16,10 +17,15 @@ _COMMAND_KEYS = ("cmd", "command")
 _OPERATORS = re.compile(r"[<>|&;()`]")
 
 
-def real_path(path: str) -> str:
-    """Resolve `~`, `$HOME` and relative paths (against home) through symlinks."""
+def real_path(path: str, base: str | None = None) -> str:
+    """Resolve `~`, `$HOME` and relative paths through symlinks.
+
+    A relative path is relative to `base` (a directory the command line moved into), else to
+    home, where the shell tool runs (R84).
+    """
     path = re.sub(r"^\$(?:HOME\b|\{HOME\})", "~", path)
-    return os.path.realpath(os.path.join(os.path.expanduser("~"), os.path.expanduser(path)))
+    start = real_path(base) if base else os.path.expanduser("~")
+    return os.path.realpath(os.path.join(start, os.path.expanduser(path)))
 
 
 def is_under(path: str, root: str) -> bool:
@@ -49,6 +55,7 @@ def _shell_paths(cmd: str) -> list[str]:
         words = text.split()
     paths = [w for w in words if not w.startswith("-")]
     paths += [w.split("=", 1)[1] for w in words if "=" in w]  # `--out=/x`, `FOO=/x`
+    paths += [w[2:] for w in words if re.match(r"-[A-Za-z]", w) and len(w) > 2]  # `-Cdir`, `-fx`
     return paths
 
 
@@ -90,7 +97,6 @@ UNRESOLVABLE_REASON = (
 _HOME_VAR = re.compile(r"\$(?:HOME\b|\{HOME\})")
 _BRACES = re.compile(r"\{[^{}]*\}")
 _FLAG_ATTACHED = re.compile(r"-[^-=\s][^=\s]*[/~]")  # `-C/dir`, `-f~/x`: a path glued to a flag
-_DIR_CHANGES = frozenset({"cd", "pushd", "popd"})
 _MAX_DEPTH = 8
 
 
@@ -129,17 +135,19 @@ def _cannot_resolve_command(cmd: str) -> bool:
         words = shlex.split(_OPERATORS.sub(" ", cmd))
     except ValueError:
         return True
-    return any(w in _DIR_CHANGES or _FLAG_ATTACHED.match(w) for w in words)
+    return bool(dir_changes(words)) or any(_FLAG_ATTACHED.match(w) for w in words)
 
 
-def _unresolvable(args: Mapping[str, object]) -> bool:
+def _unresolvable(args: Mapping[str, object], texts: list[str]) -> bool:
     for key in _COMMAND_KEYS:
         value = args.get(key)
         if isinstance(value, (list, tuple, Mapping, set)):
             return True  # a command given as a list or object is not a line we can read
         if isinstance(value, str) and _cannot_resolve_command(value):
             return True
-    return any(_has_expansion(text) for key in _PATH_KEYS for text in _flatten(args.get(key)) or [])
+    if any(_has_expansion(text) for key in _PATH_KEYS for text in _flatten(args.get(key)) or []):
+        return True
+    return any(command_like(t) and _cannot_resolve_command(t) for t in texts)  # under any key
 
 
 def denied(args: Mapping[str, object], settings: PolicySettings) -> str | None:
@@ -152,17 +160,21 @@ def denied(args: Mapping[str, object], settings: PolicySettings) -> str | None:
     if not (settings.deny_paths or settings.deny_commands):
         return None
     texts = _flatten(dict(args))
-    if texts is None or _unresolvable(args):
+    if texts is None or _unresolvable(args, texts):
         return UNRESOLVABLE_REASON
-    cmd = command_of(args)
+    commands = [command_of(args), *(t for t in texts if command_like(t))]
     for pattern in settings.deny_commands:
-        if cmd and re.search(pattern, cmd):
+        if any(re.search(pattern, c) for c in commands if c):
             return f"denied: the command matches the deny list ({pattern!r})"
     roots = [real_path(p) for p in settings.deny_paths]
     for text in texts:
         for path in [text, *_shell_paths(text)]:
             if any(is_under(r, root) for r in _resolved(path) for root in roots):
                 return f"denied: {path} is on the deny list"
+    for cmd in commands:  # a recursive command given a parent of a protected folder walks into it
+        for path in (p for paths in tree_walkers(cmd) for p in paths):
+            if any(is_under(root, r) for r in _resolved(path) for root in roots):
+                return f"denied: {path} holds a protected folder and the command walks it"
     return None
 
 
