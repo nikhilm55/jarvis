@@ -204,5 +204,7 @@ def test_should_judge_the_brains_tool_calls_in_the_turn_and_list_them_in_the_rec
 
 
 class _Mute:
+    tool_name = "desktop.mute"
+
     async def __call__(self, args: Mapping[str, object]) -> object:
         return {}

@@ -6,7 +6,7 @@ record is on disk.
 """
 
 import asyncio
-import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TypeVar
 
@@ -14,9 +14,10 @@ from jarvis.activity import PolicyRecord
 from jarvis.contract import ErrorInfo
 from jarvis.contract.models import ErrorCode
 from jarvis.log import audit, get_logger
+from jarvis.policy import registry
 from jarvis.policy.decide import decide
 from jarvis.policy.decision import Decision, Kind, ToolCall, ToolImpl, TurnContext
-from jarvis.policy.lists import path_args
+from jarvis.policy.lists import UNRESOLVABLE_REASON, command_of, path_args, shell_target
 from jarvis.policy.model import Tier
 from jarvis.policy.ports import (
     CONFIRMATION_UNAVAILABLE_REASON,
@@ -30,9 +31,21 @@ logger = get_logger("policy")
 _T = TypeVar("_T", bound=ToolImpl)
 
 
-def tool_impl(fn: _T) -> _T:
-    """Mark a function as a tool implementation: only `gated_dispatch` may call it."""
-    return fn
+def tool_impl(name: str) -> Callable[[_T], _T]:
+    """Mark a function as the implementation of tool `name`: only `gated_dispatch` may call it.
+
+    The name travels with the function, so an impl filed under another tool's name (and so
+    judged at that tool's tier) is refused.
+    """
+
+    def mark(fn: _T) -> _T:
+        fn.tool_name = name  # type: ignore[attr-defined]
+        return fn
+
+    return mark
+
+
+MISMATCHED_IMPL_REASON = "policy error: that implementation belongs to another tool"
 
 
 @dataclass(frozen=True)
@@ -58,6 +71,8 @@ def _refusal(verdict: _Verdict) -> ToolResult:
         "CONSENT_DENIED": "Allow access in Jarvis's permissions, then ask again.",
         "CANCELLED": "Ask again if you do want it done.",
     }.get(verdict.code, "Check the activity log for the reason.")
+    if verdict.reason == UNRESOLVABLE_REASON:
+        remedy = "Say the exact path, so it can be checked against your protected folders."
     error = ErrorInfo(
         code=verdict.code,
         what="The safety check refused that action",
@@ -68,16 +83,29 @@ def _refusal(verdict: _Verdict) -> ToolResult:
 
 
 def _target_phrase(call: ToolCall) -> str:
-    """The words the user repeats to confirm a T3 action in YOLO mode (FRS 5.10)."""
-    paths = path_args(call.args)
-    return os.path.basename(paths[0].rstrip("/")) if paths else call.name
+    """The words the user repeats to confirm a T3 action in YOLO: "confirm <verb> <target>".
+
+    For a shell command the verb is its command and the target its last path argument; for
+    another tool the verb is the tool's name and the target the argument its spec declares
+    (or, failing that, the last path-like argument).
+    """
+    cmd = command_of(call.args)
+    if cmd:
+        verb, target = shell_target(cmd)
+    else:
+        spec = registry.get(call.name)
+        verb = call.name.rsplit(".", 1)[-1].replace("_", " ")
+        declared = call.args.get(spec.target_key) if spec and spec.target_key else None
+        paths = path_args(call.args)
+        target = declared if isinstance(declared, str) else (paths[-1] if paths else None)
+    return " ".join(part for part in ("confirm", verb, (target or "").rstrip("/")) if part)
 
 
 async def _confirm(call: ToolCall, ctx: TurnContext, decision: Decision, kind: Kind) -> _Verdict:
     phrase = _target_phrase(call) if kind == "guardrail" else None
     prompt = decision.prompt or f"Run {call.name}?"
     answer = await ctx.confirmer.ask(prompt, kind, phrase)
-    if answer.yes:
+    if answer.yes is True:  # anything else, a truthy string included, is not a yes
         return _Verdict(True, decision, "confirmed", confirmed_by=answer.method)
     if isinstance(ctx.confirmer, NoConfirmer):
         reason = (
@@ -89,6 +117,14 @@ async def _confirm(call: ToolCall, ctx: TurnContext, decision: Decision, kind: K
     if answer.method == "timeout":
         return _Verdict(False, decision, "no answer to the confirmation")
     return _Verdict(False, decision, "you declined", code="CANCELLED", confirmed_by=answer.method)
+
+
+def _mismatch(call: ToolCall, ctx: TurnContext) -> _Verdict | None:
+    """A refusal when the impl filed under this name was registered for another tool."""
+    impl = ctx.impls.get(call.name)
+    if impl is not None and getattr(impl, "tool_name", None) != call.name:
+        return _Verdict(False, Decision("deny", None), MISMATCHED_IMPL_REASON)
+    return None
 
 
 async def _judge(call: ToolCall, ctx: TurnContext) -> _Verdict:
@@ -130,7 +166,7 @@ async def _authorise(call: ToolCall, ctx: TurnContext) -> _Verdict:
     """Judge the call and audit the verdict; any failure, an unwritable audit log too, denies."""
     deny = Decision("deny", None)
     try:
-        verdict = await _judge(call, ctx)
+        verdict = _mismatch(call, ctx) or await _judge(call, ctx)
     except Exception as exc:
         verdict = _Verdict(False, deny, f"policy error: {type(exc).__name__}")
     try:

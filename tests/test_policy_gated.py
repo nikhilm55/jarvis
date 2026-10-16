@@ -99,7 +99,9 @@ def test_should_return_an_internal_error_when_no_implementation_is_registered() 
 def test_should_list_every_decision_of_the_turn_in_order() -> None:
     tool("t.read", Tier.T0)
     tool("t.app", Tier.T1)
-    ctx = TurnContext("turn-1", mode="safe", impls={"t.read": Impl(), "t.app": Impl()})
+    ctx = TurnContext(
+        "turn-1", mode="safe", impls={"t.read": Impl("t.read"), "t.app": Impl("t.app")}
+    )
     for name in ("t.read", "t.app", "nope"):
         asyncio.run(gated_dispatch(ToolCall(name, {}, "fastpath"), ctx))
     got = [(r.tool, r.allowed) for r in ctx.policy_decisions]

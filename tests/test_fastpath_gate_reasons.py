@@ -34,6 +34,8 @@ def refusal(tier: policy.Tier) -> ErrorInfo:
 
 
 class Impl:
+    tool_name = "test.tool"
+
     async def __call__(self, args: Mapping[str, object]) -> object:
         return {}
 

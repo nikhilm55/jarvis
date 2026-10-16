@@ -68,6 +68,7 @@ class ToolSpec:
     scopes: tuple[str, ...] = ()
     undoable: bool = False
     classify: Classifier | None = None
+    target_key: str | None = None  # the argument that names what the call acts on (YOLO phrase)
 
     def __post_init__(self) -> None:
         """Validate and normalise fields on construction."""
