@@ -10,6 +10,7 @@ import shlex
 from collections.abc import Callable, Mapping, Sequence
 
 from jarvis.config import DEFAULT_CONSENT_FOLDERS
+from jarvis.policy.hidden import inner_commands
 from jarvis.policy.lists import is_under, real_path
 from jarvis.policy.model import Tier
 
@@ -72,6 +73,11 @@ _GIT_SAFE_OPTS = [
 _GIT_SAFE_SHORT = re.compile(r"-(?:[0-9]+|[nsbpuvq]|U[0-9]+|n[0-9]+)")
 _SHELL_C = re.compile(r"-[a-z]*c[a-z]*")
 _RECURSIVE = re.compile(r"-[A-Za-z]*R[A-Za-z]*|--recursive")
+_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+# Words that run what follows them; skipped to find the command that really runs.
+_WRAPPERS = _words("env command nohup time exec nice xargs timeout setsid unbuffer stdbuf ionice")
+_WRAPPERS |= _words("busybox flock watch chroot taskset chrt nsenter unshare setpriv runuser")
+_WRAPPERS |= _words("if then do else elif while until ! { }")
 _FORK_BOMB = ":(){:|:&};:"
 _INTERPRETER = re.compile(r"python[0-9.]*|perl|ruby|nodejs|node|php|lua")
 # The flag that hands an interpreter its program text, per language (R94).
@@ -99,18 +105,26 @@ def _is_redirect(token: str) -> bool:
     return _is_operator(token) and bool(set(token) & {"<", ">"})
 
 
-def _segments(cmd: str) -> tuple[list[list[str]], list[str]]:
-    """Split into command segments plus the operator that follows each (`""` for the last).
+def _segments(cmd: str) -> tuple[list[list[str]], list[str], dict[int, str]]:
+    """Split into command segments, the operator after each (`""` for the last) and here-docs.
 
     Redirections stay inside their segment, so `ls >| f` and `cat <(rm x)` keep every word.
+    A here-document's body is not a command line: it is returned by segment index instead.
     """
     segments: list[list[str]] = []
     seps: list[str] = []
-    for line in cmd.splitlines():  # a newline ends a command, like `;`
-        lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+    docs: dict[int, str] = {}
+    lines = cmd.splitlines()  # a newline ends a command, like `;`
+    n = 0
+    while n < len(lines):
+        lexer = shlex.shlex(lines[n], posix=True, punctuation_chars=True)
         lexer.whitespace_split = True
+        n += 1
         current: list[str] = []
+        delimiter: tuple[int, str] | None = None
         for token in lexer:
+            if current and current[-1] == "<<" and delimiter is None:
+                delimiter = (len(segments), token)
             if not _is_operator(token) or _is_redirect(token):
                 current.append(token)
             elif current:
@@ -120,9 +134,16 @@ def _segments(cmd: str) -> tuple[list[list[str]], list[str]]:
         if current:
             segments.append(current)
             seps.append(";")
+        if delimiter is not None:
+            body = []
+            while n < len(lines) and lines[n].strip() != delimiter[1]:
+                body.append(lines[n])
+                n += 1
+            n += 1
+            docs[delimiter[0]] = "\n".join(body)
     if seps:
         seps[-1] = ""
-    return segments, seps
+    return segments, seps, docs
 
 
 def _names(seg: list[str]) -> set[str]:
@@ -171,10 +192,15 @@ def _chmod(args: list[str]) -> bool:
 
 
 def _shell_c(args: list[str]) -> bool:
-    for i, arg in enumerate(args[:-1]):
+    """`sh -c TEXT` whose text is T3 or missing. Text that cannot be read is T3 (R94)."""
+    for i, arg in enumerate(args):
         if _SHELL_C.fullmatch(arg):
-            return classify_shell(args[i + 1])[0] == Tier.T3
+            return i + 1 >= len(args) or _tier(args[i + 1], nested=True)[0] == Tier.T3
     return False
+
+
+def _eval(args: list[str]) -> bool:
+    return bool(args) and _tier(" ".join(args), nested=True)[0] == Tier.T3
 
 
 def _reg(args: list[str]) -> bool:
@@ -274,15 +300,52 @@ _T3_CHECKS: dict[str, Callable[[list[str]], bool]] = {
     "del": _del,
     "erase": _del,
     "set-executionpolicy": lambda args: True,
+    "eval": _eval,
     **dict.fromkeys(_SHELLS, _shell_c),
 }
 
 
-def _pipes_to_shell(left: list[str], right: list[str]) -> bool:
-    return bool(_names(left) & {"curl", "wget"}) and bool(_names(right) & _SHELLS)
+def _head(seg: list[str]) -> str | None:
+    """The command that really runs: past assignments, wrappers and their flags and numbers."""
+    for token in seg:
+        skip = _ASSIGNMENT.match(token) or token.startswith("-") or token.isdigit()
+        if not skip and os.path.basename(token).lower() not in _WRAPPERS:
+            return token
+    return None
 
 
-def _is_t3(segments: list[list[str]], seps: list[str]) -> bool:
+def _reads_program(head: str | None) -> bool:
+    """A shell or an interpreter: it runs whatever text it is given."""
+    name = os.path.basename(head or "").lower()
+    return name in _SHELLS or bool(_INTERPRETER.fullmatch(name))
+
+
+def _computed(head: str) -> bool:
+    """A command name made at run time: `$X`, `$(…)`, `"`…`"`, a glob or a brace."""
+    if head in {"[[", "]]", "[", "{", "}"}:
+        return False
+    return bool(re.search(r"[$`*?]|[\[{].*[\]}]", head))
+
+
+def _program_text_t3(seg: list[str], head: str, doc: str | None) -> bool:
+    """A shell or interpreter fed text by `<<<` or a here-doc: T3 if it deletes or is lost."""
+    shell = os.path.basename(head).lower() in _SHELLS
+    texts: list[str | None] = [
+        seg[i + 1] if i + 1 < len(seg) else None for i, t in enumerate(seg) if t == "<<<"
+    ]
+    if "<<" in seg:
+        texts.append(doc)
+    for text in texts:
+        if text is None:
+            return True
+        if shell and _tier(text, nested=True)[0] == Tier.T3:
+            return True
+        if not shell and _DESTRUCTIVE_CODE.search(text):
+            return True
+    return False
+
+
+def _is_t3(segments: list[list[str]], seps: list[str], docs: dict[int, str]) -> bool:
     for i, seg in enumerate(segments):
         for pos, token in enumerate(seg):  # every position: wrappers, `cat <(rm x)`, `if`, `time`
             name = os.path.basename(token).lower()
@@ -292,8 +355,14 @@ def _is_t3(segments: list[list[str]], seps: list[str]) -> bool:
                 return True
             if _INTERPRETER.fullmatch(name) and _interpreter_code(name, args):
                 return True
-        if seps[i] == "|" and _pipes_to_shell(seg, segments[i + 1]):
-            return True
+        head = _head(seg)
+        if head is not None:
+            if _computed(head):
+                return True
+            if _reads_program(head) and _program_text_t3(seg, head, docs.get(i)):
+                return True
+        if seps[i] in {"|", "|&"} and _reads_program(_head(segments[i + 1])):
+            return True  # a pipe into a shell or interpreter runs unseen text, decoded or not
     return False
 
 
@@ -356,6 +425,25 @@ def _scopes(
     return tuple(sorted(found))
 
 
+def _tier(cmd: str, *, nested: bool) -> tuple[Tier, list[list[str]]]:
+    """The tier of `cmd` and its segments. `nested` text (inside `eval`, `$(…)`) must parse."""
+    if _FORK_BOMB in re.sub(r"\s+", "", cmd):
+        return Tier.T3, []
+    inner = inner_commands(cmd)
+    if inner is None:  # a substitution that never closes
+        return Tier.T3, []
+    try:
+        segments, seps, docs = _segments(cmd)
+    except ValueError:  # unbalanced quote: T2, or T3 when a dangerous word is plainly there
+        unreadable = nested or bool(set(cmd.split()) & _UNPARSEABLE_T3)
+        return (Tier.T3 if unreadable else Tier.T2), []
+    if _is_t3(segments, seps, docs) or any(_tier(t, nested=True)[0] == Tier.T3 for t in inner):
+        return Tier.T3, segments
+    if not segments or inner or not _is_t0(cmd, segments, seps):
+        return Tier.T2, segments
+    return Tier.T0, segments
+
+
 def classify_shell(
     cmd: str,
     *,
@@ -363,15 +451,5 @@ def classify_shell(
     allow: Sequence[str] = (),
 ) -> tuple[Tier, tuple[str, ...]]:
     """Return the tier of a shell command line and the consent scopes its paths touch."""
-    if _FORK_BOMB in re.sub(r"\s+", "", cmd):
-        return Tier.T3, ()
-    try:
-        segments, seps = _segments(cmd)
-    except ValueError:  # unbalanced quote: T2, or T3 when a dangerous word is plainly there
-        return (Tier.T3 if set(cmd.split()) & _UNPARSEABLE_T3 else Tier.T2), ()
-    if not segments:
-        return Tier.T2, ()
-    scopes = _scopes(segments, folders, allow)
-    if _is_t3(segments, seps):
-        return Tier.T3, scopes
-    return (Tier.T0 if _is_t0(cmd, segments, seps) else Tier.T2), scopes
+    tier, segments = _tier(cmd, nested=False)
+    return tier, _scopes(segments, folders, allow)
