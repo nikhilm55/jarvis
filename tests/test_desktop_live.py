@@ -8,7 +8,7 @@ import pytest
 
 from jarvis.desktop.client import DesktopClient
 from jarvis.desktop.x11 import list_windows
-from jarvis.policy import gate
+from jarvis.policy import ToolCall, TurnContext, decide
 
 pytestmark = [
     pytest.mark.desktop,
@@ -24,8 +24,9 @@ def test_should_open_and_close_calculator_when_driven_live() -> None:
 
 
 async def scenario() -> None:
-    assert gate("desktop.open_app", {"query": "calculator"}, "balanced").allowed
-    assert gate("desktop.close_app", {"query": "calculator"}, "balanced").allowed
+    for tool in ("desktop.open_app", "desktop.close_app"):
+        call = ToolCall(tool, {"query": "calculator"}, "internal")
+        assert decide(call, "balanced", TurnContext("live")).action == "run"
 
     if any("calculator" in w.wm_class.casefold() for w in list_windows()):
         pytest.skip("Calculator is already open - not touching the user's windows")

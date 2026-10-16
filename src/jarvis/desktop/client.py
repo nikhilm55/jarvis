@@ -1,7 +1,7 @@
 """Asyncio client for the desktop worker process.
 
 DesktopClient does NOT call the policy gate itself - callers (the fast path
-and the MCP handlers) must call ``jarvis.policy.gate`` first.
+and the MCP handlers) must reach it through ``jarvis.policy.gated_dispatch``.
 """
 
 import asyncio
@@ -40,7 +40,7 @@ class DesktopClient:
     """Talks to the desktop worker process (JSON lines on stdin/stdout).
 
     DesktopClient does NOT call the policy gate itself - callers (the fast path
-    and the MCP handlers) must call ``jarvis.policy.gate`` first.
+    and the MCP handlers) must reach it through ``jarvis.policy.gated_dispatch``.
     """
 
     def __init__(
