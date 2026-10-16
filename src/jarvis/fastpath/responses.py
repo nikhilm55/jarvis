@@ -33,10 +33,10 @@ _REMEDY = {
 }
 
 
-def blocked(decision: policy.Decision, mode: policy.Mode) -> FinalResponse:
+def blocked(reason: str, mode: policy.Mode) -> FinalResponse:
     """Build a failed response for a policy-blocked action."""
-    reason = decision.reason if decision.reason.strip() else "no reason given"
-    if mode == "safe" and decision.reason == policy.NEEDS_CONFIRMATION_REASON:
+    why = reason if reason.strip() else "no reason given"
+    if mode == "safe" and reason == policy.NEEDS_CONFIRMATION_REASON:
         spoken = "I can't do that in safe mode yet. Switch to balanced mode and ask again."
         remedy = ["Switch to balanced mode in Settings, then ask again."]
     else:
@@ -48,7 +48,7 @@ def blocked(decision: policy.Decision, mode: policy.Mode) -> FinalResponse:
         error=ErrorInfo(
             code="BLOCKED_BY_POLICY",
             what="The safety check refused that action",
-            why=reason,
+            why=why,
             remedy=remedy,
         ),
         actions_taken=[],

@@ -1,18 +1,15 @@
 """Test doubles for the fast-path executor: a fake desktop client, gates and a fixed clock."""
 
 import asyncio
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from datetime import datetime
 
-from jarvis import policy
 from jarvis.contract import ErrorInfo, FinalResponse
 from jarvis.desktop.client import DesktopClient, DesktopError
 from jarvis.fastpath import execute
 from jarvis.fastpath.intents import Intent
 from jarvis.policy import Mode
-
-Gate = Callable[[str, Mapping[str, object], Mode], policy.Decision]
-
+from jarvis.policy.decision import TurnContext
 
 _RESULTS: dict[str, dict[str, object]] = {
     "open_app": {"app": "Calculator", "window_ids_new": [1]},
@@ -59,22 +56,6 @@ class FakeDesktop(DesktopClient):
         return self.results[method]
 
 
-def make_gate(events: list[str], decision: policy.Decision | None) -> Gate:
-    """A gate that logs itself and returns `decision` (None means it raises)."""
-
-    def gate(tool: str, args: Mapping[str, object], mode: Mode) -> policy.Decision:
-        events.append("gate")
-        if decision is None:
-            raise RuntimeError("boom")
-        return decision
-
-    return gate
-
-
-def allow_gate(events: list[str]) -> Gate:
-    return make_gate(events, policy.Decision(True, "ok"))
-
-
 def at(year: int, month: int, day: int, hour: int = 0, minute: int = 0) -> Callable[[], datetime]:
     return lambda: datetime(year, month, day, hour, minute)
 
@@ -84,9 +65,9 @@ def run(
     desktop: FakeDesktop,
     mode: Mode,
     clock: Callable[[], datetime] | None = None,
-    gate: Gate | None = None,
+    ctx: TurnContext | None = None,
 ) -> FinalResponse:
-    return asyncio.run(execute(intent, desktop, mode, clock=clock, gate=gate))
+    return asyncio.run(execute(intent, desktop, mode, clock=clock, ctx=ctx))
 
 
 def error_of(response: FinalResponse) -> ErrorInfo:

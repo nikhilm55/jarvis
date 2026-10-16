@@ -22,6 +22,7 @@ from jarvis.orchestrator.trace import ToolTrace
 from jarvis.orchestrator.voice import Voice
 from jarvis.orchestrator.windows import Windows
 from jarvis.policy import Mode
+from jarvis.policy.decision import TurnContext
 from jarvis.stt import Transcript
 
 logger = get_logger("turns")
@@ -130,8 +131,10 @@ class TurnRunner:
         """Send the command to the fast path when possible, otherwise to the brain."""
         if command.intent is not None:
             await self._hud(HudEvent("acting", command.text))
+            ctx = TurnContext(turn_id, self._s.settings.policy, self._s.mode)
+            record.policy_decisions = ctx.policy_decisions  # the gate appends as it decides
             try:
-                final = await execute(command.intent, self._s.desktop, self._s.mode)
+                final = await execute(command.intent, self._s.desktop, self._s.mode, ctx=ctx)
             except FastPathDeclined as declined:
                 logger.info(
                     "fast path declined",
