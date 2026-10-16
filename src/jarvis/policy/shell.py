@@ -8,6 +8,7 @@ import os
 import re
 import shlex
 from collections.abc import Callable, Mapping, Sequence
+from contextvars import ContextVar
 
 from jarvis.config import DEFAULT_CONSENT_FOLDERS
 from jarvis.policy.hidden import inner_commands
@@ -17,6 +18,30 @@ from jarvis.policy.model import Tier
 
 def _words(text: str) -> frozenset[str]:
     return frozenset(text.split())
+
+
+# A command line longer than this is not read at all; the work on shorter ones is budgeted too,
+# so no input can make the (uncancellable) classification run long.
+MAX_COMMAND_LENGTH = 4096
+_BUDGET_UNITS = 3 * MAX_COMMAND_LENGTH
+_MAX_WORDS_FOR_SCOPES = 128
+_ACCESS = ("read", "write")
+TOO_LONG_REASON = "too long to check"
+TOO_COMPLEX_REASON = "too complex to check"
+_budget: ContextVar[list[int] | None] = ContextVar("shell_budget", default=None)
+
+
+class _OutOfBudget(Exception):
+    """The classification used up its work budget."""
+
+
+def _charge(units: int) -> None:
+    """Spend work units; running out ends the whole classification as T3."""
+    remaining = _budget.get()
+    if remaining is not None:
+        remaining[0] -= units
+        if remaining[0] < 0:
+            raise _OutOfBudget
 
 
 _SHELLS = _words("sh bash zsh dash ksh fish")
@@ -144,11 +169,6 @@ def _segments(cmd: str) -> tuple[list[list[str]], list[str], dict[int, str]]:
     if seps:
         seps[-1] = ""
     return segments, seps, docs
-
-
-def _names(seg: list[str]) -> set[str]:
-    """The lower-case base name of every token of `seg`: any of them may be the real command."""
-    return {os.path.basename(token).lower() for token in seg}
 
 
 def _flags(args: list[str]) -> tuple[set[str], list[str]]:
@@ -300,6 +320,10 @@ _T3_CHECKS: dict[str, Callable[[list[str]], bool]] = {
     "del": _del,
     "erase": _del,
     "set-executionpolicy": lambda args: True,
+}
+# Checks that classify text again. They run only where a command may start (after wrappers), so
+# `eval eval eval ...` is read once per level and not once per word.
+_NESTED_CHECKS: dict[str, Callable[[list[str]], bool]] = {
     "eval": _eval,
     **dict.fromkeys(_SHELLS, _shell_c),
 }
@@ -345,16 +369,40 @@ def _program_text_t3(seg: list[str], head: str, doc: str | None) -> bool:
     return False
 
 
+def _wrapperish(token: str, name: str) -> bool:
+    """A word that may sit before the real command: a wrapper, an option, a number, a path."""
+    return bool(
+        _ASSIGNMENT.match(token)
+        or token.startswith("-")
+        or token.isdigit()
+        or "/" in token
+        or name in _WRAPPERS
+    )
+
+
+def _t3_at(seg: list[str], pos: int, name: str, may_start: bool) -> bool:
+    """Whether the word at `pos`, taken as a command name, makes the segment T3."""
+    if name in _ALWAYS_T3 or name.startswith("mkfs"):
+        return True
+    nested = _NESTED_CHECKS.get(name) if may_start else None
+    check = nested or _T3_CHECKS.get(name)
+    interpreter = bool(_INTERPRETER.fullmatch(name))
+    if check is None and not interpreter:
+        return False
+    args = seg[pos + 1 :]  # sliced only for a word that names a checked command
+    _charge(len(args) + 1)
+    return bool(check and check(args)) or (interpreter and _interpreter_code(name, args))
+
+
 def _is_t3(segments: list[list[str]], seps: list[str], docs: dict[int, str]) -> bool:
     for i, seg in enumerate(segments):
-        for pos, token in enumerate(seg):  # every position: wrappers, `cat <(rm x)`, `if`, `time`
+        may_start = True  # every word before this one is a wrapper, option, number or path
+        for pos, token in enumerate(seg):
             name = os.path.basename(token).lower()
-            check = _T3_CHECKS.get(name)
-            args = seg[pos + 1 :]
-            if name in _ALWAYS_T3 or name.startswith("mkfs") or (check and check(args)):
+            # A word with a `/` is a path (`cat ~/notes/su`), a command only where one may start.
+            if ("/" not in token or may_start) and _t3_at(seg, pos, name, may_start):
                 return True
-            if _INTERPRETER.fullmatch(name) and _interpreter_code(name, args):
-                return True
+            may_start = may_start and _wrapperish(token, name)
         head = _head(seg)
         if head is not None:
             if _computed(head):
@@ -428,6 +476,7 @@ def _scopes(
 
 def _tier(cmd: str, *, nested: bool) -> tuple[Tier, list[list[str]]]:
     """The tier of `cmd` and its segments. `nested` text (inside `eval`, `$(…)`) must parse."""
+    _charge(len(cmd) + 1)
     if _FORK_BOMB in re.sub(r"\s+", "", cmd):
         return Tier.T3, []
     inner = inner_commands(cmd)
@@ -445,6 +494,25 @@ def _tier(cmd: str, *, nested: bool) -> tuple[Tier, list[list[str]]]:
     return Tier.T0, segments
 
 
+def _run(cmd: str) -> tuple[Tier, list[list[str]], str]:
+    """Classify within the length cap and the work budget; the reason is set when they bite."""
+    if len(cmd) > MAX_COMMAND_LENGTH:
+        return Tier.T3, [], TOO_LONG_REASON
+    token = _budget.set([_BUDGET_UNITS])
+    try:
+        tier, segments = _tier(cmd, nested=False)
+    except _OutOfBudget:
+        return Tier.T3, [], TOO_COMPLEX_REASON
+    finally:
+        _budget.reset(token)
+    return tier, segments, ""
+
+
+def shell_limit_reason(cmd: str) -> str:
+    """ "too long to check" or "too complex to check" when `cmd` is T3 for that reason, else ""."""
+    return _run(cmd)[2]
+
+
 def classify_shell(
     cmd: str,
     *,
@@ -452,5 +520,8 @@ def classify_shell(
     allow: Sequence[str] = (),
 ) -> tuple[Tier, tuple[str, ...]]:
     """Return the tier of a shell command line and the consent scopes its paths touch."""
-    tier, segments = _tier(cmd, nested=False)
+    tier, segments, _ = _run(cmd)
+    if sum(len(seg) for seg in segments) > _MAX_WORDS_FOR_SCOPES:
+        # Too many words to resolve one by one (each is a filesystem lookup): assume the worst.
+        return tier, tuple(sorted(f"{src}:{mode}" for src in folders.values() for mode in _ACCESS))
     return tier, _scopes(segments, folders, allow)
