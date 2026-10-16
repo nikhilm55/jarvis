@@ -195,3 +195,65 @@ Findings (carried into the M2 backlog in `docs/handoff.md`):
 - **B3. A polite refusal shows as an error.** The off-task decline put the HUD in its error state. A decline is not a failure.
 - **B4. Idle CPU 3.7 % with a real mic** (over the 3 % budget). Likely room noise keeping the VAD busy, which runs the wake models (finding F2's lazy wake). Measure the share of frames the VAD marks as speech in a quiet room before tuning.
 - **B5. `tiny.en` mishears real speech** ("what time is it" became "what is the time rate now"; one longer sentence was garbled). The brain recovered both times, but the fast path missed. Levers: try `base.en` against the latency budget; the custom wake model (track W) changes what reaches STT.
+
+## Task 13 (M2) follow-up (2026-10-16)
+
+Fixes for B2 to B5 and the reply latency, measured on the same machine as Part A. The host was shared with other jobs (load average 3 to 17), so every absolute time below is roughly 1.5 to 2 times slower than the quiet-machine Part A numbers (STT p50 about 1.1 s here, 0.55 s there). Compare the before and after columns of one table with each other, not with Part A. Scratch `JARVIS_HOME`, no microphone (files and synthetic audio only), volume read at the start and restored (1.00 before and after).
+
+### B2 and B3: fixed
+
+- **B2.** An empty transcript right after a wake word now ends the turn silently: no apology, no chime, no HUD change. It is still logged with `drop_reason: "empty transcript"`. A non-empty transcript the gate rejects is unchanged (silent drop, `gate rejected the first word`). An empty transcript while Jarvis is waiting for the user (the listen window after a bare "Jarvis", or a reply to its question) still says "Sorry, I didn't catch that.", because there the user expects an answer. FRS FR-STT-07 and `docs/architecture.md` say so. Tests: `tests/test_orchestrator_listener_drops.py`, `tests/test_orchestrator_listener_windows.py`.
+- **B3.** The turn code was already right: `HudEvent("error", ...)` is only sent for `status == "failed"` with an `ErrorInfo` (`turns.py`, `_finish`). The off-task decline came back from the brain as `failed`. The brain rules now say a refusal is an answer: "say so through respond with status success ... A refusal is an answer, never failed; failed is only for a tool or system that broke." Tests: `tests/test_brain_rules.py` pins the sentence; `tests/test_orchestrator_turns_decline.py` checks that `success`, `needs_input` and `partial` replies never reach the error state and that a real `failed` still does.
+
+### B4: idle CPU (no code change found; needs the owner's room)
+
+`uv run python scripts/acceptance_idle.py` now feeds looped synthetic room noise (pink noise at -50 dBFS plus clicks at -35 dBFS, generated at run time, 15 s looped) through the product's capture chain in real time, and reports CPU and the share of VAD windows marked as speech.
+
+| Input (60 s each) | CPU, % of one core | VAD windows | Marked speech |
+|---|---|---|---|
+| room noise | 2.99, 3.04 | 1875 | 0.0 % |
+| silence | 2.93 | 1875 | 0.0 % |
+
+Earlier 20 to 30 s runs ranged from 2.5 to 3.8 % for the same input (the file-source run of Part A: 2.7 %). So on this input idle CPU is at the 3 % budget, and it does not depend on the input: the VAD never calls the noise speech, so the wake models stay off (lazy wake works). The cost is the always-on Silero VAD:
+
+- `cProfile` of the frame loop: onnxruntime `run` is 0.79 s of 1.10 s CPU over 30 s (72 %); the wake detector, endpointer and pre-roll together are under 0.1 s.
+- The model costs 0.13 ms per window in a tight loop but 0.8 to 1.3 ms per window when it runs once per 80 ms frame with the core asleep in between (CPU governor `powersave`, cold caches). Session options (graph level, memory arena, memory pattern, spinning, thread count) and batching two frames per wake-up made no difference beyond the 2.2 to 4.2 % run-to-run spread, so nothing was changed: any real fix would delay speech detection or change the VAD.
+- **Open (task 14):** the owner's 3.7 % with a real mic is inside that spread and cannot be separated from it here. It needs one quiet-room measurement on the owner's machine: `uv run python scripts/acceptance_idle.py --seconds 60 --profile` for the baseline, then `top` on `jarvis run`.
+
+### B5: `tiny.en` against `base.en`
+
+`uv run python scripts/bench_stt.py --models tiny.en base.en --count 60`: 14 acceptance fixtures (Kokoro voices) and 60 M0a `jarvis_command` clips (Piper voices with noise; the manifest text is the reference), the product wake prompt, 4 threads, warm server.
+
+| Model | Clips | p50 ms | p95 ms | p50 on 2.5 to 3.5 s clips | "Jarvis" first | WER acceptance | WER M0a |
+|---|---|---|---|---|---|---|---|
+| tiny.en | 74 | 1152 | 1478 | 1101 | 100 % | 0.0 % | 4.1 % |
+| base.en | 74 | 2450 | 3022 | 2426 | 95.8 % | 0.0 % | 2.2 % |
+
+With 8 threads (34 clips): tiny.en 718 ms p50, base.en 1548 ms, WER M0a 2.0 % against 1.0 %. The quiet-machine figures from R29 were 572 ms and 1392 ms.
+
+**The default stays `tiny.en`:** `base.en` misses the 800 ms p50 budget (FRS 7.1) on 3 s clips even on a quiet machine, with 4 or 8 threads. It does halve the word errors on noisy synthetic speech, and the synthetic fixtures cannot reproduce the real-voice misses of B5 (both models score 0 % on the clean fixtures), so the real-voice comparison is still open: say the B5 phrases to both models in task 14 (`stt.model = "base.en"` in `config.toml`).
+
+### Reply latency
+
+`scripts/acceptance_m1.py --no-brain` (15 runs each time, all pass), pooled over two runs before and three after, end of speech to first reply speech:
+
+| | Before (28 turns) | After (42 turns) |
+|---|---|---|
+| End of speech to reply speech, p50 | 3921 ms | 3725 ms |
+| of which after STT, p50 | 2760 ms | 2597 ms |
+| Turns that answer in under 200 ms of action: after STT, p50 | 2485 ms | 2485 ms |
+| First sound was the thinking earcon | 14 of 15 (both runs) | 11, 11 and 4 of 15 |
+
+What changed: the thinking earcon is cut the moment a reply (or a progress line, or a question) is ready, and it waits at least 0.3 s after the turn starts so an answer that is ready at once is not preceded by a chime that is cut straight away. Gain on this loaded machine: about 160 ms overall and none for quick actions, because most of the time is Kokoro and STT (the earcon only ever cost its own 110 ms plus the sink open and close). A quick fast-path turn now has no ack sound before the reply: the reply is the first sound. Follow-up if that matters: synthesise the reply while the earcon plays.
+
+TTS first audio for `bm_george` (warm, `Speaker` with a null sink, 5 sentences, 8 repeats; load 4 to 15):
+
+| Reply | Before p50 | After p50 |
+|---|---|---|
+| "Opening Calculator." (19 chars) | 1463 ms | 1255 ms |
+| "Volume 40 percent." | 1425 ms | 1278 ms |
+| "Done. I opened Calculator and set ..." (70 chars) | 690 ms | 629 ms |
+| "I can't run commands or create files yet. That arrives ..." (124 chars) | 2034 ms (2435, 2149 in other runs) | 1285 ms (1517, 1409) |
+| All, p50 / p95 | 1438 / 2197 ms | 1265 / 1873 ms |
+
+Kokoro takes about 0.4 s plus 0.6 s per second of audio under this load, all of it inside the onnxruntime call (`cProfile`); intra-op thread counts 2 to 8 made no difference. So the first chunk is made short: `split_for_speech` cuts a long first sentence after its first clause (a comma, semicolon or colon within six words) or after four words when it runs to eight words or more, so the long reply above starts about 0.8 s sooner. Replies of seven words or fewer are a single chunk and cannot start faster than the model allows: **the 400 ms target is not met** (1.25 s p50 for them here; Part A measured 600 to 660 ms on a quiet machine). It would need a smaller or faster model, which this task may not add.
