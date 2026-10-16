@@ -73,7 +73,7 @@ class ClaudeCodeBrain:
         tools = self._tools
         if tools is None:
             raise ToolError("no active turn")
-        return await tools(policy_name, args)
+        return await tools(policy_name, args)  # gate-ok: via MCP impl
 
     async def turn(self, envelope: TurnEnvelope, on_say: OnSay, on_ask: OnAsk) -> FinalResponse:
         """Run one user turn against the brain."""
@@ -90,7 +90,7 @@ class ClaudeCodeBrain:
 
             clock = TurnClock()
             queue = self._queue
-            tools = TurnTools(
+            tools = TurnTools(  # gate-ok: via MCP impl
                 envelope.turn_id,
                 TurnHooks(on_say, on_ask, queue.put_nowait, clock),
                 self._desktop,

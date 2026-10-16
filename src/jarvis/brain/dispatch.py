@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, TypeVar
 
 from jarvis.brain.clock import TurnClock
-from jarvis.brain.desktop_tools import DesktopLike, call_desktop
+from jarvis.brain.desktop_tools import DesktopLike, call_desktop  # gate-ok: via MCP impl
 from jarvis.brain.failures import ToolError, step_limit_response
 from jarvis.brain.respond import RespondGate
 from jarvis.contract import FinalResponse, sanitise_spoken
@@ -101,7 +101,7 @@ class TurnTools:
         if policy_name == "jarvis.ask":
             return await self._ask(args)
         if policy_name.startswith("desktop."):
-            return await call_desktop(self._desktop, policy_name, args)
+            return await call_desktop(self._desktop, policy_name, args)  # gate-ok: via MCP impl
         raise ToolError(f"unknown tool {policy_name}")
 
     async def _say(self, args: dict[str, object]) -> str:
