@@ -194,6 +194,7 @@ def test_should_fail_closed_when_the_command_cannot_be_parsed_or_is_empty(
 @pytest.fixture
 def home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # where Windows looks for home
     for name in ("Documents", "Desktop", "Downloads", "Pictures"):
         (tmp_path / name).mkdir()
     return tmp_path
