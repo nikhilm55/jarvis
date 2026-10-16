@@ -18,7 +18,7 @@ DONE:
 NEXT:
 - **Owner:** first live-mic run done (results and findings B1–B5 at the end of `docs/milestones/M1-acceptance.md`). Still untried live: checklist 1–5, "close it", "Jarvis, stop" while thinking, self-trigger.
 - **Track W:** custom single-word "Jarvis" wake model (brief in the orchestrator's SDD workspace; stops for owner approval before > 2 GB of downloads; licences decide shippability, OQ-004). Re-run the wake-related acceptance cases with it.
-- **Plan M2** (FRS §11 "Hands"): consent layer, confirmations (Safe mode T1 / T2+), more desktop tools, Windows backend. Fold in the M2 backlog below.
+- **M2 "Hands"** is planned: `docs/plans/2026-10-16-m2-hands.md` (14 tasks, Linux X11 only per D15/D17, rulings R80–R91). Waves: 1 and 13 → {2, 3, 5, 6} → {4, 7, 9, 11} → {8, 10, 12} → 14.
 
 M2 BACKLOG (from M1 reviews; details in the PR descriptions):
 - Latency: reply speech p50 ≈ 2.2 s after end of speech (Kokoro ≈ 600 ms to first audio vs 400 ms; reply queued behind the thinking earcon); opening an app ≈ 600 ms (waits for the window). Ideas: speak the acknowledgement before the window appears, phrase cache, quantised/smaller voice, don't queue the reply behind the earcon.
