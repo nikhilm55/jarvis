@@ -17,7 +17,13 @@ from jarvis.log import audit, get_logger
 from jarvis.policy import registry
 from jarvis.policy.decide import decide
 from jarvis.policy.decision import Decision, Kind, ToolCall, ToolImpl, TurnContext
-from jarvis.policy.lists import UNRESOLVABLE_REASON, command_of, path_args, shell_target
+from jarvis.policy.lists import (
+    UNRESOLVABLE_REASON,
+    command_of,
+    path_args,
+    shell_targets,
+    speak_targets,
+)
 from jarvis.policy.model import Tier
 from jarvis.policy.ports import (
     CONFIRMATION_UNAVAILABLE_REASON,
@@ -83,22 +89,26 @@ def _refusal(verdict: _Verdict) -> ToolResult:
 
 
 def _target_phrase(call: ToolCall) -> str:
-    """The words the user repeats to confirm a T3 action in YOLO: "confirm <verb> <target>".
+    """The words the user repeats to confirm a T3 action in YOLO: "confirm <verb> <targets>".
 
-    For a shell command the verb is its command and the target its last path argument; for
-    another tool the verb is the tool's name and the target the argument its spec declares
-    (or, failing that, the last path-like argument).
+    Every target is named (more than three become "N paths in <dir>"). For a shell command the
+    verb is its command and the targets its non-option words; for another tool the verb is the
+    tool's name and the targets are what its spec's `target_key` points at, else its paths.
     """
     cmd = command_of(call.args)
     if cmd:
-        verb, target = shell_target(cmd)
+        verb, targets = shell_targets(cmd)
     else:
         spec = registry.get(call.name)
         verb = call.name.rsplit(".", 1)[-1].replace("_", " ")
         declared = call.args.get(spec.target_key) if spec and spec.target_key else None
-        paths = path_args(call.args)
-        target = declared if isinstance(declared, str) else (paths[-1] if paths else None)
-    return " ".join(part for part in ("confirm", verb, (target or "").rstrip("/")) if part)
+        if isinstance(declared, str):
+            targets = [declared]
+        elif isinstance(declared, list):
+            targets = [t for t in declared if isinstance(t, str)]
+        else:
+            targets = path_args(call.args)
+    return speak_targets(verb, targets)
 
 
 async def _confirm(call: ToolCall, ctx: TurnContext, decision: Decision, kind: Kind) -> _Verdict:
