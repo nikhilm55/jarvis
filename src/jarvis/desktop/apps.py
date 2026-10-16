@@ -4,7 +4,7 @@ import configparser
 import os
 import re
 import shlex
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -37,6 +37,16 @@ class AppEntry:
             return ""
         return Path(tokens[idx]).name
 
+    @property
+    def source(self) -> str:
+        """Where the launcher is installed from: "flatpak", "snap" or "desktop"."""
+        parts = self.path.parts
+        if "flatpak" in parts:
+            return "flatpak"
+        if "snapd" in parts:
+            return "snap"
+        return "desktop"
+
 
 @dataclass(frozen=True)
 class Ambiguous:
@@ -61,12 +71,21 @@ def _xdg_data_dirs() -> list[Path]:
     return [Path(part) for part in raw.split(":") if part]
 
 
+def packaged_app_dirs() -> list[Path]:
+    """Return the Flatpak and Snap export directories (searched after the XDG ones)."""
+    return [
+        Path("/var/lib/flatpak/exports/share/applications"),
+        Path.home() / ".local" / "share" / "flatpak" / "exports" / "share" / "applications",
+        Path("/var/lib/snapd/desktop/applications"),
+    ]
+
+
 def application_dirs() -> list[Path]:
     """Return the ordered list of application directories to search."""
     dirs = [_xdg_data_home() / "applications"]
     for d in _xdg_data_dirs():
         dirs.append(d / "applications")
-    return dirs
+    return [*dirs, *packaged_app_dirs()]
 
 
 def _is_true(value: str) -> bool:
@@ -189,13 +208,40 @@ def _score(query: str, entry: AppEntry) -> int:
     return 0
 
 
-def find_app(query: str, entries: Sequence[AppEntry] | None = None) -> AppEntry | Ambiguous | None:
-    """Find the best-matching app for a spoken query."""
+def _alias_target(
+    normalised: str, entries: Sequence[AppEntry], aliases: Mapping[str, str]
+) -> tuple[bool, AppEntry | None]:
+    """Resolve a spoken name through the aliases: (an alias exists, the entry it names)."""
+    folded = {k.casefold().strip(): v.casefold().strip() for k, v in aliases.items()}
+    target = folded.get(normalised)
+    if target is None:
+        return False, None
+    for entry in entries:
+        id_no_ext = entry.desktop_id.casefold().removesuffix(".desktop")
+        if target in (entry.desktop_id.casefold(), id_no_ext, entry.name.casefold()):
+            return True, entry
+    return True, None
+
+
+def find_app(
+    query: str,
+    entries: Sequence[AppEntry] | None = None,
+    aliases: Mapping[str, str] | None = None,
+) -> AppEntry | Ambiguous | None:
+    """Find the best-matching app for a spoken query.
+
+    An alias ("teams" -> a desktop id or an app name) wins over fuzzy matching; an alias whose
+    app is not installed finds nothing rather than something else.
+    """
     if entries is None:
         entries = load_index()
     normalised = query.casefold().strip()
     if not normalised:
         return None
+    if aliases:
+        aliased, entry = _alias_target(normalised, entries, aliases)
+        if aliased:
+            return entry
 
     scored: list[tuple[int, AppEntry]] = []
     for entry in entries:

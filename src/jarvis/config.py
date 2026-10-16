@@ -141,6 +141,20 @@ class ConsentSettings(_Section):
     yolo_asks_first_touch: bool = False  # FR-CON-10: YOLO asks once per source when on
 
 
+class AppsSettings(_Section):
+    """Spoken app names (FR-PC-01): "teams" -> a desktop id or app name; beats fuzzy matching."""
+
+    aliases: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("aliases")
+    @classmethod
+    def _aliases_not_blank(cls, aliases: dict[str, str]) -> dict[str, str]:
+        for spoken, target in aliases.items():
+            if not spoken.strip() or not target.strip():
+                raise ValueError("an alias needs a spoken name and the app it stands for")
+        return aliases
+
+
 class Settings(_Section):
     audio: AudioSettings = Field(default_factory=AudioSettings)
     wake: WakeSettings = Field(default_factory=WakeSettings)
@@ -152,6 +166,7 @@ class Settings(_Section):
     user: UserSettings = Field(default_factory=UserSettings)
     policy: PolicySettings = Field(default_factory=PolicySettings)
     consent: ConsentSettings = Field(default_factory=ConsentSettings)
+    apps: AppsSettings = Field(default_factory=AppsSettings)
 
 
 def _describe(problem: ErrorDetails) -> str:

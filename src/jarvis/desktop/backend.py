@@ -1,9 +1,11 @@
 """Desktop operations (open/close apps, volume) behind injectable hooks."""
 
 import subprocess
+import sys
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 
+from jarvis.config import ConfigError, load_settings
 from jarvis.desktop.apps import (
     Ambiguous,
     AppEntry,
@@ -44,6 +46,15 @@ class WorkerError(Exception):
         return self.message
 
 
+def configured_aliases() -> Mapping[str, str]:
+    """The spoken-name aliases in the user's settings; none (and a note on stderr) if unreadable."""
+    try:
+        return load_settings().apps.aliases
+    except ConfigError as exc:
+        print(f"desktop worker: ignoring app aliases: {exc}", file=sys.stderr)
+        return {}
+
+
 def launch_app(app: AppEntry) -> None:
     """Launch an app via gio and wait briefly for the launcher to exit."""
     try:
@@ -72,6 +83,7 @@ class Hooks:
         self,
         *,
         entries: Callable[[], Sequence[AppEntry]] | None = None,
+        aliases: Callable[[], Mapping[str, str]] | None = None,
         windows: Callable[[], list[WindowInfo]] | None = None,
         closer: Callable[[int], None] | None = None,
         launcher: Callable[[AppEntry], None] | None = None,
@@ -79,6 +91,7 @@ class Hooks:
         sleep: Callable[[float], None] | None = None,
     ) -> None:
         self.entries = entries or load_index
+        self.aliases = aliases or configured_aliases
         self.windows = windows or list_windows
         self.closer = closer or close_window
         self.launcher = launcher or launch_app
@@ -93,7 +106,7 @@ class DesktopBackend:
         self._hooks = hooks or Hooks()
 
     def _resolve(self, query: str) -> AppEntry:
-        result = find_app(query, self._hooks.entries())
+        result = find_app(query, self._hooks.entries(), self._hooks.aliases())
         if result is None:
             raise WorkerError("NOT_FOUND", f"no installed app matches {query!r}")
         if isinstance(result, Ambiguous):
@@ -132,6 +145,28 @@ class DesktopBackend:
                 raise
             closed += 1
         return {"app": app.name, "closed": closed}
+
+    def list_apps(self) -> dict[str, object]:
+        apps = [
+            {"name": e.name, "id": e.desktop_id, "source": e.source} for e in self._hooks.entries()
+        ]
+        return {"apps": sorted(apps, key=lambda a: str(a["name"]).casefold())}
+
+    def is_running(self, query: str) -> dict[str, object]:
+        """Whether the app has a window open; an app that is not installed is judged by class."""
+        windows = self._hooks.windows()
+        try:
+            app = self._resolve(query)
+        except WorkerError as exc:
+            if exc.code != "NOT_FOUND":
+                raise
+            wanted = query.casefold().strip()
+            count = sum(
+                wanted in (w.wm_class.casefold(), w.wm_instance.casefold()) for w in windows
+            )
+            return {"app": query, "running": count > 0, "windows": count, "installed": False}
+        count = sum(app_matches(app, w) for w in windows)
+        return {"app": app.name, "running": count > 0, "windows": count, "installed": True}
 
     def volume_get(self) -> dict[str, object]:
         state = volume_get(self._hooks.runner)

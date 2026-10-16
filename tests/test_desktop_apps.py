@@ -11,6 +11,7 @@ from jarvis.desktop.apps import (
     application_dirs,
     find_app,
     load_index,
+    packaged_app_dirs,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures" / "desktop"
@@ -108,6 +109,7 @@ def test_should_use_env_dirs_when_env_set(monkeypatch: pytest.MonkeyPatch, tmp_p
         tmp_path / "xdg" / "applications",
         tmp_path / "a" / "applications",
         tmp_path / "b" / "applications",
+        *packaged_app_dirs(),
     ]
 
 
@@ -167,3 +169,70 @@ def _entry(exec_line: str) -> AppEntry:
 )
 def test_should_derive_exec_name_when_exec_line_is_odd(exec_line: str, expected: str) -> None:
     assert _entry(exec_line).exec_name == expected
+
+
+def test_should_search_flatpak_and_snap_exports_after_the_xdg_dirs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    assert packaged_app_dirs() == [
+        Path("/var/lib/flatpak/exports/share/applications"),
+        tmp_path / ".local/share/flatpak/exports/share/applications",
+        Path("/var/lib/snapd/desktop/applications"),
+    ]
+    assert application_dirs()[-3:] == packaged_app_dirs()
+
+
+def _desktop(directory: Path, desktop_id: str, name: str, exec_line: str) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / desktop_id
+    path.write_text(
+        f"[Desktop Entry]\nType=Application\nName={name}\nExec={exec_line}\n", encoding="utf-8"
+    )
+    return path
+
+
+def test_should_index_flatpak_and_snap_apps_with_their_source(tmp_path: Path) -> None:
+    flatpak = tmp_path / "var/lib/flatpak/exports/share/applications"
+    snap = tmp_path / "var/lib/snapd/desktop/applications"
+    _desktop(flatpak, "org.mozilla.firefox.desktop", "Firefox", "flatpak run org.mozilla.firefox")
+    _desktop(snap, "spotify_spotify.desktop", "Spotify", "env X=1 /snap/bin/spotify %U")
+    _desktop(tmp_path / "usr/share/applications", "calc.desktop", "Calc", "calc")
+    entries = {e.name: e for e in load_index([tmp_path / "usr/share/applications", flatpak, snap])}
+    assert {n: e.source for n, e in entries.items()} == {
+        "Calc": "desktop",
+        "Firefox": "flatpak",
+        "Spotify": "snap",
+    }
+    assert entries["Spotify"].exec_name == "spotify"
+    found = find_app("firefox", list(entries.values()))
+    assert isinstance(found, AppEntry)
+    assert found.desktop_id == "org.mozilla.firefox.desktop"
+
+
+def test_should_prefer_the_alias_to_fuzzy_matching(tmp_path: Path) -> None:
+    apps = tmp_path / "apps"
+    _desktop(apps, "teams-for-linux.desktop", "Teams for Linux", "teams")
+    _desktop(apps, "ms.teams.desktop", "Microsoft Teams (work or school)", "mteams")
+    entries = load_index([apps])
+    plain = find_app("teams", entries)
+    assert isinstance(plain, AppEntry)
+    assert plain.desktop_id == "teams-for-linux.desktop"  # fuzzy matching picks the wrong Teams
+    aliased = find_app("Teams", entries, {"teams": "Microsoft Teams (work or school)"})
+    assert isinstance(aliased, AppEntry)
+    assert aliased.desktop_id == "ms.teams.desktop"
+    by_id = find_app("teams", entries, {"teams": "teams-for-linux"})
+    assert isinstance(by_id, AppEntry)
+    assert by_id.desktop_id == "teams-for-linux.desktop"
+
+
+def test_should_find_nothing_when_the_alias_names_an_app_that_is_not_installed() -> None:
+    result = find_app("calc", _index(), {"calc": "no-such-app"})
+    assert result is None  # not the fuzzy "Calculator": the alias is the user's word
+
+
+def test_should_ignore_an_alias_for_another_name() -> None:
+    result = find_app("calculator", _index(), {"teams": "x"})
+    assert isinstance(result, AppEntry)
+    assert result.name == "Calculator"
