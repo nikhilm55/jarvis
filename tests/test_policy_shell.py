@@ -1,6 +1,7 @@
 """Tests for jarvis.policy.shell.classify_shell (FRS 5.10, R84)."""
 
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -104,6 +105,28 @@ def test_should_classify_t2_when_rm_rf_stays_under_tmp(cmd: str) -> None:
 @pytest.mark.skipif(sys.platform != "win32", reason="proves the closed behaviour on Windows")
 def test_should_keep_rm_rf_under_tmp_t3_on_windows_where_tmp_does_not_exist() -> None:
     assert tier("rm -rf /tmp/x") == Tier.T3
+
+
+@linux_only
+def test_should_allow_rm_rf_under_tmpdir_when_tmpdir_is_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    assert tier(f"rm -rf {tmp_path}/x") == Tier.T2
+    assert tier("rm -rf $TMPDIR/x") == Tier.T2
+    assert tier("rm -rf $TMPDIR/../../../../../../../etc") == Tier.T3
+    monkeypatch.delenv("TMPDIR")
+    assert tier("rm -rf $TMPDIR/x") == Tier.T3
+
+
+@linux_only
+def test_should_not_trust_a_symlink_that_leaves_tmp(tmp_path: Path) -> None:
+    link = Path("/tmp") / f"jarvis-link-{tmp_path.name}"  # noqa: S108
+    link.symlink_to(Path.home())
+    try:
+        assert tier(f"rm -rf {link}/x") == Tier.T3
+    finally:
+        link.unlink()
 
 
 @pytest.mark.parametrize(
