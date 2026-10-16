@@ -11,6 +11,7 @@ from collections.abc import Callable, Mapping, Sequence
 from contextvars import ContextVar
 
 from jarvis.config import DEFAULT_CONSENT_FOLDERS
+from jarvis.policy.commandline import dir_changes
 from jarvis.policy.hidden import inner_commands
 from jarvis.policy.lists import is_under, real_path
 from jarvis.policy.model import Tier
@@ -49,7 +50,7 @@ _ALWAYS_T3 = _words(
     "sudo doas pkexec su format diskpart shutdown reboot poweroff halt shred wipefs"
 )
 _T0 = _words("ls cat head tail wc pwd df du ps uptime which echo date whoami git")
-_READ = _words("ls cat head tail wc pwd git du df ps which date whoami")
+_READ = _words("ls cat head tail wc pwd git du df ps which date whoami cd pushd popd")
 _GIT_SUBS = _words("status log diff branch show")
 _GIT_BRANCH_OK = _words("-a -r -v -vv --list --show-current --all --remotes")
 # Characters that can chain, nest, redirect or expand: a T0 line holds none (`|` and a bare `<`
@@ -509,8 +510,11 @@ def _scopes(
     roots = [(real_path(folder), source) for folder, source in folders.items()]
     exempt = [real_path(path) for path in allow]
     found: set[str] = set()
+    cwd: str | None = None  # where relative paths resolve once a `cd`/`-C DIR` has moved us
     for seg in segments:
         read = os.path.basename(seg[0]) in _READ
+        moved = dir_changes(seg)
+        here = real_path(moved[-1], cwd) if moved else cwd
         pending: str | None = None  # the access a redirection gives the token after it
         for i, token in enumerate(seg):
             if _is_redirect(token):
@@ -521,9 +525,10 @@ def _scopes(
                 if i == 0 or token.startswith("-") or seg[0] == "echo":
                     continue
                 mode = "read" if read else "write"
-            path = real_path(token)
+            path = real_path(token, cwd if token in moved else here)
             if not any(is_under(path, e) for e in exempt):
                 found.update(f"{source}:{mode}" for root, source in roots if is_under(path, root))
+        cwd = here
     return tuple(sorted(found))
 
 
