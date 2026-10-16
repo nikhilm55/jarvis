@@ -27,7 +27,8 @@ def clean_state(monkeypatch: pytest.MonkeyPatch) -> None:
 class Impl:
     """A tool implementation that records its calls."""
 
-    def __init__(self, error: Exception | None = None) -> None:
+    def __init__(self, name: str = "", error: Exception | None = None) -> None:
+        self.tool_name = name  # what @tool_impl("…") records on a real implementation
         self.calls: list[Mapping[str, object]] = []
         self.audit_at_call: list[dict[str, Any]] = []
         self.error = error
@@ -76,6 +77,7 @@ def dispatch(
     name: str, args: Mapping[str, object] | None = None, **ctx_fields: Any
 ) -> tuple[ToolResult, TurnContext, Impl]:
     impl = ctx_fields.pop("impl", None) or Impl()
+    impl.tool_name = impl.tool_name or name
     ctx = TurnContext("turn-1", impls={name: impl}, **ctx_fields)
     result = asyncio.run(gated_dispatch(ToolCall(name, args or {}, "brain"), ctx))
     return result, ctx, impl

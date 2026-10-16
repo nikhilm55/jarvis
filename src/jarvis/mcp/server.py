@@ -189,7 +189,7 @@ class JarvisMcpServer:
         """The turn's policy context, in the current mode, with the tool's implementation."""
         base = self._turn() if self._turn is not None else TurnContext("no-turn")
 
-        @tool_impl
+        @tool_impl(name)
         async def run(args: Mapping[str, object]) -> object:
             return await self._dispatch(name, dict(args))
 
