@@ -17,7 +17,12 @@ from jarvis.log import audit, get_logger
 from jarvis.policy.decide import decide
 from jarvis.policy.decision import Decision, Kind, ToolCall, ToolImpl, TurnContext
 from jarvis.policy.lists import path_args
-from jarvis.policy.ports import NEEDS_CONFIRMATION_REASON, NoConfirmer
+from jarvis.policy.model import Tier
+from jarvis.policy.ports import (
+    CONFIRMATION_UNAVAILABLE_REASON,
+    NEEDS_CONFIRMATION_REASON,
+    NoConfirmer,
+)
 
 __all__ = ["ToolResult", "gated_dispatch", "tool_impl"]
 
@@ -75,7 +80,12 @@ async def _confirm(call: ToolCall, ctx: TurnContext, decision: Decision, kind: K
     if answer.yes:
         return _Verdict(True, decision, "confirmed", confirmed_by=answer.method)
     if isinstance(ctx.confirmer, NoConfirmer):
-        return _Verdict(False, decision, NEEDS_CONFIRMATION_REASON)
+        reason = (
+            NEEDS_CONFIRMATION_REASON
+            if decision.tier == Tier.T1
+            else CONFIRMATION_UNAVAILABLE_REASON
+        )
+        return _Verdict(False, decision, reason)
     if answer.method == "timeout":
         return _Verdict(False, decision, "no answer to the confirmation")
     return _Verdict(False, decision, "you declined", code="CANCELLED", confirmed_by=answer.method)

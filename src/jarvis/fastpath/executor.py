@@ -1,8 +1,9 @@
 """Fast-path executor for deterministic, policy-gated desktop intents."""
 
-import asyncio
+import dataclasses
 from collections.abc import Callable, Mapping
 from datetime import datetime
+from typing import cast
 
 from jarvis import policy
 from jarvis.contract import FinalResponse
@@ -19,6 +20,8 @@ from jarvis.fastpath.intents import (
     VolumeSet,
     VolumeStep,
 )
+from jarvis.policy.decision import ToolCall, ToolImpl, TurnContext
+from jarvis.policy.gated import gated_dispatch, tool_impl
 
 policy.register(policy.ToolSpec("clock.time", policy.Tier.T0))
 policy.register(policy.ToolSpec("clock.date", policy.Tier.T0))
@@ -70,19 +73,6 @@ def _tool_call(intent: Intent) -> tuple[str, dict[str, object]]:
     return tool, args
 
 
-async def _gated(
-    gate_fn: Callable[[str, Mapping[str, object], policy.Mode], policy.Decision],
-    tool: str,
-    args: Mapping[str, object],
-    mode: policy.Mode,
-) -> policy.Decision:
-    """Run the policy gate in a worker thread, failing closed on any error."""
-    try:
-        return await asyncio.to_thread(gate_fn, tool, args, mode)
-    except Exception:
-        return policy.Decision(False, "policy error")
-
-
 def _action(intent: Intent) -> str:
     """Return a short verb phrase describing the intent."""
     if isinstance(intent, OpenApp):
@@ -96,81 +86,86 @@ def _action(intent: Intent) -> str:
     return "do that"
 
 
-async def _run_app(intent: OpenApp, desktop: DesktopClient) -> FinalResponse:
-    """Open an app and report the result."""
-    result = await desktop.open_app(intent.name)
-    app = responses.text_of(result, "app", intent.name)
-    return responses.ok(
-        f"Opening {app}.",
-        "desktop.open_app",
-        f"Opened {app}",
-        undoable=False,
-    )
+def _impls(desktop: DesktopClient, clock: Callable[[], datetime]) -> dict[str, ToolImpl]:
+    """The fast path's tool implementations; only `gated_dispatch` may call them."""
+
+    @tool_impl
+    async def open_app(args: Mapping[str, object]) -> object:
+        return await desktop.open_app(cast(str, args["query"]))
+
+    @tool_impl
+    async def close_app(args: Mapping[str, object]) -> object:
+        return await desktop.close_app(cast(str, args["query"]))
+
+    @tool_impl
+    async def volume_set(args: Mapping[str, object]) -> object:
+        return await desktop.volume_set(cast(int, args["pct"]))
+
+    @tool_impl
+    async def volume_step(args: Mapping[str, object]) -> object:
+        return await desktop.volume_step(cast(int, args["delta"]))
+
+    @tool_impl
+    async def mute(args: Mapping[str, object]) -> object:
+        return await desktop.mute(cast(bool, args["on"]))
+
+    @tool_impl
+    async def now(args: Mapping[str, object]) -> object:
+        return clock()
+
+    return {
+        "desktop.open_app": open_app,
+        "desktop.close_app": close_app,
+        "desktop.volume_set": volume_set,
+        "desktop.volume_step": volume_step,
+        "desktop.mute": mute,
+        "clock.time": now,
+        "clock.date": now,
+    }
 
 
-async def _run_close(intent: CloseApp, desktop: DesktopClient) -> FinalResponse:
-    """Close an app and report the result."""
-    result = await desktop.close_app(intent.name)
+def _respond_app(intent: OpenApp | CloseApp, result: Mapping[str, object]) -> FinalResponse:
     app = responses.text_of(result, "app", intent.name)
+    if isinstance(intent, OpenApp):
+        return responses.ok(f"Opening {app}.", "desktop.open_app", f"Opened {app}", undoable=False)
     if result.get("closed") == 0:
         return responses.ok(f"{app} isn't open.", None)
-    return responses.ok(
-        f"Closed {app}.",
-        "desktop.close_app",
-        f"Closed {app}",
-        undoable=False,
-    )
+    return responses.ok(f"Closed {app}.", "desktop.close_app", f"Closed {app}", undoable=False)
 
 
-def _run_clock(intent: TellTime | TellDate, clock: Callable[[], datetime]) -> FinalResponse:
-    """Read the local time or date and report it."""
-    now = clock()
+def _respond_clock(intent: TellTime | TellDate, now: object) -> FinalResponse:
+    if not isinstance(now, datetime):
+        raise ValueError("the clock tool returned no time")
     if isinstance(intent, TellTime):
         spoken = responses.spoken_time(now)
         return responses.ok(spoken, "clock.time", "Read the local time", undoable=False)
-    spoken = responses.spoken_date(now)
-    return responses.ok(spoken, "clock.date", "Read the local date", undoable=False)
+    return responses.ok(responses.spoken_date(now), "clock.date", "Read the local date")
 
 
-async def _run_volume(
-    intent: VolumeSet | VolumeStep | Mute, desktop: DesktopClient
+def _respond_volume(
+    intent: VolumeSet | VolumeStep | Mute, result: Mapping[str, object]
 ) -> FinalResponse:
-    """Adjust the volume or mute state and report it."""
     if isinstance(intent, VolumeSet):
-        result = await desktop.volume_set(intent.percent)
         pct = responses.percent_of(result, intent.percent)
-        return responses.ok(
-            f"Volume {pct} percent.",
-            "desktop.volume_set",
-            f"Set the volume to {pct} percent",
-            undoable=True,
-        )
+        summary = f"Set the volume to {pct} percent"
+        return responses.ok(f"Volume {pct} percent.", "desktop.volume_set", summary, undoable=True)
     if isinstance(intent, VolumeStep):
-        result = await desktop.volume_step(intent.delta)
         step_pct = responses.percent_of(result, None)
-        return responses.ok(
-            "Volume changed." if step_pct is None else f"Volume {step_pct} percent.",
-            "desktop.volume_step",
-            "Changed the volume",
-            undoable=True,
-        )
-    await desktop.mute(intent.on)
+        spoken = "Volume changed." if step_pct is None else f"Volume {step_pct} percent."
+        return responses.ok(spoken, "desktop.volume_step", "Changed the volume", undoable=True)
     word = "Muted" if intent.on else "Unmuted"
     return responses.ok(f"{word}.", "desktop.mute", word, undoable=True)
 
 
-async def _run(
-    intent: Intent, desktop: DesktopClient, clock: Callable[[], datetime]
-) -> FinalResponse:
-    """Dispatch an allowed intent to the appropriate handler."""
-    if isinstance(intent, OpenApp):
-        return await _run_app(intent, desktop)
-    if isinstance(intent, CloseApp):
-        return await _run_close(intent, desktop)
+def _respond(intent: Intent, output: object) -> FinalResponse:
+    """Build the spoken response for an intent whose tool ran."""
+    result = cast("Mapping[str, object]", output) if isinstance(output, Mapping) else {}
+    if isinstance(intent, (OpenApp, CloseApp)):
+        return _respond_app(intent, result)
     if isinstance(intent, (TellTime, TellDate)):
-        return _run_clock(intent, clock)
+        return _respond_clock(intent, output)
     if isinstance(intent, (VolumeSet, VolumeStep, Mute)):
-        return await _run_volume(intent, desktop)
+        return _respond_volume(intent, result)
     raise ValueError(f"Unsupported intent: {intent!r}")
 
 
@@ -180,17 +175,19 @@ async def execute(
     mode: policy.Mode,
     *,
     clock: Callable[[], datetime] | None = None,
-    gate: Callable[[str, Mapping[str, object], policy.Mode], policy.Decision] | None = None,
+    ctx: TurnContext | None = None,
 ) -> FinalResponse:
-    """Execute a fast-path intent, gated by policy and the desktop client."""
+    """Execute a fast-path intent through `gated_dispatch`, which gates, audits and runs it."""
     if isinstance(intent, Stop):
         raise ValueError("Stop is handled by the orchestrator, not executed")
     tool, args = _tool_call(intent)
-    decision = await _gated(gate or policy.gate, tool, args, mode)
-    if not decision.allowed:
-        return responses.blocked(decision, mode)
+    base = ctx or TurnContext("fastpath")
+    turn = dataclasses.replace(base, mode=mode, impls=_impls(desktop, clock or _local_now))
     try:
-        return await _run(intent, desktop, clock or _local_now)
+        result = await gated_dispatch(ToolCall(tool, args, "fastpath"), turn)
+        if result.error is not None:
+            return responses.blocked(result.error.why, mode)
+        return _respond(intent, result.output)
     except DesktopError as exc:
         if isinstance(intent, (OpenApp, CloseApp)) and exc.code in (
             "NOT_FOUND",
