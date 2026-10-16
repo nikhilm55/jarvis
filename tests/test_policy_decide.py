@@ -213,6 +213,7 @@ def test_yolo_scopes_run_auto_allowed() -> None:
 
 def test_path_scopes_write_for_t1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # where Windows looks for home
     docs = tmp_path / "Documents"
     docs.mkdir()
     target = docs / "note.txt"
@@ -226,6 +227,7 @@ def test_path_scopes_write_for_t1(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 
 def test_path_scopes_read_for_t0(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # where Windows looks for home
     docs = tmp_path / "Documents"
     docs.mkdir()
     target = docs / "note.txt"
@@ -280,6 +282,7 @@ def test_allow_list_exempts_the_path_from_the_consent_scope(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # where Windows looks for home
     (tmp_path / "Documents" / "ok").mkdir(parents=True)
     registry.register(ToolSpec("t.path", Tier.T1))
     call = _call("t.path", {"path": str(tmp_path / "Documents" / "ok" / "a.txt")})
