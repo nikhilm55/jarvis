@@ -80,3 +80,17 @@ def test_should_raise_rms_when_custom_floor_dbfs_used() -> None:
     rms = np.sqrt(np.mean((pcm.astype(np.float64) / 32767.0) ** 2))
     rms_db = 20.0 * np.log10(rms)
     assert abs(rms_db - (-40.0)) < 1.0
+
+
+def test_should_make_the_same_samples_as_the_per_bin_pink_filter() -> None:
+    """Vectorising the 1/sqrt(f) filter must not change the signal."""
+    rng = np.random.default_rng(3)
+    white = rng.normal(0.0, 1.0, size=4000)
+    spectrum = np.fft.rfft(white)
+    freqs = np.fft.rfftfreq(4000, d=1.0 / 16000)
+    slow = spectrum.copy()
+    for i in range(1, len(slow)):
+        slow[i] = slow[i] / np.sqrt(freqs[i])
+    slow[0] = 0.0
+    expected = np.fft.irfft(slow, n=4000)
+    assert np.allclose(room._pink_noise(np.random.default_rng(3), 4000), expected)

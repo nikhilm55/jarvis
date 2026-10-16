@@ -72,8 +72,7 @@ def _pink_noise(rng: np.random.Generator, count: int) -> np.ndarray:
     white = rng.normal(0.0, 1.0, size=count)
     spectrum = np.fft.rfft(white)
     freqs = np.fft.rfftfreq(count, d=1.0 / SAMPLE_RATE)
-    for i in range(1, len(spectrum)):
-        spectrum[i] = spectrum[i] / np.sqrt(freqs[i])
+    spectrum[1:] /= np.sqrt(freqs[1:])
     spectrum[0] = 0.0
     return np.fft.irfft(spectrum, n=count)
 
