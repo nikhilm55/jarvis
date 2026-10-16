@@ -99,12 +99,14 @@ class TurnRunner:
             route=route,
         )
         record.durations_ms["stt"] = command.stt_ms
+        ctx = TurnContext(turn_id, self._s.settings.policy, self._s.mode)
+        record.policy_decisions = ctx.policy_decisions  # the gate appends as it decides
         self._spoken = False
         started = time.monotonic()
         timer = asyncio.create_task(self._thinking_earcon(command.speech_ended_at))
         try:
             try:
-                final = await self._route(command, record, turn_id)
+                final = await self._route(command, record, ctx)
                 record.final = final
                 await self._finish(final)
             except asyncio.CancelledError:
@@ -127,18 +129,16 @@ class TurnRunner:
                 await timer
         return final
 
-    async def _route(self, command: Command, record: TurnRecord, turn_id: str) -> FinalResponse:
+    async def _route(self, command: Command, record: TurnRecord, ctx: TurnContext) -> FinalResponse:
         """Send the command to the fast path when possible, otherwise to the brain."""
         if command.intent is not None:
             await self._hud(HudEvent("acting", command.text))
-            ctx = TurnContext(turn_id, self._s.settings.policy, self._s.mode)
-            record.policy_decisions = ctx.policy_decisions  # the gate appends as it decides
             try:
                 final = await execute(command.intent, self._s.desktop, self._s.mode, ctx=ctx)
             except FastPathDeclined as declined:
                 logger.info(
                     "fast path declined",
-                    extra={"turn_id": turn_id, "reason": declined.reason},
+                    extra={"turn_id": ctx.turn_id, "reason": declined.reason},
                 )
             else:
                 record.tool_calls = [
@@ -146,9 +146,9 @@ class TurnRunner:
                 ]
                 return final
         record.route = "brain"
-        return await self._brain(command, record, turn_id)
+        return await self._brain(command, record, ctx)
 
-    async def _brain(self, command: Command, record: TurnRecord, turn_id: str) -> FinalResponse:
+    async def _brain(self, command: Command, record: TurnRecord, ctx: TurnContext) -> FinalResponse:
         """Delegate the command to the brain, or report that it is unavailable."""
         if self._s.brain is None:
             return BrainUnavailable(
@@ -163,10 +163,11 @@ class TurnRunner:
             transcript=command.transcript,
             settings=self._s.settings,
             mode=self._s.mode,
-            turn_id=turn_id,
+            turn_id=ctx.turn_id,
             pending_question=command.pending_question,
         )
         self._s.trace.take()
+        self._s.trace.ctx = ctx  # the MCP server judges the brain's tool calls in this turn
         t0 = time.monotonic()
         try:
             return await self._s.brain.turn(envelope, self._on_say, self._on_ask)

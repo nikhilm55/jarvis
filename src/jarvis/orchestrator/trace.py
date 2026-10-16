@@ -2,6 +2,7 @@
 
 from jarvis.activity import ToolCallRecord
 from jarvis.mcp import Dispatch
+from jarvis.policy.decision import TurnContext
 
 __all__ = ["ToolTrace"]
 
@@ -14,6 +15,7 @@ class ToolTrace:
     def __init__(self) -> None:
         """Initialise an empty call buffer."""
         self._calls: list[ToolCallRecord] = []
+        self.ctx: TurnContext | None = None  # the running turn's policy context
 
     def wrap(self, inner: Dispatch) -> Dispatch:
         """Return a dispatch that records each call before delegating to inner."""
@@ -26,8 +28,13 @@ class ToolTrace:
 
         return traced
 
+    def turn_context(self) -> TurnContext:
+        """The running turn's policy context; a fail-closed anonymous one between turns."""
+        return self.ctx or TurnContext("no-turn")
+
     def take(self) -> list[ToolCallRecord]:
-        """Return the recorded calls and reset the buffer to empty."""
+        """Return the recorded calls and reset the buffer and the turn context."""
         calls = self._calls
         self._calls = []
+        self.ctx = None
         return calls
