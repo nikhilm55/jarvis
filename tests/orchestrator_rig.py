@@ -91,6 +91,35 @@ class FakeBrain:
         return self.finals.pop(0) if self.finals else self.final
 
 
+class FakeTimers:
+    """A fake clock whose sleeps end only when the test moves time past them (no real waiting)."""
+
+    def __init__(self, now: float = 100.0) -> None:
+        self.now = now
+        self.requested: list[float] = []  # the delay of every sleep, in order
+        self._waiters: list[tuple[float, asyncio.Event]] = []
+
+    def clock(self) -> float:
+        return self.now
+
+    async def sleep(self, delay: float) -> None:
+        self.requested.append(delay)
+        if delay <= 0:
+            return
+        wake = asyncio.Event()
+        self._waiters.append((self.now + delay, wake))
+        await wake.wait()
+
+    async def advance_to(self, now: float) -> None:
+        """Move time to `now`, release every sleep that is due, and let the loop run."""
+        self.now = now
+        for due, wake in self._waiters:
+            if due <= now:
+                wake.set()
+        for _ in range(20):
+            await asyncio.sleep(0)
+
+
 class Rig:
     """A TurnRunner plus every double it talks to."""
 
@@ -100,8 +129,11 @@ class Rig:
         brain: BrainPort | None,
         timing: Timing,
         error: DesktopError | None,
+        *,
+        speaker: FakeSpeaker | None = None,
+        timers: FakeTimers | None = None,
     ) -> None:
-        self.speaker = FakeSpeaker()
+        self.speaker = speaker or FakeSpeaker()
         self.hud_events: list[HudEvent] = []
         self.desktop_events: list[str] = []
         self.windows = Windows()
@@ -118,6 +150,8 @@ class Rig:
             timing=timing,
             windows=self.windows,
             trace=self.trace,
+            clock=timers.clock if timers else time.monotonic,
+            sleep=timers.sleep if timers else asyncio.sleep,
         )
         self.runner = TurnRunner(services)
 
@@ -139,8 +173,13 @@ def make_rig(
     brain: BrainPort | None = None,
     timing: Timing | None = None,
     error: DesktopError | None = None,
+    *,
+    speaker: FakeSpeaker | None = None,
+    timers: FakeTimers | None = None,
 ) -> Rig:
-    return Rig(tmp_path, brain, timing or Timing(deaf_tail_s=0.0), error)
+    return Rig(
+        tmp_path, brain, timing or Timing(deaf_tail_s=0.0), error, speaker=speaker, timers=timers
+    )
 
 
 def command(text: str, intent: Intent | None, *, ended_ago: float = 0.0) -> Command:
