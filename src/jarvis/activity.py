@@ -70,6 +70,17 @@ class PolicyRecord:
     tool: str
     allowed: bool
     reason: str
+    tier: str | None = None
+    confirmed_by: str | None = None
+
+    def as_dict(self) -> dict[str, object]:
+        """The JSON form; the tier and who confirmed appear only when known."""
+        out: dict[str, object] = {"tool": self.tool, "allowed": self.allowed, "reason": self.reason}
+        if self.tier is not None:
+            out["tier"] = self.tier
+        if self.confirmed_by is not None:
+            out["confirmed_by"] = self.confirmed_by
+        return out
 
 
 @dataclass
@@ -104,10 +115,7 @@ class TurnRecord:
             "route": self.route,
             "brain_model": self.brain_model,
             "tool_calls": tool_calls,
-            "policy_decisions": [
-                {"tool": pd.tool, "allowed": pd.allowed, "reason": pd.reason}
-                for pd in self.policy_decisions
-            ],
+            "policy_decisions": [pd.as_dict() for pd in self.policy_decisions],
             "final": (None if self.final is None else self.final.model_dump(mode="json")),
             "durations_ms": self.durations_ms,
             "drop_reason": self.drop_reason,
