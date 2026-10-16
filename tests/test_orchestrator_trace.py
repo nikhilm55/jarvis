@@ -5,7 +5,9 @@ import asyncio
 import pytest
 
 from jarvis.activity import ToolCallRecord
+from jarvis.config import PolicySettings
 from jarvis.orchestrator.trace import ToolTrace
+from jarvis.policy.decision import TurnContext
 
 
 def test_should_return_inner_result_and_record_call_when_wrapped_dispatch_is_called() -> None:
@@ -97,3 +99,21 @@ def test_should_keep_only_first_200_calls_when_more_than_200_are_recorded() -> N
         assert records[-1] == ToolCallRecord("tool.199", {"i": 199})
 
     asyncio.run(scenario())
+
+
+def test_should_judge_a_call_between_turns_by_the_users_lists_and_mode() -> None:
+    policy = PolicySettings(deny_paths=["~/secrets"], deny_commands=["^git push"])
+    trace = ToolTrace(policy, "balanced")
+    idle = trace.turn_context()
+    assert (idle.turn_id, idle.mode, idle.settings) == ("no-turn", "balanced", policy)
+    assert trace.turn_context().policy_decisions is not idle.policy_decisions
+    assert ToolTrace().turn_context().mode == "safe"  # no mode given: the safest
+
+
+def test_should_hand_out_the_running_turns_context_until_take_clears_it() -> None:
+    trace = ToolTrace(PolicySettings(), "yolo")
+    turn = TurnContext("turn-5", mode="safe")
+    trace.ctx = turn
+    assert trace.turn_context() is turn
+    trace.take()
+    assert trace.turn_context().turn_id == "no-turn"

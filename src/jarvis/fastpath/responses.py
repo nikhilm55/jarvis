@@ -33,10 +33,22 @@ _REMEDY = {
 }
 
 
-def blocked(reason: str, mode: policy.Mode) -> FinalResponse:
-    """Build a failed response for a policy-blocked action."""
+_REFUSED_LINES: dict[str, tuple[str, str]] = {
+    "CANCELLED": ("Okay, I didn't do that.", "Ask again if you do want it done."),
+    "CONSENT_DENIED": (
+        "I left that alone because I don't have your permission.",
+        "Allow access in Jarvis's permissions, then ask again.",
+    ),
+}
+
+
+def blocked(reason: str, mode: policy.Mode, code: ErrorCode = "BLOCKED_BY_POLICY") -> FinalResponse:
+    """Build a failed response for a refused action, keeping the refusal's error code."""
     why = reason if reason.strip() else "no reason given"
-    if mode == "safe" and reason == policy.NEEDS_CONFIRMATION_REASON:
+    if code in _REFUSED_LINES:
+        spoken, remedy_line = _REFUSED_LINES[code]
+        remedy = [remedy_line]
+    elif mode == "safe" and reason == policy.NEEDS_CONFIRMATION_REASON:
         spoken = "I can't do that in safe mode yet. Switch to balanced mode and ask again."
         remedy = ["Switch to balanced mode in Settings, then ask again."]
     else:
@@ -46,7 +58,7 @@ def blocked(reason: str, mode: policy.Mode) -> FinalResponse:
         status="failed",
         spoken=spoken,
         error=ErrorInfo(
-            code="BLOCKED_BY_POLICY",
+            code=code,
             what="The safety check refused that action",
             why=why,
             remedy=remedy,
