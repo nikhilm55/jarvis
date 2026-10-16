@@ -108,3 +108,12 @@ def test_should_forbid_guessing_a_name_when_none_is_set() -> None:
     assert "If it is null, never address the user by name and never guess one" in text
     assert "the account" in text
     assert "home folder" in text
+
+
+def test_should_make_a_decline_a_successful_answer_when_rules_built() -> None:
+    """B3: a polite refusal is status success, never failed (the HUD shows failed as an error)."""
+    text = " ".join(build_rules().split())
+    assert "or you decline it" in text
+    assert "say so through respond with status success" in text
+    assert "A refusal is an answer, never failed" in text
+    assert "failed is only for a tool or system that broke" in text

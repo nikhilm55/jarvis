@@ -100,7 +100,8 @@ class Listener:
         if heard is None:
             return
         if heard.text == "":
-            await self._not_understood("")
+            # Nothing was said after the wake: most likely a false wake, so end silently (B2).
+            self._drop("", "empty transcript")
             return
         verdict = gate(heard.text)
         if not verdict.accepted:
@@ -205,7 +206,7 @@ class Listener:
         await self._s.hud(HudEvent("idle"))
 
     async def _not_understood(self, raw: str) -> None:
-        """Announce that the transcript was empty (R51)."""
+        """Apologise for an empty transcript where the user is waiting for an answer (R51)."""
         self._drop(raw, "empty transcript")
         s = self._s
         await s.hud(HudEvent("reply", NOT_UNDERSTOOD))

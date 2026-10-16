@@ -289,7 +289,7 @@ The rule: **every voice command starts with "Jarvis", and everything after it is
 | FR-STT-04 | Local model choice follows the hardware: the setup benchmark recommends a model (e.g. `small`/`large-v3-turbo` quantised) that keeps STT ≤ 1.5 s on that machine. GPU (CUDA/Vulkan) is used when present. | M |
 | FR-STT-05 | Language: English by default. **Hindi/Hinglish** commands are supported when a multilingual model is chosen; spoken-language setting `auto` / `en` / `hi`. (Avoids the beyondMeetings bug where `medium.en` was paired with `auto`.) | S |
 | FR-STT-06 | On Groq 429 or a network error → automatic fallback to local whisper.cpp if it's installed. Otherwise Jarvis speaks the STT-unavailable error (Appendix B). | M |
-| FR-STT-07 | A very low-confidence or empty transcript → "Sorry, I didn't catch that." (No brain call.) | M |
+| FR-STT-07 | An empty transcript right after a wake word (a probable false wake) → the turn ends silently and is logged (`drop_reason: "empty transcript"`). An empty transcript while Jarvis is waiting for the user (the listen window, or a reply to its question) → "Sorry, I didn't catch that." Never a brain call. | M |
 
 ### 5.4 Command routing and the fast path (FR-NLU)
 
