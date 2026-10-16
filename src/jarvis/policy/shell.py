@@ -7,8 +7,9 @@ never T0.
 import os
 import re
 import shlex
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 
+from jarvis.config import DEFAULT_CONSENT_FOLDERS
 from jarvis.policy.model import Tier
 
 
@@ -182,7 +183,47 @@ def _is_t0(cmd: str, segments: list[list[str]]) -> bool:
     return all(seg[0] in _T0 and _T0_ARGS.get(seg[0], _any_args)(seg[1:]) for seg in segments)
 
 
-def classify_shell(cmd: str) -> tuple[Tier, tuple[str, ...]]:
+def _real(path: str) -> str:
+    """Resolve `~`, `$HOME` and relative paths (against home) through symlinks."""
+    if path.startswith("$HOME"):
+        path = "~" + path[len("$HOME") :]
+    return os.path.realpath(os.path.join(os.path.expanduser("~"), os.path.expanduser(path)))
+
+
+def _under(path: str, root: str) -> bool:
+    return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
+
+
+def _scopes(
+    segments: list[list[str]], folders: Mapping[str, str], allow: Sequence[str]
+) -> tuple[str, ...]:
+    roots = [(_real(folder), source) for folder, source in folders.items()]
+    exempt = [_real(path) for path in allow]
+    found: set[str] = set()
+    for seg in segments:
+        read = os.path.basename(seg[0]) in _READ
+        pending: str | None = None  # the access a redirection gives the token after it
+        for i, token in enumerate(seg):
+            if _redirects(token):
+                pending = "write" if ">" in token else "read"
+                continue
+            mode, pending = pending, None
+            if mode is None:
+                if i == 0 or token.startswith("-") or seg[0] == "echo":
+                    continue
+                mode = "read" if read else "write"
+            path = _real(token)
+            if not any(_under(path, e) for e in exempt):
+                found.update(f"{source}:{mode}" for root, source in roots if _under(path, root))
+    return tuple(sorted(found))
+
+
+def classify_shell(
+    cmd: str,
+    *,
+    folders: Mapping[str, str] = DEFAULT_CONSENT_FOLDERS,
+    allow: Sequence[str] = (),
+) -> tuple[Tier, tuple[str, ...]]:
     """Return the tier of a shell command line and the consent scopes its paths touch."""
     if _FORK_BOMB in re.sub(r"\s+", "", cmd):
         return Tier.T3, ()
@@ -192,6 +233,7 @@ def classify_shell(cmd: str) -> tuple[Tier, tuple[str, ...]]:
         return (Tier.T3 if set(cmd.split()) & _UNPARSEABLE_T3 else Tier.T2), ()
     if not segments:
         return Tier.T2, ()
+    scopes = _scopes(segments, folders, allow)
     if _is_t3(segments, seps):
-        return Tier.T3, ()
-    return (Tier.T0 if _is_t0(cmd, segments) else Tier.T2), ()
+        return Tier.T3, scopes
+    return (Tier.T0 if _is_t0(cmd, segments) else Tier.T2), scopes
