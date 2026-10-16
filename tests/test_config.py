@@ -148,3 +148,31 @@ def test_should_say_what_to_do_when_the_config_is_not_utf8(tmp_path: Path) -> No
     path.write_bytes(b"[user]\nname = '\xff'\n")
     with pytest.raises(ConfigError, match=r"c\.toml: not valid UTF-8"):
         load_settings(path)
+
+
+def test_should_default_policy_lists_to_empty_with_the_four_consent_folders() -> None:
+    policy = Settings().policy
+    assert (policy.deny_paths, policy.allow_paths, policy.deny_commands) == ([], [], [])
+    assert policy.consent_folders == {
+        "~/Documents": "files.documents",
+        "~/Desktop": "files.desktop",
+        "~/Downloads": "files.downloads",
+        "~/Pictures": "files.pictures",
+    }
+
+
+def test_should_read_policy_lists_from_the_file(tmp_path: Path) -> None:
+    path = write_toml(
+        tmp_path / "c.toml",
+        "[policy]\ndeny_paths = ['~/secrets']\nallow_paths = ['~/Downloads/ok']\n"
+        "deny_commands = ['^git push']\n",
+    )
+    policy = load_settings(path).policy
+    assert (policy.deny_paths, policy.allow_paths) == (["~/secrets"], ["~/Downloads/ok"])
+    assert policy.deny_commands == ["^git push"]
+
+
+def test_should_reject_a_deny_command_that_is_not_a_regex(tmp_path: Path) -> None:
+    path = write_toml(tmp_path / "c.toml", "[policy]\ndeny_commands = ['(unclosed']\n")
+    with pytest.raises(ConfigError, match=r"policy\.deny_commands"):
+        load_settings(path)
