@@ -1,6 +1,7 @@
 """Policy vocabulary: risk tiers, modes and the immutable tool descriptor."""
 
 import enum
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -14,6 +15,15 @@ class Tier(enum.StrEnum):
     T1 = "T1"
     T2 = "T2"
     T3 = "T3"
+
+
+def max_tier(a: Tier, b: Tier) -> Tier:
+    """The riskier of two tiers (T0 < T1 < T2 < T3)."""
+    return a if a.value >= b.value else b
+
+
+# Refines a tool's tier and scopes from its arguments. It may raise the tier, never lower it.
+Classifier = Callable[[Mapping[str, object]], tuple[Tier, tuple[str, ...]]]
 
 
 def _check_name(value: object) -> str:
@@ -56,9 +66,13 @@ class ToolSpec:
     name: str
     tier: Tier
     scopes: tuple[str, ...] = ()
+    undoable: bool = False
+    classify: Classifier | None = None
 
     def __post_init__(self) -> None:
         """Validate and normalise fields on construction."""
         object.__setattr__(self, "name", _check_name(self.name))
         object.__setattr__(self, "tier", _check_tier(self.tier))
         object.__setattr__(self, "scopes", _check_scopes(self.scopes))
+        if self.classify is not None and not callable(self.classify):
+            raise ValueError("invalid classify: must be callable or None")

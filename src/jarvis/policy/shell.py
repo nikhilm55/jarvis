@@ -10,6 +10,7 @@ import shlex
 from collections.abc import Callable, Mapping, Sequence
 
 from jarvis.config import DEFAULT_CONSENT_FOLDERS
+from jarvis.policy.lists import is_under, real_path
 from jarvis.policy.model import Tier
 
 
@@ -183,22 +184,11 @@ def _is_t0(cmd: str, segments: list[list[str]]) -> bool:
     return all(seg[0] in _T0 and _T0_ARGS.get(seg[0], _any_args)(seg[1:]) for seg in segments)
 
 
-def _real(path: str) -> str:
-    """Resolve `~`, `$HOME` and relative paths (against home) through symlinks."""
-    if path.startswith("$HOME"):
-        path = "~" + path[len("$HOME") :]
-    return os.path.realpath(os.path.join(os.path.expanduser("~"), os.path.expanduser(path)))
-
-
-def _under(path: str, root: str) -> bool:
-    return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
-
-
 def _scopes(
     segments: list[list[str]], folders: Mapping[str, str], allow: Sequence[str]
 ) -> tuple[str, ...]:
-    roots = [(_real(folder), source) for folder, source in folders.items()]
-    exempt = [_real(path) for path in allow]
+    roots = [(real_path(folder), source) for folder, source in folders.items()]
+    exempt = [real_path(path) for path in allow]
     found: set[str] = set()
     for seg in segments:
         read = os.path.basename(seg[0]) in _READ
@@ -212,9 +202,9 @@ def _scopes(
                 if i == 0 or token.startswith("-") or seg[0] == "echo":
                     continue
                 mode = "read" if read else "write"
-            path = _real(token)
-            if not any(_under(path, e) for e in exempt):
-                found.update(f"{source}:{mode}" for root, source in roots if _under(path, root))
+            path = real_path(token)
+            if not any(is_under(path, e) for e in exempt):
+                found.update(f"{source}:{mode}" for root, source in roots if is_under(path, root))
     return tuple(sorted(found))
 
 
