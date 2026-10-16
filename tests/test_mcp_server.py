@@ -14,10 +14,12 @@ from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from mcp_types import CallToolResult, TextContent
 
-from jarvis import policy
+from jarvis import paths, policy
 from jarvis.brain.failures import ToolError
 from jarvis.mcp.server import Dispatch, JarvisMcpServer
 from jarvis.mcp.tools import TOOLS
+from jarvis.policy.decide import decide
+from jarvis.policy.decision import Decision, ToolCall, TurnContext
 
 
 @asynccontextmanager
@@ -130,23 +132,20 @@ def test_should_deny_when_safe_mode() -> None:
 def test_should_gate_in_worker_when_yolo(monkeypatch: pytest.MonkeyPatch) -> None:
     async def scenario() -> None:
         rec = _Recorder()
-        gate_calls: list[tuple[str, dict[str, object], policy.Mode, bool]] = []
+        seen: list[tuple[str, dict[str, object], str, bool]] = []
+        real = decide
 
-        def fake_gate(tool: str, args: dict[str, object], m: policy.Mode) -> policy.Decision:
-            gate_calls.append(
-                (tool, args, m, threading.current_thread() is not threading.main_thread())
-            )
-            return policy.Decision(True, "ok")
+        def spy(call: ToolCall, mode: policy.Mode, ctx: TurnContext) -> Decision:
+            on_worker = threading.current_thread() is not threading.main_thread()
+            seen.append((call.name, dict(call.args), mode, on_worker))
+            return real(call, mode, ctx)
 
-        monkeypatch.setattr(policy, "gate", fake_gate)
+        monkeypatch.setattr("jarvis.policy.gated.decide", spy)
         async with _serving(rec, mode="yolo") as server, _connected(server) as client:
             res = await client.call_tool("mute", {"on": True})
             assert res.is_error is False
             assert rec.calls == [("desktop.mute", {"on": True})]
-            assert gate_calls[0][0] == "desktop.mute"
-            assert gate_calls[0][1] == {"on": True}
-            assert gate_calls[0][2] == "yolo"
-            assert gate_calls[0][3] is True
+            assert seen == [("desktop.mute", {"on": True}, "yolo", True)]
 
     asyncio.run(scenario())
 
@@ -155,15 +154,40 @@ def test_should_deny_when_gate_blocks(monkeypatch: pytest.MonkeyPatch) -> None:
     async def scenario() -> None:
         rec = _Recorder()
 
-        def fake_gate(tool: str, args: dict[str, object], m: policy.Mode) -> policy.Decision:
-            return policy.Decision(False, "nope")
+        def refuse(call: ToolCall, mode: policy.Mode, ctx: TurnContext) -> Decision:
+            return Decision("deny", None, reason="nope")
 
-        monkeypatch.setattr(policy, "gate", fake_gate)
+        monkeypatch.setattr("jarvis.policy.gated.decide", refuse)
         async with _serving(rec, mode="yolo") as server, _connected(server) as client:
             res = await client.call_tool("mute", {"on": True})
             assert res.is_error is True
             assert _text(res) == "nope"
             assert rec.calls == []
+
+    asyncio.run(scenario())
+
+
+def test_should_record_the_decisions_in_the_running_turn_and_audit_its_id() -> None:
+    async def scenario() -> None:
+        rec = _Recorder()
+        ctx = TurnContext("turn-42")
+        server = JarvisMcpServer(rec, lambda: "balanced", turn=lambda: ctx)
+        await server.start()
+        try:
+            async with _connected(server) as client:
+                await client.call_tool("volume_get", {})
+                await client.call_tool("nope", {})
+        finally:
+            await server.close()
+        assert [(d.tool, d.allowed) for d in ctx.policy_decisions] == [
+            ("desktop.volume_get", True),
+            ("mcp.unknown", False),
+        ]
+        audit = (paths.data_dir() / "logs" / "audit.jsonl").read_text(encoding="utf-8")
+        rows = [json.loads(line) for line in audit.splitlines()]
+        decided = [(r["turn_id"], r["tool"], r["origin"]) for r in rows if "origin" in r]
+        assert ("turn-42", "desktop.volume_get", "brain") in decided
+        assert ("turn-42", "mcp.unknown", "brain") in decided
 
     asyncio.run(scenario())
 

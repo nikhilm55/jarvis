@@ -2,11 +2,12 @@
 
 import asyncio
 import contextlib
+import dataclasses
 import json
 import secrets
 import socket
 import time
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,8 @@ from jarvis.log import get_logger, redact
 from jarvis.mcp.config_file import write_private_json
 from jarvis.mcp.guard import GuardMiddleware
 from jarvis.mcp.tools import SERVER_NAME, TOOLS, TOOLS_BY_NAME
+from jarvis.policy.decision import ToolCall, TurnContext
+from jarvis.policy.gated import gated_dispatch, tool_impl
 
 Dispatch = Callable[[str, dict[str, object]], Awaitable[object]]
 
@@ -52,10 +55,21 @@ class EmbeddedServer(uvicorn.Server):
 class JarvisMcpServer:
     """One instance serves once; no module-level state."""
 
-    def __init__(self, dispatch: Dispatch, get_mode: Callable[[], policy.Mode]) -> None:
-        """Store the dispatch callable and mode provider for later use."""
+    def __init__(
+        self,
+        dispatch: Dispatch,
+        get_mode: Callable[[], policy.Mode],
+        *,
+        turn: Callable[[], TurnContext] | None = None,
+    ) -> None:
+        """Store the dispatch callable, the mode provider and, optionally, the running turn.
+
+        `turn` gives the policy context of the running turn (its id, settings and the list its
+        decisions go to); without it each call is judged in an anonymous turn.
+        """
         self._dispatch = dispatch
         self._get_mode = get_mode
+        self._turn = turn
         self._token: str | None = None
         self._url: str | None = None
         self._server: uvicorn.Server | None = None
@@ -171,14 +185,15 @@ class JarvisMcpServer:
             ]
         )
 
-    async def _gate(self, policy_name: str, args: dict[str, Any]) -> policy.Decision:
-        """Run the policy gate in a thread, failing closed on error."""
-        try:
-            mode = self._get_mode()
-            return await asyncio.to_thread(policy.gate, policy_name, args, mode)
-        except Exception:
-            self._log.exception("policy gate failed", extra={"tool": policy_name})
-            return policy.Decision(False, "policy error: mode unavailable")
+    def _context(self, name: str) -> TurnContext:
+        """The turn's policy context, in the current mode, with the tool's implementation."""
+        base = self._turn() if self._turn is not None else TurnContext("no-turn")
+
+        @tool_impl
+        async def run(args: Mapping[str, object]) -> object:
+            return await self._dispatch(name, dict(args))
+
+        return dataclasses.replace(base, mode=self._get_mode(), impls={name: run})
 
     async def _call_tool(
         self,
@@ -188,20 +203,23 @@ class JarvisMcpServer:
         """Gate and dispatch a tool call, returning an error result on failure."""
         args = dict(params.arguments or {})
         tool = TOOLS_BY_NAME.get(params.name)
-        if tool is None:
-            await self._gate("mcp.unknown", args)
-            return _error("unknown tool")
-        decision = await self._gate(tool.policy_name, args)
-        if not decision.allowed:
-            return _error(decision.reason)
+        name = "mcp.unknown" if tool is None else tool.policy_name
         try:
-            text = _render(await self._dispatch(tool.policy_name, args))
+            turn = self._context(name)
+        except Exception:
+            self._log.exception("policy context failed", extra={"tool": name})
+            return _error("policy error: mode unavailable")
+        try:
+            result = await gated_dispatch(ToolCall(name, args, "brain"), turn)
         except ToolError as exc:  # the normal repair flow (bad argument, step limit), not a fault
-            self._log.warning(
-                "tool refused: %s", redact(str(exc)), extra={"tool": tool.policy_name}
-            )
+            self._log.warning("tool refused: %s", redact(str(exc)), extra={"tool": name})
             return _error(redact(str(exc)))
         except Exception as exc:
-            self._log.exception("tool dispatch failed", extra={"tool": tool.policy_name})
+            self._log.exception("tool dispatch failed", extra={"tool": name})
             return _error(f"tool error: {type(exc).__name__}: {redact(str(exc))}")
+        if tool is None:
+            return _error("unknown tool")
+        if result.error is not None:
+            return _error(result.error.why)
+        text = _render(result.output)
         return types.CallToolResult(content=[types.TextContent(type="text", text=text)])
