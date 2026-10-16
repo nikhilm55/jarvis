@@ -186,7 +186,9 @@ async def execute(
         raise ValueError("Stop is handled by the orchestrator, not executed")
     tool, args = _tool_call(intent)
     base = ctx or TurnContext("fastpath")
-    turn = dataclasses.replace(base, mode=mode, impls=_impls(desktop, clock or _local_now))
+    turn = dataclasses.replace(
+        base, mode=mode, impls=_impls(desktop, clock or _local_now)
+    )  # gate-ok: builds the impl table
     try:
         result = await gated_dispatch(ToolCall(tool, args, "fastpath"), turn)
         if result.error is not None:

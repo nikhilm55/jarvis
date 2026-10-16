@@ -64,31 +64,31 @@ def _int(label: str, value: object, low: int, high: int) -> int:
 def _open_app(desktop: DesktopLike, args: Mapping[str, object]) -> _Call:
     """Validate and build the open_app coroutine."""
     _check_keys("desktop.open_app", args, {"name"})
-    return desktop.open_app(_name(args["name"]))
+    return desktop.open_app(_name(args["name"]))  # gate-ok: via MCP impl
 
 
 def _close_app(desktop: DesktopLike, args: Mapping[str, object]) -> _Call:
     """Validate and build the close_app coroutine."""
     _check_keys("desktop.close_app", args, {"name"})
-    return desktop.close_app(_name(args["name"]))
+    return desktop.close_app(_name(args["name"]))  # gate-ok: via MCP impl
 
 
 def _volume_get(desktop: DesktopLike, args: Mapping[str, object]) -> _Call:
     """Validate and build the volume_get coroutine."""
     _check_keys("desktop.volume_get", args, set())
-    return desktop.volume_get()
+    return desktop.volume_get()  # gate-ok: via MCP impl
 
 
 def _volume_set(desktop: DesktopLike, args: Mapping[str, object]) -> _Call:
     """Validate and build the volume_set coroutine."""
     _check_keys("desktop.volume_set", args, {"percent"})
-    return desktop.volume_set(_int("percent", args["percent"], 0, 100))
+    return desktop.volume_set(_int("percent", args["percent"], 0, 100))  # gate-ok: via MCP impl
 
 
 def _volume_step(desktop: DesktopLike, args: Mapping[str, object]) -> _Call:
     """Validate and build the volume_step coroutine."""
     _check_keys("desktop.volume_step", args, {"delta"})
-    return desktop.volume_step(_int("delta", args["delta"], -100, 100))
+    return desktop.volume_step(_int("delta", args["delta"], -100, 100))  # gate-ok: via MCP impl
 
 
 def _mute(desktop: DesktopLike, args: Mapping[str, object]) -> _Call:
@@ -96,7 +96,7 @@ def _mute(desktop: DesktopLike, args: Mapping[str, object]) -> _Call:
     _check_keys("desktop.mute", args, {"on"})
     if not isinstance(args["on"], bool):
         raise ToolError("on must be a boolean")
-    return desktop.mute(args["on"])
+    return desktop.mute(args["on"])  # gate-ok: via MCP impl
 
 
 _HANDLERS: dict[str, Callable[[DesktopLike, Mapping[str, object]], _Call]] = {

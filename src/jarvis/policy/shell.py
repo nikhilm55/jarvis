@@ -398,7 +398,8 @@ def _is_t0(cmd: str, segments: list[list[str]], seps: list[str]) -> bool:
     if any(_is_redirect(t) and t != "<" for seg in segments for t in seg):
         return False
     # The bare first token: no path (`./ls`), no assignment (`FOO=1 ls`), no wrapper.
-    return all(seg[0] in _T0 and _T0_ARGS.get(seg[0], _any_args)(seg[1:]) for seg in segments)
+    checks = [(seg, _T0_ARGS.get(seg[0], _any_args)) for seg in segments]
+    return all(seg[0] in _T0 and check(seg[1:]) for seg, check in checks)
 
 
 def _scopes(

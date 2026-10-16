@@ -68,7 +68,7 @@ async def build_components(
         async def dispatch(name: str, args: dict[str, object]) -> object:
             if brain is None:
                 raise RuntimeError("the brain is not running")
-            return await brain.dispatch(name, args)
+            return await brain.dispatch(name, args)  # gate-ok: late-bound brain hook
 
         mcp = JarvisMcpServer(trace.wrap(dispatch), lambda: mode, turn=trace.turn_context)
         brain = ClaudeCodeBrain(settings, mcp, desktop)
