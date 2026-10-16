@@ -1,9 +1,7 @@
 """Benchmark the warm whisper.cpp server for tiny.en, base.en, small.en.
 
 Reports, per model: p50/p95 latency, the share of clips whose first word is "Jarvis", and word
-error rate (WER) against the reference texts of two corpora: the M1 acceptance fixtures
-(tests/fixtures/acceptance, synthetic Kokoro voices) and the M0a jarvis_command clips (Piper
-voices with noise added; the manifest `text` column is the reference).
+error rate against the reference texts of the M1 acceptance fixtures and the M0a clips.
 
 Usage:
     uv run python scripts/bench_stt.py [--clips-dir DIR] [--count N] [--fixtures DIR]
@@ -228,10 +226,8 @@ def format_table(rows: list[Row]) -> str:
     lines = [header, "-" * len(header)]
     for r in rows:
         p50_3s = f"{r.p50_3s_ms:>8.1f}" if r.p50_3s_ms is not None else f"{'n/a':>8}"
-        line = (
-            f"{r.model:<10} {r.n:>5} {r.p50_ms:>8.1f} {r.p95_ms:>8.1f} {p50_3s} "
-            f"{r.accuracy * 100:>9.1f}"
-        )
+        line = f"{r.model:<10} {r.n:>5} {r.p50_ms:>8.1f} {r.p95_ms:>8.1f} {p50_3s} "
+        line += f"{r.accuracy * 100:>9.1f}"
         line += "".join(f" {r.wer.get(c, float('nan')) * 100:>16.1f}" for c in corpora)
         lines.append(line)
     return "\n".join(lines)
@@ -239,7 +235,8 @@ def format_table(rows: list[Row]) -> str:
 
 def recommend(rows: list[Row], limit_ms: float) -> str | None:
     """Return the last model whose p50 on ~3 s clips (all clips if none) meets the limit."""
-    fits = [r.model for r in rows if (r.p50_3s_ms or r.p50_ms) <= limit_ms]
+    p50s = [(r.model, r.p50_ms if r.p50_3s_ms is None else r.p50_3s_ms) for r in rows]
+    fits = [model for model, p50 in p50s if p50 <= limit_ms]
     return fits[-1] if fits else None
 
 
