@@ -13,6 +13,7 @@ from jarvis.policy.model import max_tier
 @pytest.fixture
 def home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # where Windows looks for home
     for name in ("secrets", "Documents", "Documents/ok", "work"):
         (tmp_path / name).mkdir()
     return tmp_path
