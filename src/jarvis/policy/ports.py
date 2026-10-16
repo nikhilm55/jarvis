@@ -11,6 +11,8 @@ if TYPE_CHECKING:
 
 # Why a call was refused when nothing could ask the user; callers compare it by equality (R39-R41).
 NEEDS_CONFIRMATION_REASON = "needs confirmation (M2)"
+# The same, for a tier that Balanced mode would confirm too, so switching modes would not help.
+CONFIRMATION_UNAVAILABLE_REASON = "needs confirmation - M2"
 
 Method = Literal["voice", "typed", "button", "key", "timeout"]
 
