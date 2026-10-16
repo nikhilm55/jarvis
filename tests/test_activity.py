@@ -180,3 +180,15 @@ def test_should_purge_only_old_jsonl_files_when_called(tmp_path: Path) -> None:
 def test_should_return_zero_when_purging_missing_directory(tmp_path: Path) -> None:
     log = ActivityLog(directory=tmp_path / "does-not-exist")
     assert log.purge(retention_days=30, today=date(2026, 10, 7)) == 0
+
+
+def test_should_serialise_the_tier_and_who_confirmed_only_when_known() -> None:
+    known = PolicyRecord("t.app", True, "confirmed", tier="T2", confirmed_by="voice")
+    assert known.as_dict() == {
+        "tool": "t.app",
+        "allowed": True,
+        "reason": "confirmed",
+        "tier": "T2",
+        "confirmed_by": "voice",
+    }
+    assert set(PolicyRecord("t.app", False, "no").as_dict()) == {"tool", "allowed", "reason"}

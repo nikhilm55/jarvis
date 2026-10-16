@@ -6,11 +6,9 @@ from dataclasses import dataclass
 from jarvis.log import audit
 from jarvis.policy import registry
 from jarvis.policy.model import Mode, Tier, ToolSpec
+from jarvis.policy.ports import NEEDS_CONFIRMATION_REASON
 
 _MODES = ("safe", "balanced", "yolo")
-
-# The reason of the safe-mode T1 denial; callers compare against it by equality.
-NEEDS_CONFIRMATION_REASON = "needs confirmation (M2)"
 
 
 @dataclass(frozen=True)

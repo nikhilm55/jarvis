@@ -1,7 +1,8 @@
 """Deterministic safety policy for tool calls (FRS 5.10)."""
 
-from jarvis.policy.legacy import NEEDS_CONFIRMATION_REASON, Decision, gate
+from jarvis.policy.legacy import Decision, gate
 from jarvis.policy.model import Mode, Tier, ToolSpec
+from jarvis.policy.ports import NEEDS_CONFIRMATION_REASON
 from jarvis.policy.registry import get, register
 
 __all__ = [
