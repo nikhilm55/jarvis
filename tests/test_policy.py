@@ -51,9 +51,9 @@ def test_should_register_desktop_tools_with_exact_tiers() -> None:
         "desktop.open_app": Tier.T1,
         "desktop.close_app": Tier.T1,
         "desktop.volume_get": Tier.T0,
-        "desktop.volume_set": Tier.T0,
-        "desktop.volume_step": Tier.T0,
-        "desktop.mute": Tier.T0,
+        "desktop.volume_set": Tier.T1,  # R95: FRS 5.10 lists volume under T1
+        "desktop.volume_step": Tier.T1,
+        "desktop.mute": Tier.T1,
     }
     for name, tier in expected.items():
         spec = get(name)
@@ -111,12 +111,13 @@ def test_should_confirm_open_and_close_app_when_safe_and_run_them_when_balanced(
     assert verdict(name, "balanced")[0] == "run"
 
 
-@pytest.mark.parametrize(
-    "name",
-    ["desktop.volume_get", "desktop.volume_set", "desktop.volume_step", "desktop.mute"],
-)
-def test_should_run_the_volume_tools_in_every_mode(name: str) -> None:
-    assert [verdict(name, mode)[0] for mode in MODES] == ["run", "run", "run"]
+def test_should_run_reading_the_volume_in_every_mode() -> None:
+    assert [verdict("desktop.volume_get", mode)[0] for mode in MODES] == ["run", "run", "run"]
+
+
+@pytest.mark.parametrize("name", ["desktop.volume_set", "desktop.volume_step", "desktop.mute"])
+def test_should_treat_changing_the_volume_as_t1_confirm_in_safe_run_otherwise(name: str) -> None:
+    assert [verdict(name, mode)[0] for mode in MODES] == ["confirm", "run", "run"]
 
 
 def test_should_not_mutate_args_when_deciding() -> None:

@@ -190,7 +190,7 @@ async def execute(
     try:
         result = await gated_dispatch(ToolCall(tool, args, "fastpath"), turn)
         if result.error is not None:
-            return responses.blocked(result.error.why, mode)
+            return responses.blocked(result.error.why, mode, result.error.code)
         return _respond(intent, result.output)
     except DesktopError as exc:
         if isinstance(intent, (OpenApp, CloseApp)) and exc.code in (

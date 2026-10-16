@@ -8,10 +8,11 @@ import pytest
 from jarvis import policy
 from jarvis.contract import ErrorInfo, FinalResponse
 from jarvis.fastpath import responses
-from jarvis.fastpath.intents import VolumeStep
+from jarvis.fastpath.intents import Intent, Mute, OpenApp, VolumeSet, VolumeStep
 from jarvis.policy import registry
-from jarvis.policy.decision import ToolCall, TurnContext
+from jarvis.policy.decision import Kind, ToolCall, TurnContext
 from jarvis.policy.gated import gated_dispatch
+from jarvis.policy.ports import Answer, Method
 from tests.fastpath_fakes import FakeDesktop, run
 
 
@@ -87,3 +88,48 @@ def test_should_speak_the_percent_when_volume_step_result_has_it() -> None:
     desktop = FakeDesktop(events, results={"volume_step": {"percent": 50, "muted": False}})
     response = run(VolumeStep(10), desktop, "balanced")
     assert response.spoken == "Volume 50 percent."
+
+
+@pytest.mark.parametrize("intent", [VolumeSet(40), VolumeStep(10), Mute(True)])
+def test_should_confirm_changing_the_volume_in_safe_mode_and_run_it_in_balanced(
+    intent: Intent,
+) -> None:
+    events: list[str] = []
+    safe = run(intent, FakeDesktop(events), "safe")
+    assert error_of(safe).code == "BLOCKED_BY_POLICY"
+    assert "balanced" in error_of(safe).remedy[0]
+    assert events == []
+    assert run(intent, FakeDesktop(events), "balanced").status == "success"
+
+
+@pytest.mark.parametrize(
+    ("yes", "method", "code"),
+    [(False, "voice", "CANCELLED"), (False, "timeout", "BLOCKED_BY_POLICY")],
+)
+def test_should_keep_the_gates_error_code_when_the_user_declines_or_does_not_answer(
+    yes: bool, method: Method, code: str
+) -> None:
+    events: list[str] = []
+    ctx = TurnContext("t1", confirmer=AskedOnce(Answer(yes, method)))
+    response = run(OpenApp("Calculator"), FakeDesktop(events), "safe", ctx=ctx)
+    assert error_of(response).code == code
+    assert events == []
+
+
+def test_should_run_the_intent_when_the_user_confirms_in_safe_mode() -> None:
+    events: list[str] = []
+    ctx = TurnContext("t1", confirmer=AskedOnce(Answer(True, "voice")))
+    response = run(OpenApp("Calculator"), FakeDesktop(events), "safe", ctx=ctx)
+    assert response.status == "success"
+    assert events == ["desktop.open_app"]
+    assert ctx.policy_decisions[0].confirmed_by == "voice"
+
+
+class AskedOnce:
+    def __init__(self, answer: Answer) -> None:
+        self.answer = answer
+
+    async def ask(
+        self, prompt: str, kind: Kind, target_phrase: str | None = None, timeout_s: float = 15
+    ) -> Answer:
+        return self.answer
