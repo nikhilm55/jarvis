@@ -5,6 +5,7 @@ import datetime
 import pytest
 
 from jarvis.contract import ErrorInfo, FinalResponse, validate_response
+from jarvis.contract.models import ErrorCode
 from jarvis.desktop.client import DesktopError
 from jarvis.fastpath import responses
 from jarvis.policy import Mode
@@ -164,3 +165,21 @@ def test_should_return_percent_or_default_when_not_int(
     result: dict[str, object], default: int, expected: int
 ) -> None:
     assert responses.percent_of(result, default) == expected
+
+
+@pytest.mark.parametrize(
+    ("code", "spoken_start"),
+    [
+        ("CANCELLED", "Okay, I didn't do that"),
+        ("CONSENT_DENIED", "I left that alone"),
+        ("BLOCKED_BY_POLICY", "I didn't do that because"),
+    ],
+)
+def test_should_keep_the_refusal_code_and_speak_a_line_that_fits_it(
+    code: ErrorCode, spoken_start: str
+) -> None:
+    resp = responses.blocked("whatever the gate said", "balanced", code)
+    assert error_of(resp).code == code
+    assert error_of(resp).why == "whatever the gate said"
+    assert resp.spoken.startswith(spoken_start)
+    assert_contract_valid(resp)

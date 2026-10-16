@@ -59,7 +59,7 @@ async def build_components(
     voice = Voice(speaker, timing)
     segmenter = await asyncio.to_thread(_segmenter, settings, voice)
     desktop = DesktopClient()
-    trace = ToolTrace()
+    trace = ToolTrace(settings.policy, mode)
     brain: ClaudeCodeBrain | None = None
     services: list[ServicePort] = []
     if with_brain:

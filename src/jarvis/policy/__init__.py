@@ -27,9 +27,10 @@ _DESKTOP_TOOLS = (
     ToolSpec("desktop.open_app", Tier.T1),
     ToolSpec("desktop.close_app", Tier.T1),
     ToolSpec("desktop.volume_get", Tier.T0),
-    ToolSpec("desktop.volume_set", Tier.T0),
-    ToolSpec("desktop.volume_step", Tier.T0),
-    ToolSpec("desktop.mute", Tier.T0),
+    # FRS 5.10 lists volume under T1; reading it is T0 (R95).
+    ToolSpec("desktop.volume_set", Tier.T1),
+    ToolSpec("desktop.volume_step", Tier.T1),
+    ToolSpec("desktop.mute", Tier.T1),
 )
 
 for _spec in _DESKTOP_TOOLS:

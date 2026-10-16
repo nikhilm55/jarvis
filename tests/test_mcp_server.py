@@ -16,10 +16,13 @@ from mcp_types import CallToolResult, TextContent
 
 from jarvis import paths, policy
 from jarvis.brain.failures import ToolError
+from jarvis.config import PolicySettings
 from jarvis.mcp.server import Dispatch, JarvisMcpServer
 from jarvis.mcp.tools import TOOLS
+from jarvis.orchestrator.trace import ToolTrace
 from jarvis.policy.decide import decide
 from jarvis.policy.decision import Decision, ToolCall, TurnContext
+from jarvis.policy.ports import Answer
 
 
 @asynccontextmanager
@@ -373,5 +376,79 @@ def test_should_manage_lifecycle_when_started() -> None:
         finally:
             await s1.close()
             await s2.close()
+
+    asyncio.run(scenario())
+
+
+class _Declines:
+    def __init__(self, method: str = "voice") -> None:
+        self.method = method
+
+    async def ask(self, *args: object, **kwargs: object) -> Answer:
+        return Answer(False, self.method)  # type: ignore[arg-type]
+
+
+def test_should_keep_the_error_code_of_a_refusal_in_the_result() -> None:
+    async def scenario() -> None:
+        rec = _Recorder()
+        ctx = TurnContext("turn-9", mode="safe", confirmer=_Declines())
+        server = JarvisMcpServer(rec, lambda: "safe", turn=lambda: ctx)
+        await server.start()
+        try:
+            async with _connected(server) as client:
+                declined = await client.call_tool("open_app", {"name": "firefox"})
+                assert declined.is_error is True
+                assert _text(declined) == "you declined"
+                assert declined.structured_content == {
+                    "code": "CANCELLED",
+                    "reason": "you declined",
+                }
+                ctx_default = TurnContext("turn-10", mode="safe")
+                server._turn = lambda: ctx_default
+                blocked = await client.call_tool("open_app", {"name": "firefox"})
+                assert _text(blocked) == policy.NEEDS_CONFIRMATION_REASON
+                assert (blocked.structured_content or {})["code"] == "BLOCKED_BY_POLICY"
+                ok = await client.call_tool("volume_get", {})
+                assert ok.structured_content is None
+        finally:
+            await server.close()
+        assert rec.calls == [("desktop.volume_get", {})]
+
+    asyncio.run(scenario())
+
+
+def test_should_take_the_mode_from_the_turn_only() -> None:
+    async def scenario() -> None:
+        rec = _Recorder()
+        ctx = TurnContext("turn-1", mode="safe")
+        server = JarvisMcpServer(rec, lambda: "yolo", turn=lambda: ctx)  # the provider disagrees
+        await server.start()
+        try:
+            async with _connected(server) as client:
+                res = await client.call_tool("mute", {"on": True})
+        finally:
+            await server.close()
+        assert res.is_error is True  # a T1 in Safe mode, not YOLO's run
+        assert rec.calls == []
+
+    asyncio.run(scenario())
+
+
+def test_should_apply_the_users_deny_list_between_turns() -> None:
+    async def scenario() -> None:
+        rec = _Recorder()
+        trace = ToolTrace(PolicySettings(deny_paths=["~/secrets"]), "balanced")
+        server = JarvisMcpServer(trace.wrap(rec), lambda: "balanced", turn=trace.turn_context)
+        await server.start()
+        try:
+            async with _connected(server) as client:
+                refused = await client.call_tool("open_app", {"name": "~/secrets/key"})
+                allowed = await client.call_tool("open_app", {"name": "firefox"})
+        finally:
+            await server.close()
+        assert refused.is_error is True
+        assert "deny list" in _text(refused)
+        assert allowed.is_error is False
+        assert rec.calls == [("desktop.open_app", {"name": "firefox"})]
 
     asyncio.run(scenario())
