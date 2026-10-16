@@ -2,6 +2,7 @@
 
 import glob
 import os
+import posixpath
 import re
 import shlex
 from collections.abc import Mapping
@@ -85,9 +86,9 @@ def speak_targets(verb: str, targets: list[str]) -> str:
         return f"confirm {verb} {names[0]}"
     if len(names) <= 3:
         return f"confirm {verb} {len(names)} paths: {', '.join(names)}"
-    parents = [os.path.dirname(n) or "." for n in names]
+    parents = [posixpath.dirname(n) or "." for n in names]  # as the user wrote them, with `/`
     try:
-        common = os.path.commonpath(parents) or "."
+        common = posixpath.commonpath(parents) or "."
     except ValueError:  # paths on different drives
         common = "several places"
     return f"confirm {verb} {len(names)} paths in {common}"
