@@ -1,5 +1,6 @@
 """User settings from `config_dir()/config.toml`. Unknown keys are errors, never ignored."""
 
+import re
 import tomllib
 from pathlib import Path
 from typing import Annotated, Literal
@@ -78,6 +79,34 @@ class LogSettings(_Section):
     retention_days: int = Field(default=30, ge=1, le=3650)  # <= 0 would purge every record
 
 
+# Folder -> consent-scope source (FRS 5.11): a shell path under one adds `<source>:read|write`.
+DEFAULT_CONSENT_FOLDERS: dict[str, str] = {
+    "~/Documents": "files.documents",
+    "~/Desktop": "files.desktop",
+    "~/Downloads": "files.downloads",
+    "~/Pictures": "files.pictures",
+}
+
+
+class PolicySettings(_Section):
+    """Allow/deny lists (FR-SAFE-09). A deny entry beats every tier, YOLO included."""
+
+    deny_paths: list[str] = Field(default_factory=list)
+    allow_paths: list[str] = Field(default_factory=list)  # only skips the consent-scope mapping
+    deny_commands: list[str] = Field(default_factory=list)  # regexes, searched in the command line
+    consent_folders: dict[str, str] = Field(default_factory=lambda: dict(DEFAULT_CONSENT_FOLDERS))
+
+    @field_validator("deny_commands")
+    @classmethod
+    def _valid_regexes(cls, patterns: list[str]) -> list[str]:
+        for pattern in patterns:
+            try:
+                re.compile(pattern)
+            except re.error as error:
+                raise ValueError(f"{pattern!r} is not a valid regex: {error}") from error
+        return patterns
+
+
 class Settings(_Section):
     audio: AudioSettings = Field(default_factory=AudioSettings)
     wake: WakeSettings = Field(default_factory=WakeSettings)
@@ -87,6 +116,7 @@ class Settings(_Section):
     log: LogSettings = Field(default_factory=LogSettings)
     hud: HudSettings = Field(default_factory=HudSettings)
     user: UserSettings = Field(default_factory=UserSettings)
+    policy: PolicySettings = Field(default_factory=PolicySettings)
 
 
 def _describe(problem: ErrorDetails) -> str:
