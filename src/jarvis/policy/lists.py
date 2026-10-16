@@ -69,16 +69,86 @@ def _resolved(path: str) -> list[str]:
     return found
 
 
+# Shown when the deny list is set and a call cannot be traced to the paths it touches (R96).
+UNRESOLVABLE_REASON = (
+    "denied: I can't tell whether that touches a protected folder; spell the path out"
+)
+_HOME_VAR = re.compile(r"\$(?:HOME\b|\{HOME\})")
+_BRACES = re.compile(r"\{[^{}]*\}")
+_FLAG_ATTACHED = re.compile(r"-[^-=\s][^=\s]*[/~]")  # `-C/dir`, `-f~/x`: a path glued to a flag
+_DIR_CHANGES = frozenset({"cd", "pushd", "popd"})
+_MAX_DEPTH = 8
+
+
+def _flatten(value: object, depth: int = 0) -> list[str] | None:
+    """Every string inside `value` (lists, dicts, any depth); None when it nests too deeply."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, Mapping):
+        items = [*value.values(), *value.keys()]
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        items = list(value)
+    else:
+        return []
+    if depth >= _MAX_DEPTH:
+        return None
+    found: list[str] = []
+    for item in items:
+        inner = _flatten(item, depth + 1)
+        if inner is None:
+            return None
+        found += inner
+    return found
+
+
+def _has_expansion(text: str) -> bool:
+    """A variable (other than `$HOME`), substitution or brace expansion: its value is unknown."""
+    clean = _HOME_VAR.sub("", text)
+    return any(mark in clean for mark in ("$", "`", "<(", ">(")) or bool(_BRACES.search(clean))
+
+
+def _cannot_resolve_command(cmd: str) -> bool:
+    """A command line whose paths cannot all be read off it (R96)."""
+    if _has_expansion(cmd):
+        return True
+    try:
+        words = shlex.split(_OPERATORS.sub(" ", cmd))
+    except ValueError:
+        return True
+    return any(w in _DIR_CHANGES or _FLAG_ATTACHED.match(w) for w in words)
+
+
+def _unresolvable(args: Mapping[str, object]) -> bool:
+    for key in _COMMAND_KEYS:
+        value = args.get(key)
+        if isinstance(value, (list, tuple, Mapping, set)):
+            return True  # a command given as a list or object is not a line we can read
+        if isinstance(value, str) and _cannot_resolve_command(value):
+            return True
+    return any(_has_expansion(text) for key in _PATH_KEYS for text in _flatten(args.get(key)) or [])
+
+
 def denied(args: Mapping[str, object], settings: PolicySettings) -> str | None:
-    """The reason a call is on the deny list, or None. A deny entry beats every tier."""
+    """The reason a call is on the deny list, or None. A deny entry beats every tier.
+
+    With a deny list set, a call whose paths cannot be traced (variables, braces, `cd`, paths
+    glued to flags, an unreadable line, over-deep arguments) is denied too: fail closed (R96).
+    Every string argument, at any depth and under any key, is checked as a path.
+    """
+    if not (settings.deny_paths or settings.deny_commands):
+        return None
+    texts = _flatten(dict(args))
+    if texts is None or _unresolvable(args):
+        return UNRESOLVABLE_REASON
     cmd = command_of(args)
     for pattern in settings.deny_commands:
         if cmd and re.search(pattern, cmd):
             return f"denied: the command matches the deny list ({pattern!r})"
     roots = [real_path(p) for p in settings.deny_paths]
-    for path in path_args(args):
-        if any(is_under(r, root) for r in _resolved(path) for root in roots):
-            return f"denied: {path} is on the deny list"
+    for text in texts:
+        for path in [text, *_shell_paths(text)]:
+            if any(is_under(r, root) for r in _resolved(path) for root in roots):
+                return f"denied: {path} is on the deny list"
     return None
 
 
