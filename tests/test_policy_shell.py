@@ -1,6 +1,7 @@
 """Tests for jarvis.policy.shell.classify_shell (FRS 5.10, R84)."""
 
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -106,6 +107,28 @@ def test_should_keep_rm_rf_under_tmp_t3_on_windows_where_tmp_does_not_exist() ->
     assert tier("rm -rf /tmp/x") == Tier.T3
 
 
+@linux_only
+def test_should_allow_rm_rf_under_tmpdir_when_tmpdir_is_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    assert tier(f"rm -rf {tmp_path}/x") == Tier.T2
+    assert tier("rm -rf $TMPDIR/x") == Tier.T2
+    assert tier("rm -rf $TMPDIR/../../../../../../../etc") == Tier.T3
+    monkeypatch.delenv("TMPDIR")
+    assert tier("rm -rf $TMPDIR/x") == Tier.T3
+
+
+@linux_only
+def test_should_not_trust_a_symlink_that_leaves_tmp(tmp_path: Path) -> None:
+    link = Path("/tmp") / f"jarvis-link-{tmp_path.name}"  # noqa: S108
+    link.symlink_to(Path.home())
+    try:
+        assert tier(f"rm -rf {link}/x") == Tier.T3
+    finally:
+        link.unlink()
+
+
 @pytest.mark.parametrize(
     "cmd",
     [
@@ -189,3 +212,62 @@ def test_should_fail_closed_when_the_command_cannot_be_parsed_or_is_empty(
     cmd: str, expected: Tier
 ) -> None:
     assert classify_shell(cmd) == (expected, ())
+
+
+@pytest.fixture
+def home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # where Windows looks for home
+    for name in ("Documents", "Desktop", "Downloads", "Pictures"):
+        (tmp_path / name).mkdir()
+    return tmp_path
+
+
+@pytest.mark.parametrize(
+    ("cmd", "scopes"),
+    [
+        ("ls ~/Documents", ("files.documents:read",)),
+        ("ls $HOME/Documents", ("files.documents:read",)),
+        ("cat Downloads/a.txt", ("files.downloads:read",)),
+        ("git log ~/Pictures", ("files.pictures:read",)),
+        ("cp x ~/Desktop/y", ("files.desktop:write",)),
+        ("rm ~/Documents/a", ("files.documents:write",)),
+        ("echo hi > ~/Documents/a", ("files.documents:write",)),
+        ("ls>>~/Documents/a", ("files.documents:write",)),
+        ("wc -l < ~/Documents/a", ("files.documents:read",)),
+        ("cat ~/Documents/a > ~/Desktop/b", ("files.desktop:write", "files.documents:read")),
+        ("ls ~/Documents ~/Documents/b", ("files.documents:read",)),
+        ("ls ~/Documents | wc -l ~/Desktop", ("files.desktop:read", "files.documents:read")),
+        ("echo Documents", ()),
+        ("ls -la", ()),
+        ("ls /etc", ()),
+        ("ls ~/Documents-old", ()),
+    ],
+)
+def test_should_add_a_scope_when_a_path_is_under_a_consent_folder(
+    home: Path, cmd: str, scopes: tuple[str, ...]
+) -> None:
+    assert classify_shell(cmd)[1] == scopes
+
+
+def test_should_resolve_symlinks_when_mapping_scopes(home: Path) -> None:
+    (home / "shortcut").symlink_to(home / "Documents")
+    assert classify_shell("cat shortcut/a")[1] == ("files.documents:read",)
+
+
+def test_should_use_the_given_folders_instead_of_the_defaults(home: Path) -> None:
+    folders = {"~/work": "files.work"}
+    assert classify_shell("ls ~/work", folders=folders)[1] == ("files.work:read",)
+    assert classify_shell("ls ~/Documents", folders=folders)[1] == ()
+
+
+def test_should_skip_the_scope_when_the_path_is_on_the_allow_list(home: Path) -> None:
+    allow = ["~/Documents/ok"]
+    assert classify_shell("cat ~/Documents/ok/a", allow=allow)[1] == ()
+    assert classify_shell("cat ~/Documents/other", allow=allow)[1] == ("files.documents:read",)
+
+
+def test_should_not_change_the_tier_when_scopes_are_found(home: Path) -> None:
+    assert classify_shell("ls ~/Documents") == (Tier.T0, ("files.documents:read",))
+    assert classify_shell("rm -rf ~/Documents/a") == (Tier.T3, ("files.documents:write",))
+    assert classify_shell("rm ~/Documents/a")[0] == Tier.T2
