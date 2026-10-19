@@ -16,6 +16,13 @@ from jarvis.policy.commandline import dir_changes
 from jarvis.policy.hidden import inner_commands
 from jarvis.policy.lists import is_under, real_path
 from jarvis.policy.model import Tier
+from jarvis.policy.spellings import (
+    awk_program_unsafe,
+    code_flag,
+    crontab_installs,
+    sed_in_place,
+    target_dirs,
+)
 
 
 def _words(text: str) -> frozenset[str]:
@@ -158,12 +165,8 @@ for _bare in [
     _WRAPPER_SPECS[_bare] = _wrap()
 _FORK_BOMB = ":(){:|:&};:"
 _INTERPRETER = re.compile(r"python[0-9.]*|perl|ruby|nodejs|node|php|lua|osascript|pwsh|powershell")
-# The flag that hands an interpreter its program text, per language. Any such program is T3
-# (R98): it cannot be classified reliably, so the brain must use the dedicated tools.
-_CODE_FLAG = re.compile(
-    r"python[0-9.]*:-[A-Za-z]*c|perl:-[A-Za-z]*[eE]|ruby:-[A-Za-z]*e|node(?:js)?:(?:-[ep]|--eval|--print)"
-    r"|php:-r|lua:-e|osascript:-e|(?:pwsh|powershell):(?i:-c|-command|-encodedcommand|-ec)"
-)
+# Any program handed to an interpreter on its command line is T3 (R98): it cannot be classified
+# reliably, so the brain must use the dedicated tools. `spellings.code_flag` knows every spelling.
 # Files whose change gives a program lasting control of the account or the machine (R97).
 _SENSITIVE_PATHS = [
     "~/.ssh",
@@ -186,7 +189,7 @@ _DESTRUCTIVE_CODE = re.compile(
 )
 _EXEC_FLAGS = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
 _DELETERS = frozenset({"rm", "rmdir", "shred", "unlink"})
-_STOPPING = frozenset({"stop", "disable", "mask"})
+_STOPPING = frozenset({"stop", "disable", "mask", "enable", "link", "edit"})
 _UNPARSEABLE_T3 = _words("sudo doas pkexec shutdown reboot poweroff")
 
 
@@ -359,7 +362,7 @@ def _firewall(args: list[str]) -> bool:
 
 def _interpreter_code(name: str, args: list[str]) -> bool:
     """An interpreter given a program on its command line (`python -c`, `perl -e`...): R98."""
-    return any(arg.startswith("-") and _CODE_FLAG.fullmatch(f"{name}:{arg}") for arg in args)
+    return any(code_flag(name, arg) for arg in args)
 
 
 def _is_sensitive(path: str) -> bool:
@@ -369,14 +372,11 @@ def _is_sensitive(path: str) -> bool:
 
 def _writes_sensitive(name: str, args: list[str]) -> bool:
     """`tee`, `cp`, `mv`, `install`, `ln` or `truncate` whose target is a sensitive path (R97)."""
-    flags, words = _flags(args)
-    attached = [a.split("=", 1)[1] for a in args if a.startswith("--target-directory=")]
-    if attached:
-        targets = attached
-    elif name in {"tee", "truncate"}:
-        targets = words
-    else:  # the last word names the target, or the one after `-t`
-        targets = words[:1] if "-t" in flags else words[-1:]
+    words = _flags(args)[1]
+    targets = target_dirs(args)
+    if not targets:
+        every = name in {"tee", "truncate"}  # these act on every file; the others on the last
+        targets = words if every else words[-1:]
     return any(_is_sensitive(t) for t in targets)
 
 
@@ -386,7 +386,7 @@ def _dd(args: list[str]) -> bool:
 
 
 def _rsync(args: list[str]) -> bool:
-    return any(a.startswith("--delete") for a in args)
+    return any(a.startswith("--del") for a in args)  # rsync accepts any unique prefix
 
 
 def _redirects_into_sensitive(seg: list[str]) -> bool:
@@ -409,7 +409,11 @@ _T3_CHECKS: dict[str, Callable[[list[str]], bool]] = {
     "rsync": _rsync,
     "find": _find,
     "git": _git,
-    "crontab": lambda args: "-r" in _flags(args)[0],
+    "crontab": lambda args: "-r" in _flags(args)[0] or crontab_installs(args),
+    "sed": lambda args: sed_in_place(args) and any(_is_sensitive(w) for w in _flags(args)[1]),
+    "awk": awk_program_unsafe,
+    "gawk": awk_program_unsafe,
+    "mawk": awk_program_unsafe,
     "kill": _kill,
     "pkill": _kill,
     "killall": _kill,
@@ -498,14 +502,9 @@ def _program_text_t3(seg: list[str], head: str, doc: str | None) -> bool:
     ]
     if "<<" in seg:
         texts.append(doc)
-    for text in texts:
-        if text is None:
-            return True
-        if shell and _tier(text, nested=True)[0] == Tier.T3:
-            return True
-        if not shell and _DESTRUCTIVE_CODE.search(text):
-            return True
-    return False
+    if texts and not shell:
+        return True  # a program handed to an interpreter on stdin is T3 whatever it says (R98)
+    return any(text is None or _tier(text, nested=True)[0] == Tier.T3 for text in texts)
 
 
 def _t3_at(seg: list[str], pos: int, name: str, skip_nested: bool) -> bool:
