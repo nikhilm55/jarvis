@@ -212,6 +212,15 @@ def pytest_addopts(repo: Path) -> str:
 NO_TOOLS = "\n\nDo not call tools. Reply only with the requested code in the required format."
 
 
+def ruff_result(repo: Path, rel: str) -> str:
+    """What `ruff format` then `ruff check --fix` (as `check` runs them) make of `rel`; the file
+    is rewritten in place, so the caller puts its content back."""
+    uv = ["uv", "run", "--quiet"]
+    run([*uv, "ruff", "format", rel], repo)
+    run([*uv, "ruff", "check", "--fix", "--quiet", rel], repo)
+    return (repo / rel).read_text(encoding="utf-8")
+
+
 def fixable_rules(repo: Path, rel: str) -> list[str]:
     """The ruff rules `ruff check --fix` would fix in `rel` right now (`format` when none: the
     formatter's own change)."""
@@ -473,10 +482,17 @@ class Implementer:
             )
             self.write(rel, prompt, f"r{round_no}-{i}-{Path(rel).name}")
 
-    def lint_revert(self, rel: str, new: str, event: dict[str, Any]) -> None:
-        """A revert after the checks: the model's edit had passed the lock, so this change is the
-        formatter's or `ruff --fix`'s. The same change twice in a row is a lock/lint conflict (the
-        lock and ruff undo each other), not a weakened test."""
+    def lint_revert(self, rel: str, old: str, new: str, event: dict[str, Any]) -> None:
+        """A revert after the checks. If the formatter and `ruff --fix` turn the locked content
+        into exactly `new`, the change is theirs, and the same change twice in a row is a
+        lock/lint conflict (the lock and ruff undo each other). Otherwise something else rewrote
+        the file during the checks (the code under test, say): that is a weakened test."""
+        made = ruff_result(self.repo, rel)
+        (self.repo / rel).write_text(old, encoding="utf-8")
+        if made != new:
+            event["source"] = "check"
+            self.lint_last.pop(rel, None)
+            return
         event["source"] = "lint"
         if self.lint_last.get(rel) == new:
             conflict = {"round": event["round"], "file": rel, "problems": event["problems"]}
@@ -517,7 +533,7 @@ class Implementer:
             event = {"round": round_no, "file": rel, "problems": problems}
             self.weakened.append(event)
             if after_check and new is not None:
-                self.lint_revert(rel, new, event)
+                self.lint_revert(rel, old, new, event)
             why = "; ".join(problems)
             self.notes.setdefault(rel, []).append(f"reverted, the tests are locked: {why}")
         self.guard_impl(round_no)

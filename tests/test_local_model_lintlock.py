@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -24,6 +26,11 @@ def repo(request: pytest.FixtureRequest) -> Path:
     return path
 
 
+def ruff_strips_the_import(repo: Path, rel: str) -> str:
+    """Stands in for `ruff_result`: what ruff makes of the file in `repo`."""
+    return (repo / rel).read_text(encoding="utf-8").replace(IMPORT, "")
+
+
 def strip_fixture_import(repo: Path) -> None:
     """What `ruff --fix` does to an import it thinks is unused."""
     test = repo / "tests" / "test_new.py"
@@ -35,6 +42,7 @@ def test_should_call_the_same_revert_twice_a_lint_lock_conflict(
     repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(local_model, "fixable_rules", lambda repo, rel: ["F401"])
+    monkeypatch.setattr(local_model, "ruff_result", ruff_strips_the_import)
     model = FakeModel({"tests/test_new.py": fenced(DRAFT)})
     checks = FakeChecks((False, MYPY), effect=strip_fixture_import)
     code, summary, _ = implement(repo, monkeypatch, model, checks, rounds=4)
@@ -52,6 +60,7 @@ def test_should_call_the_same_revert_twice_a_lint_lock_conflict(
 def test_should_keep_test_weakened_when_ruff_changed_the_file_only_once(
     repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(local_model, "ruff_result", ruff_strips_the_import)
     once = [strip_fixture_import]
 
     def effect(repo: Path) -> None:
@@ -79,3 +88,41 @@ def test_should_name_the_ruff_rules_that_would_fix_the_file(
     assert local_model.fixable_rules(tmp_path, "tests/x.py") == ["F401", "I001"]
     assert local_model.fixable_rules(tmp_path, "tests/x.py") == ["format"]  # the formatter's change
     assert local_model.fixable_rules(tmp_path, "tests/x.py") == ["format"]
+
+
+def rewrite_the_test(repo: Path) -> None:
+    """Code under test that edits the locked test while pytest runs (ruff has nothing to do)."""
+    test = repo / "tests" / "test_new.py"
+    test.write_text(test.read_text(encoding="utf-8").replace("assert 2", "assert True"), "utf-8")
+
+
+def test_should_call_a_runtime_rewrite_of_the_locked_test_a_weakened_test(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        local_model, "ruff_result", lambda repo, rel: (repo / rel).read_text("utf-8")
+    )
+    monkeypatch.setattr(local_model, "fixable_rules", lambda repo, rel: ["format"])
+    model = FakeModel({"tests/test_new.py": fenced(DRAFT)})
+    checks = FakeChecks((False, MYPY), effect=rewrite_the_test)
+    code, summary, _ = implement(repo, monkeypatch, model, checks, rounds=3)
+    assert (summary["status"], code) == ("test_weakened", 1)
+    assert summary["lint_conflicts"] == []
+    assert {e["source"] for e in summary["weakening_events"]} == {"check"}
+    assert (repo / "tests" / "test_new.py").read_text(encoding="utf-8") == DRAFT  # the lock held
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="stubs `uv` with a sh script")
+def test_should_ask_real_ruff_what_it_makes_of_the_locked_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    uv = bin_dir / "uv"  # `uv run --quiet ruff ...` -> `python -m ruff ...`
+    uv.write_text(f'#!/bin/sh\nshift 2\nexec {sys.executable} -m "$@"\n', encoding="utf-8")
+    uv.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    (tmp_path / "t.py").write_text("import os\nx  =  1\n", encoding="utf-8")
+    assert (
+        local_model.ruff_result(tmp_path, "t.py") == "\nx = 1\n"
+    )  # formatted, then the unused import dropped
