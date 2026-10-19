@@ -17,6 +17,8 @@ from _hooklib import allow, block, read_payload, tool_input
 
 REQUIRED = ("Goal", "Context", "Constraints", "Done when", "Report", "Local model")
 EXEMPT_AGENTS = frozenset({"Explore", "claude-code-guide", "statusline-setup"})
+MODE_PREFIX = re.compile(r"(?:\*\*)?mode(?:\*\*)?\s*:\s*(?:\*\*)?\s*", re.I)
+MODE = re.compile(r"(?:loop|finisher|review)\b(?!:)|exempt\s*:(.*)", re.I)
 COMMENT = re.compile(r"<!--.*?(?:-->|\Z)", re.S)
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})[^\n]*\n.*?(?:^ {0,3}\1[ \t]*$|\Z)", re.M | re.S)
 HEADING = re.compile(r" {0,3}#{1,6}\s")
@@ -47,14 +49,9 @@ def local_model_mode_ok(content: str) -> bool:
         stripped = line.strip()
         if not stripped:
             continue
-        if stripped.startswith("Mode:"):
-            stripped = stripped[len("Mode:") :].strip()
-        lowered = stripped.lower()
-        if lowered.startswith(("loop", "finisher", "review")):
-            return True
-        if lowered.startswith("exempt:"):
-            reason = stripped[len("exempt:") :].strip()
-            return len(reason.split()) >= 3
+        stripped = MODE_PREFIX.sub("", stripped, count=1)
+        if m := MODE.match(stripped):
+            return m.group(1) is None or len(m.group(1).split()) >= 3
         return False
     return False
 

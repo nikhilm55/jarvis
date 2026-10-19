@@ -8,6 +8,8 @@ import sys
 from collections.abc import Mapping
 from pathlib import Path
 
+import pytest
+
 from .git_env_utils import clean_git_env
 
 HOOKS = Path(__file__).resolve().parent.parent / ".claude" / "hooks"
@@ -144,3 +146,22 @@ def test_should_deny_brief_with_mode_in_code_fence_only() -> None:
 def test_should_allow_exempt_agent_without_brief() -> None:
     output = run_hook("guard_delegation.py", _payload("Find the audio module.", "Explore"))
     assert decision(output) == "allow"
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["mode: loop", "**Mode:** finisher", "MODE: Review", "Mode: exempt: docs only change here"],
+)
+def test_should_allow_mode_lines_in_any_case_or_bold(mode: str) -> None:
+    assert (
+        decision(run_hook("guard_delegation.py", _payload(FULL_BRIEF.replace("Mode: loop", mode))))
+        == "allow"
+    )
+
+
+@pytest.mark.parametrize("mode", ["Mode: loopy", "Mode: reviewed nothing", "finishers"])
+def test_should_deny_words_that_only_start_like_a_mode(mode: str) -> None:
+    assert (
+        decision(run_hook("guard_delegation.py", _payload(FULL_BRIEF.replace("Mode: loop", mode))))
+        == "deny"
+    )
