@@ -1,6 +1,6 @@
 """WindowManager.list / resolve / focus (FR-PC-02), against a fake X server and window manager."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import pytest
 
@@ -12,7 +12,7 @@ from jarvis.desktop.windows import (
     make_ref,
     parse_ref,
 )
-from tests.x_fake import FakeX
+from tests.x_fake import FakeWindow, FakeX
 
 
 class Clock:
@@ -426,3 +426,264 @@ def test_should_wait_for_an_op_whose_effect_arrives_late() -> None:
     clock.on_sleep.append(minimise_on_third_poll)
     manager(fake, clock).window_op("calc", "minimize")
     assert clock.sleeps == 3
+
+
+EXTENTS = (1, 1, 28, 1)  # FakeX's decoration: left, right, top, bottom
+
+
+def frame_of(fake: FakeX, wid: int) -> Rect:
+    r = fake.windows[wid].rect
+    left, right, top, bottom = fake.windows[wid].extents
+    return Rect(r.x - left, r.y - top, r.w + left + right, r.h + top + bottom)
+
+
+def test_should_snap_left_to_exactly_the_left_half_of_the_working_area() -> None:
+    fake = FakeX()  # working area Rect(0, 27, 1920, 1053)
+    fake.add(1, "Calc")
+    (view,) = manager(fake).window_op("calc", "snap_left")
+    assert frame_of(fake, 1) == Rect(0, 27, 960, 1053)
+    assert view.monitor == 0
+
+
+def test_should_snap_right_to_the_right_half_and_the_halves_add_up() -> None:
+    fake = FakeX(monitors=[Rect(0, 0, 1921, 1080)], workarea=Rect(0, 27, 1921, 1053))  # odd width
+    fake.add(1, "Left")
+    fake.add(2, "Right")
+    manager(fake).window_op("left", "snap_left")
+    manager(fake).window_op("right", "snap_right")
+    left, right = frame_of(fake, 1), frame_of(fake, 2)
+    assert left.x + left.w == right.x
+    assert right.x + right.w == 1921
+
+
+def test_should_send_the_exact_move_message_with_the_client_rect() -> None:
+    fake = FakeX()
+    fake.add(1, "Calc")
+    manager(fake).window_op("calc", "snap_left")
+    flags = 10 | (1 << 8) | (1 << 9) | (1 << 10) | (1 << 11) | (2 << 12)
+    # frame (0, 27, 960, 1053) minus the decoration (1, 1, 28, 1)
+    assert fake.sent == [(1, "_NET_MOVERESIZE_WINDOW", (flags, 1, 55, 958, 1024))]
+
+
+def test_should_un_maximise_before_snapping_a_maximised_window() -> None:
+    fake = FakeX()
+    fake.add(1, "Calc", states=["MAXIMIZED_VERT", "MAXIMIZED_HORZ"])
+    (view,) = manager(fake).window_op("calc", "snap_right")
+    assert sent_messages(fake) == ["_NET_WM_STATE", "_NET_MOVERESIZE_WINDOW"]
+    assert view.state == ("normal",)
+    assert frame_of(fake, 1).x == 960
+
+
+def test_should_bring_a_minimised_window_back_before_snapping_it() -> None:
+    fake = FakeX()
+    fake.add(1, "Calc", states=["HIDDEN"])
+    manager(fake).window_op("calc", "snap_left")
+    assert sent_messages(fake) == ["_NET_ACTIVE_WINDOW", "_NET_MOVERESIZE_WINDOW"]
+    assert frame_of(fake, 1) == Rect(0, 27, 960, 1053)
+
+
+TWO = [Rect(0, 0, 1920, 1080), Rect(1920, 0, 1920, 1080)]
+
+
+def test_should_snap_within_the_working_area_of_the_monitor_the_window_is_on() -> None:
+    fake = FakeX(monitors=TWO, workarea=Rect(0, 27, 3840, 1053))
+    fake.add(1, "Calc", rect=Rect(2400, 300, 800, 600))  # the second monitor
+    manager(fake).window_op("calc", "snap_left")
+    assert frame_of(fake, 1) == Rect(1920, 27, 960, 1053)
+
+
+def test_should_use_the_whole_monitor_when_panels_leave_it_no_working_area() -> None:
+    fake = FakeX(monitors=TWO, workarea=Rect(0, 27, 1920, 1053))  # reports only the first
+    fake.add(1, "Calc", rect=Rect(2400, 300, 800, 600))
+    manager(fake).window_op("calc", "snap_right")
+    assert frame_of(fake, 1) == Rect(2880, 0, 960, 1080)
+
+
+def test_should_fail_a_snap_the_window_manager_ignores() -> None:
+    fake = FakeX()
+    fake.add(1, "Calc")
+    fake.responsive = False
+    with pytest.raises(WindowError) as info:
+        manager(fake).window_op("calc", "snap_left")
+    assert info.value.code == "ACTION_FAILED"
+    assert info.value.message.startswith("snap_left did not work")
+    assert "minimum size" in info.value.message
+
+
+class Off(FakeX):
+    """A window that lands `by` px too wide: a minimum size, or a sloppy window manager."""
+
+    by = 0
+
+    @staticmethod
+    def _move_resize(window: FakeWindow, data: Sequence[int | str]) -> None:
+        FakeX._move_resize(window, data)
+        window.rect = Rect(window.rect.x, window.rect.y, window.rect.w + Off.by, window.rect.h)
+
+
+@pytest.mark.parametrize(("by", "ok"), [(10, True), (11, False)])
+def test_should_accept_a_placement_within_ten_pixels_and_no_further(
+    monkeypatch: pytest.MonkeyPatch, by: int, ok: bool
+) -> None:
+    monkeypatch.setattr(Off, "by", by)
+    fake = Off()
+    fake.add(1, "Calc")
+    if ok:
+        manager(fake).window_op("calc", "snap_left")
+    else:
+        with pytest.raises(WindowError) as info:
+            manager(fake).window_op("calc", "snap_left")
+        assert info.value.code == "ACTION_FAILED"
+
+
+def test_should_move_a_window_to_the_other_monitor_keeping_its_place_and_size() -> None:
+    fake = FakeX(monitors=TWO, workarea=Rect(0, 27, 3840, 1053))
+    fake.add(1, "Calc", rect=Rect(101, 201, 800, 600))  # frame (100, 173, 802, 629)
+    (view,) = manager(fake).window_op("calc", "move_to_monitor", monitor=1)
+    assert view.monitor == 1
+    assert frame_of(fake, 1) == Rect(1920 + 100, 173, 802, 629)
+
+
+def test_should_shrink_a_window_that_is_bigger_than_the_target_monitor() -> None:
+    small = Rect(1920, 0, 1000, 500)
+    fake = FakeX(monitors=[Rect(0, 0, 1920, 1080), small], workarea=Rect(0, 0, 2920, 500))
+    fake.add(1, "Big", rect=Rect(0, 0, 1800, 900))
+    manager(fake).window_op("big", "move_to_monitor", monitor=1)
+    frame = frame_of(fake, 1)
+    assert (frame.w, frame.h) == (1000, 500)
+    assert frame.x >= 1920
+    assert frame.x + frame.w <= 2920
+    assert frame.y + frame.h <= 500
+
+
+def test_should_clamp_a_moved_window_inside_the_target_working_area() -> None:
+    fake = FakeX(monitors=TWO, workarea=Rect(0, 27, 3840, 1053))
+    fake.add(1, "Calc", rect=Rect(1500, 700, 800, 600))  # hangs off the first monitor
+    manager(fake).window_op("calc", "move_to_monitor", monitor=1)
+    frame = frame_of(fake, 1)
+    assert frame.x + frame.w <= 3840
+    assert frame.y + frame.h <= 1080
+
+
+def test_should_send_nothing_to_move_a_window_to_the_monitor_it_is_on() -> None:
+    fake = FakeX(monitors=TWO)
+    fake.add(1, "Calc")
+    manager(fake).window_op("calc", "move_to_monitor", monitor=0)
+    assert fake.sent == []
+
+
+@pytest.mark.parametrize("monitor", [None, -1, 2, 99, True])
+def test_should_refuse_a_missing_or_impossible_monitor(monitor: object) -> None:
+    fake = FakeX(monitors=TWO)
+    fake.add(1, "Calc")
+    with pytest.raises(WindowError) as info:
+        manager(fake).window_op("calc", "move_to_monitor", monitor=monitor)  # type: ignore[arg-type]
+    assert info.value.code == "INVALID_ARGUMENT"
+    assert "0 to 1" in info.value.message
+    assert fake.sent == []
+
+
+def test_should_keep_a_maximised_window_maximised_on_the_new_monitor() -> None:
+    fake = FakeX(monitors=TWO, workarea=Rect(0, 27, 3840, 1053))
+    fake.add(1, "Calc", states=["MAXIMIZED_VERT", "MAXIMIZED_HORZ"], rect=Rect(10, 40, 1900, 1000))
+    (view,) = manager(fake).window_op("calc", "move_to_monitor", monitor=1)
+    assert view.state == ("maximized",)
+    assert view.monitor == 1
+
+
+def tile_rig(count: int) -> FakeX:
+    fake = FakeX()
+    for wid in range(1, count + 1):
+        fake.add(wid, f"Win {wid}", f"app{wid}")
+    return fake
+
+
+def test_should_tile_two_windows_side_by_side_in_the_order_given() -> None:
+    fake = tile_rig(2)
+    views = manager(fake).window_op("win 2", "tile", with_targets=["win 1"])
+    assert [v.title for v in views] == ["Win 2", "Win 1"]
+    assert frame_of(fake, 2) == Rect(0, 27, 960, 1053)
+    assert frame_of(fake, 1) == Rect(960, 27, 960, 1053)
+
+
+@pytest.mark.parametrize(("count", "cols", "rows"), [(3, 2, 2), (4, 2, 2), (5, 3, 2), (9, 3, 3)])
+def test_should_tile_more_windows_in_a_grid_row_by_row(count: int, cols: int, rows: int) -> None:
+    fake = tile_rig(count)
+    others = [f"win {i}" for i in range(2, count + 1)]
+    manager(fake).window_op("win 1", "tile", with_targets=others)
+    area = Rect(0, 27, 1920, 1053)
+    for index in range(count):
+        row, col = divmod(index, cols)
+        frame = frame_of(fake, index + 1)
+        assert frame.x == col * (area.w // cols)
+        assert frame.y == area.y + row * (area.h // rows)
+        right = frame.x + frame.w
+        assert right == (area.w if col == cols - 1 else (col + 1) * (area.w // cols))
+        bottom = frame.y + frame.h
+        assert bottom == (area.y + area.h if row == rows - 1 else frame.y + area.h // rows)
+
+
+def test_should_tile_on_the_monitor_of_the_first_window() -> None:
+    fake = FakeX(monitors=TWO, workarea=Rect(0, 27, 3840, 1053))
+    fake.add(1, "First", "a", rect=Rect(2400, 300, 800, 600))
+    fake.add(2, "Second", "b", rect=Rect(100, 100, 800, 600))
+    manager(fake).window_op("first", "tile", with_targets=["second"])
+    assert frame_of(fake, 1) == Rect(1920, 27, 960, 1053)
+    assert frame_of(fake, 2) == Rect(2880, 27, 960, 1053)
+
+
+def test_should_un_maximise_and_restore_windows_it_tiles() -> None:
+    fake = tile_rig(2)
+    fake.windows[1].states.update({"MAXIMIZED_VERT", "MAXIMIZED_HORZ"})
+    fake.windows[2].states.add("HIDDEN")
+    manager(fake).window_op("win 1", "tile", with_targets=["win 2"])
+    assert not fake.windows[1].states
+    assert not fake.windows[2].states
+
+
+@pytest.mark.parametrize("others", [[], ["win 1"], ["WIN 1", "win 1"]])
+def test_should_refuse_to_tile_fewer_than_two_distinct_windows(others: list[str]) -> None:
+    fake = tile_rig(2)
+    with pytest.raises(WindowError) as info:
+        manager(fake).window_op("win 1", "tile", with_targets=others)
+    assert info.value.code == "INVALID_ARGUMENT"
+    assert "at least two" in info.value.message
+    assert fake.sent == []
+
+
+def test_should_count_a_window_named_twice_once_when_tiling() -> None:
+    fake = tile_rig(2)
+    views = manager(fake).window_op("win 1", "tile", with_targets=["win 2", "WIN 2"])
+    assert len(views) == 2
+
+
+def test_should_move_nothing_when_a_tile_partner_is_unknown() -> None:
+    fake = tile_rig(2)
+    with pytest.raises(WindowError) as info:
+        manager(fake).window_op("win 1", "tile", with_targets=["nothing"])
+    assert info.value.code == "NOT_FOUND"
+    assert fake.sent == []
+
+
+def test_should_say_the_window_is_gone_when_it_vanishes_mid_move() -> None:
+    fake = FakeX()
+    fake.add(1, "Calc")
+    clock = Clock()
+    fake.responsive = False
+
+    def vanish(_sleeps: int) -> None:
+        fake.windows.pop(1, None)
+
+    clock.on_sleep.append(vanish)
+    with pytest.raises(WindowError) as info:
+        manager(fake, clock).window_op("calc", "snap_left")
+    assert info.value.code == "NOT_FOUND"
+
+
+def test_should_let_the_last_column_and_row_take_the_remainder_when_tiling() -> None:
+    fake = FakeX(monitors=[Rect(0, 0, 1921, 1081)], workarea=Rect(0, 0, 1921, 1081))
+    for wid in (1, 2, 3, 4):
+        fake.add(wid, f"Win {wid}", f"app{wid}")
+    manager(fake).window_op("win 1", "tile", with_targets=["win 2", "win 3", "win 4"])
+    assert frame_of(fake, 4) == Rect(960, 540, 961, 541)
+    assert frame_of(fake, 1) == Rect(0, 0, 960, 540)

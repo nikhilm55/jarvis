@@ -6,6 +6,7 @@ fake window manager and `xport.py` is the one place that touches python-xlib.
 """
 
 import difflib
+import math
 import re
 import time
 from collections.abc import Callable, Sequence
@@ -32,6 +33,10 @@ _POLL_S = 0.05
 _SOURCE_PAGER = 2  # EWMH source indication: a pager or similar tool, which may take focus
 _NEAR_TITLES = 5
 _STATE_REMOVE, _STATE_ADD = 0, 1
+_TOLERANCE_PX = 10  # how far a placed window's frame may be from where it was asked to be
+_STATIC_GRAVITY = 10  # in _NET_MOVERESIZE_WINDOW: x and y are the client area's own corner
+_HAVE_XYWH = 0xF << 8
+_MOVE_FLAGS = _STATIC_GRAVITY | _HAVE_XYWH | (2 << 12)  # 2 = source indication: a pager
 _MAX_FLAGS = frozenset({"MAXIMIZED_VERT", "MAXIMIZED_HORZ"})
 _MAXIMIZED = ("_NET_WM_STATE_MAXIMIZED_VERT", "_NET_WM_STATE_MAXIMIZED_HORZ")
 WINDOW_OPS = (
@@ -317,12 +322,18 @@ class WindowManager:
         wid = self.resolve(target)
         if op == "close":
             return [self._close(wid)]
-        handler = {
-            "minimize": self._minimize,
-            "maximize": self._maximize,
-            "restore": self._restore,
-        }[op]
-        handler(wid)
+        if op == "tile":
+            ids = list(dict.fromkeys([wid, *(self.resolve(t) for t in with_targets)]))
+            self._tile(ids)
+            return [self.view(i) for i in ids]
+        if op == "move_to_monitor":
+            self._move_to_monitor(wid, monitor)
+        elif op in ("snap_left", "snap_right"):
+            self._snap(wid, op)
+        else:
+            {"minimize": self._minimize, "maximize": self._maximize, "restore": self._restore}[op](
+                wid
+            )
         return [self.view(wid)]
 
     def _failed(self, op: str, what: str, remedy: str) -> WindowError:
@@ -376,3 +387,96 @@ class WindowManager:
                 "close", "the window is still open", "It may be asking to save first; check it."
             )
         return before
+
+    def _frame(self, wid: int) -> Rect:
+        """The window with its decorations, in root coordinates."""
+        rect = self._port.rect(wid)
+        if rect is None:
+            raise WindowError("NOT_FOUND", "the window is gone")
+        left, right, top, bottom = self._port.frame_extents(wid)
+        return Rect(rect.x - left, rect.y - top, rect.w + left + right, rect.h + top + bottom)
+
+    def _work_area(self, monitor: int) -> Rect:
+        """The part of the monitor panels leave to windows."""
+        area = self._port.monitors()[monitor]
+        usable = area.intersect(self._port.workarea())
+        return usable if usable.w and usable.h else area
+
+    def _unmaximize_and_unhide(self, wid: int, op: str) -> None:
+        self._unhide(wid, op)
+        if _MAX_FLAGS & self._states(wid):
+            self._set_maximized(wid, False)
+            if not self._wait_for(lambda: not _MAX_FLAGS & self._states(wid)):
+                raise self._failed(op, "the window stayed maximised", "Restore it yourself.")
+
+    def _place(self, wid: int, frame: Rect, op: str) -> None:
+        """Move and resize the window so its frame is `frame`, and check it is within 10 px."""
+        left, right, top, bottom = self._port.frame_extents(wid)
+        data = [
+            _MOVE_FLAGS,
+            frame.x + left,
+            frame.y + top,
+            max(1, frame.w - left - right),
+            max(1, frame.h - top - bottom),
+        ]
+        self._port.send(wid, "_NET_MOVERESIZE_WINDOW", data)
+        if not self._wait_for(lambda: _near(self._frame(wid), frame)):
+            raise self._failed(
+                op,
+                f"the window is at {self._frame(wid)}, not {frame}",
+                "Some windows have a minimum size; try making room, or move it yourself.",
+            )
+
+    def _snap(self, wid: int, op: str) -> None:
+        self._unmaximize_and_unhide(wid, op)
+        area = self._work_area(self.view(wid).monitor)
+        half = area.w // 2
+        if op == "snap_left":
+            target = Rect(area.x, area.y, half, area.h)
+        else:
+            target = Rect(area.x + half, area.y, area.w - half, area.h)
+        self._place(wid, target, op)
+
+    def _move_to_monitor(self, wid: int, monitor: int | None) -> None:
+        count = len(self._port.monitors())
+        if isinstance(monitor, bool) or not isinstance(monitor, int) or not 0 <= monitor < count:
+            raise WindowError(
+                "INVALID_ARGUMENT", f"say which monitor: a number from 0 to {count - 1}"
+            )
+        before = self.view(wid)
+        if before.monitor == monitor:
+            return
+        self._unmaximize_and_unhide(wid, "move_to_monitor")
+        frame = self._frame(wid)
+        old, new = self._work_area(before.monitor), self._work_area(monitor)
+        width, height = min(frame.w, new.w), min(frame.h, new.h)
+        x = new.x + min(max(frame.x - old.x, 0), new.w - width)
+        y = new.y + min(max(frame.y - old.y, 0), new.h - height)
+        self._place(wid, Rect(x, y, width, height), "move_to_monitor")
+        if "maximized" in before.state:
+            self._maximize(wid)
+        if not self._wait_for(lambda: self.view(wid).monitor == monitor):
+            raise self._failed("move_to_monitor", "the window is on another monitor", "Drag it.")
+
+    def _tile(self, ids: Sequence[int]) -> None:
+        """Side by side for two windows, else a grid, row by row, on the first one's monitor."""
+        if len(ids) < 2:
+            raise WindowError("INVALID_ARGUMENT", "tile needs at least two windows")
+        monitor = self.view(ids[0]).monitor
+        area = self._work_area(monitor)
+        cols = 2 if len(ids) == 2 else math.ceil(math.sqrt(len(ids)))
+        rows = math.ceil(len(ids) / cols)
+        cell_w, cell_h = area.w // cols, area.h // rows
+        for index, wid in enumerate(ids):
+            row, col = divmod(index, cols)
+            x, y = area.x + col * cell_w, area.y + row * cell_h
+            width = area.x + area.w - x if col == cols - 1 else cell_w
+            height = area.y + area.h - y if row == rows - 1 else cell_h
+            self._unmaximize_and_unhide(wid, "tile")
+            self._place(wid, Rect(x, y, width, height), "tile")
+
+
+def _near(a: Rect, b: Rect) -> bool:
+    """Whether each of x, y, width and height is within 10 px."""
+    pairs = ((a.x, b.x), (a.y, b.y), (a.w, b.w), (a.h, b.h))
+    return all(abs(p - q) <= _TOLERANCE_PX for p, q in pairs)
