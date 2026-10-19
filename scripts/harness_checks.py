@@ -138,15 +138,9 @@ def _aliases(node: ast.stmt) -> set[Alias]:
 
 
 def _kept_on_purpose(source: str, tree: ast.Module) -> set[Alias]:
-    """The imported names on lines carrying a `# noqa` that ruff honours for F401."""
-    lines = source.splitlines()
-    found: set[Alias] = set()
-    for node in tree.body:
-        text = "\n".join(lines[node.lineno - 1 : node.end_lineno])
-        for m in NOQA.finditer(text):
-            if m.group("codes") is None or "F401" in m.group("codes").upper():
-                found |= _aliases(node)
-    return found
+    """The imported names on lines carrying a noqa that ruff honours for F401."""
+    keep = _noqa_lines(source)
+    return {a for n in tree.body if _on_a_kept_line(n, keep) for a in _aliases(n)}
 
 
 def _bound_name(alias: Alias) -> str:
@@ -188,6 +182,51 @@ def _used_names(tree: ast.Module) -> set[str]:
     return {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)} | {
         n.arg for n in ast.walk(tree) if isinstance(n, ast.arg)
     }
+
+
+def _noqa_lines(source: str) -> set[int]:
+    """The (1-based) lines carrying a noqa comment that ruff honours for F401."""
+    found: set[int] = set()
+    for number, line in enumerate(source.splitlines(), start=1):
+        for m in NOQA.finditer(line):
+            if m.group("codes") is None or "F401" in m.group("codes").upper():
+                found.add(number)
+    return found
+
+
+def _on_a_kept_line(stmt: ast.stmt, keep: set[int]) -> bool:
+    return any(n in keep for n in range(stmt.lineno, (stmt.end_lineno or stmt.lineno) + 1))
+
+
+def _prune_unused_imports(node: ast.stmt, keep: set[int]) -> ast.stmt:
+    """Drop, inside every function body, the imports whose name that function never uses (what
+    `ruff --fix` removes), so removing one is not a change to the statement. A used import stays,
+    and so does one on a `keep` line (a noqa import is there on purpose)."""
+    for func in (
+        n for n in ast.walk(node) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ):
+        used = _used_names(ast.Module(body=[func], type_ignores=[]))
+        for block in [n for n in ast.walk(func) if hasattr(n, "body")]:
+            for field in ("body", "orelse", "finalbody"):
+                stmts = getattr(block, field, None)
+                if not isinstance(stmts, list):
+                    continue
+                for stmt in stmts:
+                    if isinstance(stmt, (ast.Import, ast.ImportFrom)) and not _on_a_kept_line(
+                        stmt, keep
+                    ):
+                        stmt.names = [a for a in stmt.names if _bound(a) in used or a.name == "*"]
+                kept = [
+                    s
+                    for s in stmts
+                    if not (isinstance(s, (ast.Import, ast.ImportFrom)) and not s.names)
+                ]
+                setattr(block, field, kept or [ast.Pass()])
+    return node
+
+
+def _bound(alias: ast.alias) -> str:
+    return alias.asname or alias.name.split(".")[0]
 
 
 def _bare(node: ast.stmt) -> ast.stmt:
@@ -317,8 +356,12 @@ def lock_violations(
         old_tree, new_tree = ast.parse(locked), ast.parse(new)
     except SyntaxError:
         return ["the test file does not parse"]
-    prep = _bare if annotations else (lambda n: n)
-    old = Counter(ast.dump(prep(n)) for n in _statements(old_tree))
+    old_keep, new_keep = _noqa_lines(locked), _noqa_lines(new)
+
+    def prep(n: ast.stmt, keep: set[int]) -> ast.stmt:
+        return _prune_unused_imports(_bare(n) if annotations else n, keep)
+
+    old = Counter(ast.dump(prep(n, old_keep)) for n in _statements(old_tree))
     before, after = _bindings(old_tree), _bindings(new_tree)
     names = _defined(old_tree) | set(before) | set(after)
     kept: list[str] = []
@@ -329,7 +372,7 @@ def lock_violations(
             names.add(getattr(node, "name", ""))
             added = True
         else:
-            kept.append(ast.dump(prep(node)))
+            kept.append(ast.dump(prep(node, new_keep)))
             if added and not problems:
                 problems.append("a new test sits before a locked statement; append them last")
     if Counter(kept) != old:
@@ -337,7 +380,7 @@ def lock_violations(
             f"{sum((old - Counter(kept)).values())} locked statement(s) changed or removed, "
             f"{sum((Counter(kept) - old).values())} unexpected"
         )
-    elif kept != [ast.dump(prep(n)) for n in _statements(old_tree)]:
+    elif kept != [ast.dump(prep(n, old_keep)) for n in _statements(old_tree)]:
         problems.append("locked statements were reordered")
     # An import may move, merge, split or be re-sorted (the formatter and ruff --fix do), and an
     # import nothing uses may go; but a name must stay bound to the same target while it is used.

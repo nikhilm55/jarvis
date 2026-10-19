@@ -212,6 +212,18 @@ def pytest_addopts(repo: Path) -> str:
 NO_TOOLS = "\n\nDo not call tools. Reply only with the requested code in the required format."
 
 
+def fixable_rules(repo: Path, rel: str) -> list[str]:
+    """The ruff rules `ruff check --fix` would fix in `rel` right now (`format` when none: the
+    formatter's own change)."""
+    cmd = ["uv", "run", "--quiet", "ruff", "check", "--no-fix", "--output-format=json", rel]
+    try:
+        found = json.loads(run_split(cmd, repo)[1])
+    except (ValueError, subprocess.SubprocessError):
+        found = []
+    rules = sorted({str(d["code"]) for d in found if d.get("fix") and d.get("code")})
+    return rules or ["format"]
+
+
 def check(
     repo: Path, files: list[str], tests: list[str], cache: Path, expect: tuple[int, int] = (0, 0)
 ) -> tuple[bool, str]:
@@ -324,6 +336,8 @@ class Implementer:
         self.tampered: list[dict[str, Any]] = []
         self.required = hc.brief_requirements(self.spec)
         self.lint_done: set[str] = set()
+        self.lint_last: dict[str, str] = {}  # per test file: what ruff last made of the lock
+        self.lint_conflicts: list[dict[str, Any]] = []
         self.disputes: list[dict[str, str]] = []
         self.notes: dict[str, list[str]] = {}
         self.before: dict[str, str | None] = {}  # each --write file's content at the start
@@ -459,9 +473,22 @@ class Implementer:
             )
             self.write(rel, prompt, f"r{round_no}-{i}-{Path(rel).name}")
 
-    def lock_tests(self, round_no: int, lint: frozenset[str] = frozenset()) -> None:
+    def lint_revert(self, rel: str, new: str, event: dict[str, Any]) -> None:
+        """A revert after the checks: the model's edit had passed the lock, so this change is the
+        formatter's or `ruff --fix`'s. The same change twice in a row is a lock/lint conflict (the
+        lock and ruff undo each other), not a weakened test."""
+        event["source"] = "lint"
+        if self.lint_last.get(rel) == new:
+            conflict = {"round": event["round"], "file": rel, "problems": event["problems"]}
+            self.lint_conflicts.append({**conflict, "rules": fixable_rules(self.repo, rel)})
+        self.lint_last[rel] = new
+
+    def lock_tests(
+        self, round_no: int, lint: frozenset[str] = frozenset(), after_check: bool = False
+    ) -> None:
         """Hold every test file to the last content that passed the lock; put back what broke it.
-        A file with no lock yet is locked at its first parseable state."""
+        A file with no lock yet is locked at its first parseable state. `after_check`: the call
+        right after the checks ran (and the formatter and `ruff --fix` touched the files)."""
         for rel in self.tests:
             new, old = self.read(rel), self.locked.get(rel)
             now = hc.test_stats(new) if new is not None else None
@@ -482,10 +509,15 @@ class Implementer:
                     if mods and hc.lock_violations(old, new, extend=extend, annotations=ann):
                         self.path_fixed.add(rel)  # an import path was corrected: once per file
                     self.locked[rel] = new
+                    if after_check:
+                        self.lint_last.pop(rel, None)
                     continue
                 problems += hc.weakening(hc.test_stats(old) or now, now)
             (self.repo / rel).write_text(old, encoding="utf-8")
-            self.weakened.append({"round": round_no, "file": rel, "problems": problems})
+            event = {"round": round_no, "file": rel, "problems": problems}
+            self.weakened.append(event)
+            if after_check and new is not None:
+                self.lint_revert(rel, new, event)
             why = "; ".join(problems)
             self.notes.setdefault(rel, []).append(f"reverted, the tests are locked: {why}")
         self.guard_impl(round_no)
@@ -553,12 +585,14 @@ class Implementer:
         cache = self.log / "mypy-cache"
         self.lock_tests(0)
         ok, report = check(self.repo, self.opts.write, self.opts.test, cache, self.expect())
-        self.lock_tests(0)  # the formatter and ruff --fix are trusted: they join the lock
+        self.lock_tests(0, after_check=True)  # the formatter and ruff --fix join the lock
         seen: str | None = None
         rounds = 0
         while True:
             if self.out_of_scope():
                 return "scope_violation", rounds, report
+            if self.lint_conflicts:
+                return "lint_lock_conflict", rounds, report
             if ok:
                 return "green", rounds, ""
             lint = hc.only_test_errors(report, self.tests)
@@ -573,7 +607,7 @@ class Implementer:
             self.lint_done |= lint
             self.lock_tests(rounds, frozenset(lint))
             ok, report = check(self.repo, self.opts.write, self.opts.test, cache, self.expect())
-            self.lock_tests(rounds)
+            self.lock_tests(rounds, after_check=True)
         return "red", rounds, report
 
     def diff(self) -> str:
@@ -611,7 +645,8 @@ class Implementer:
         if self.tampered and status != "scope_violation":
             status = "sensor_tamper"
         elif self.weakened and status != "scope_violation":
-            status = "test_weakened"
+            only_lint = all(e.get("source") == "lint" for e in self.weakened)
+            status = "lint_lock_conflict" if self.lint_conflicts and only_lint else "test_weakened"
         untouched = sorted(
             rel
             for rel in self.opts.write
@@ -631,6 +666,7 @@ class Implementer:
                 k: asdict(st) for k, v in self.locked.items() if (st := hc.test_stats(v))
             },
             "weakening_events": self.weakened,
+            "lint_conflicts": self.lint_conflicts,
             "tamper_events": self.tampered,
             "test_disputes": self.disputes,
             "rounds": rounds,

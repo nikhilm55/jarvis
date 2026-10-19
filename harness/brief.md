@@ -44,6 +44,7 @@ Numbered, each one testable. The worker maps every number to a named test.
   - Removing a config key: the unknown-key error tells the user what to do instead.
   - Prefer behavioural tests (set the input, check the output) to tests that grep the source.
   - Test the unusual syntactic forms of anything an editor or parser touches: inline tables, quoted keys, multi-line strings, CRLF.
+  - To share a fixture from another test module, import it under an alias with `# noqa: F401`.
 
 ## Done when
 
