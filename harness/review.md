@@ -4,6 +4,7 @@ The reviewer is a sensor, not a co-author: report findings, don't fix them. Revi
 
 ## Blocking (any one fails the task)
 
+- [ ] **Local model first was followed:** every new file is in the report's author table. Loop-written files have their loop log dir and status. Claude-first files match an exemption the brief allowed.
 - [ ] **Every requirement in the brief has a test**, and the report's requirement → test map is true (open the tests).
 - [ ] **No test was weakened** to go green: no deleted or loosened asserts, no new `skip`/`xfail` without a platform reason, no mocks replacing the thing under test, no lowered thresholds. Compare against the first draft when the local model wrote it.
 - [ ] **Scope:** only the manifest's files changed; no drive-by refactors; no new dependencies the brief didn't name.

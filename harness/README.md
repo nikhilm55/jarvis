@@ -27,13 +27,14 @@
 | Delegator → worker | Brief | Plan / tests first | Sensors | Review |
 |---|---|---|---|---|
 | Orchestrator → local model (`local_model.py implement`) | `brief.md` + manifest | planning call; tests drafted first and locked | built into the loop | self-review pass, then the finisher and the task reviewer |
-| Orchestrator → Claude implementer or finisher | `brief.md` | the worker's first step, in its report | the repo's hooks + verify commands | task reviewer with `review.md` |
+| Orchestrator → Claude finisher (the default after the loop) | `brief.md` with `## Local model: finisher` + the loop's log dir | the loop's plan | the repo's hooks + verify commands | task reviewer with `review.md` |
+| Orchestrator → Claude implementer (only with `exempt: <reason>`) | `brief.md` with the exemption | the worker's first step, in its report | the repo's hooks + verify commands | task reviewer with `review.md` |
 | Orchestrator → Claude reviewer | `brief.md` (the review package: brief + diff + CI status) | — | — | it *is* the sensor; uses `review.md` |
 | Any Claude session → subagent | `brief.md` (short form is fine for read-only searches) | if it writes code | hooks | the delegator reads the report critically |
 
 ## Enforcement
 
-- **Delegation hook.** `.claude/hooks/guard_delegation.py` (PreToolUse on the subagent tool) rejects a dispatch whose prompt lacks the brief's required sections (`Goal`, `Context`, `Constraints`, `Done when`, `Report`) or leaves one empty or a placeholder. Read-only search agents are exempt.
+- **Delegation hook.** `.claude/hooks/guard_delegation.py` (PreToolUse on the subagent tool) rejects a dispatch whose prompt lacks the brief's required sections (`Goal`, `Context`, `Constraints`, `Done when`, `Report`, `Local model`) or leaves one empty or a placeholder. The `Local model` section must name a mode: `loop`, `finisher`, `review` or `exempt: <reason>`. Read-only search agents are exempt.
 - **The local model loop** enforces plan → tests first → test lock → scope check → stall stop → self-review in code, and writes the result to `summary.json`. Its `status` is one of `green`, `red`, `stalled`, `scope_violation`, `test_weakened`, `sensor_tamper` (an implementation file imported pytest or unittest.mock, or assigned into an imported module: reverted), `test_error` (a test file's own lint/mypy error survived its one fix round) or `test_disputed` (stalled with a `TEST-DISPUTE:` line from the model: the test itself may be wrong, so a finisher decides).
 - **Reviewers** check the brief's requirement map against the tests and fail a task whose tests were weakened, whose scope grew, or whose CI is red.
 

@@ -15,6 +15,15 @@ What changes for the user or the codebase when this is done, in 1–3 sentences.
 - Interfaces to honour: exact signatures, data shapes and error types this task must produce or call.
 - Facts the worker can't find alone: external API behaviour, measured numbers, past decisions.
 
+## Local model
+
+Mode: `loop` | `finisher` | `review` | `exempt: <reason>`.
+
+- `loop`: the delegator runs `uv run python scripts/local_model.py implement --spec <this brief> --write <tests first, then modules> --read <context> --test <tests> --log-dir <workspace>/runs/<task>` before any Claude agent writes code.
+- `finisher`: the loop has run; give its log dir and `summary.json` status. The worker finishes from the diff and the remaining errors.
+- `review`: no code is written.
+- `exempt: <reason>`: allowed reasons are the loop being unreachable, debugging or diagnosis, a small edit to already-reviewed code, and docs. Name the files the exemption covers.
+
 ## Manifest
 
 - Write: `path/one.py`, `tests/test_one.py`
