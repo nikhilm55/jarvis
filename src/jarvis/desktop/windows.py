@@ -15,6 +15,7 @@ from typing import Protocol
 from jarvis.desktop.x11 import X11Error
 
 __all__ = [
+    "WINDOW_OPS",
     "Rect",
     "WindowError",
     "WindowManager",
@@ -30,6 +31,19 @@ _SETTLE_S = 1.0  # how long a window manager gets to show the effect of a reques
 _POLL_S = 0.05
 _SOURCE_PAGER = 2  # EWMH source indication: a pager or similar tool, which may take focus
 _NEAR_TITLES = 5
+_STATE_REMOVE, _STATE_ADD = 0, 1
+_MAX_FLAGS = frozenset({"MAXIMIZED_VERT", "MAXIMIZED_HORZ"})
+_MAXIMIZED = ("_NET_WM_STATE_MAXIMIZED_VERT", "_NET_WM_STATE_MAXIMIZED_HORZ")
+WINDOW_OPS = (
+    "minimize",
+    "maximize",
+    "restore",
+    "close",
+    "snap_left",
+    "snap_right",
+    "move_to_monitor",
+    "tile",
+)
 
 
 def make_ref(wid: int) -> str:
@@ -189,7 +203,7 @@ class WindowManager:
             name
             for name, on in (
                 ("minimized", "HIDDEN" in states),
-                ("maximized", {"MAXIMIZED_VERT", "MAXIMIZED_HORZ"} <= states),
+                ("maximized", states >= _MAX_FLAGS),
                 ("focused", wid == active),
             )
             if on
@@ -282,3 +296,83 @@ class WindowManager:
                 "Click the window yourself, then ask again.",
             )
         return self.view(wid)
+
+    def window_op(
+        self,
+        target: str,
+        op: str,
+        *,
+        monitor: int | None = None,
+        with_targets: Sequence[str] = (),
+    ) -> Sequence[WindowView]:
+        """Run `op` on the window `target` names and check the result on the window itself.
+
+        Returns the windows after the op (for close, as they were before it). An unknown op is
+        INVALID_ARGUMENT; an op the window manager did not carry out is ACTION_FAILED.
+        """
+        if op not in WINDOW_OPS:
+            raise WindowError(
+                "INVALID_ARGUMENT", f"unknown window op {op!r}; use one of {', '.join(WINDOW_OPS)}"
+            )
+        wid = self.resolve(target)
+        if op == "close":
+            return [self._close(wid)]
+        handler = {
+            "minimize": self._minimize,
+            "maximize": self._maximize,
+            "restore": self._restore,
+        }[op]
+        handler(wid)
+        return [self.view(wid)]
+
+    def _failed(self, op: str, what: str, remedy: str) -> WindowError:
+        return WindowError("ACTION_FAILED", f"{op} did not work: {what}. {remedy}")
+
+    def _states(self, wid: int) -> frozenset[str]:
+        return self._port.states(wid)
+
+    def _unhide(self, wid: int, op: str) -> None:
+        """Restore a minimised window; EWMH does it by activating the window."""
+        if "HIDDEN" not in self._states(wid):
+            return
+        self._activate(wid)
+        if not self._wait_for(lambda: "HIDDEN" not in self._states(wid)):
+            raise self._failed(op, "the window stayed minimised", "Click its icon in the dock.")
+
+    def _set_maximized(self, wid: int, on: bool) -> None:
+        action = _STATE_ADD if on else _STATE_REMOVE
+        self._port.send(wid, "_NET_WM_STATE", [action, *_MAXIMIZED, _SOURCE_PAGER, 0])
+
+    def _minimize(self, wid: int) -> None:
+        if "HIDDEN" in self._states(wid):
+            return
+        self._port.send(wid, "WM_CHANGE_STATE", [3])  # IconicState
+        if not self._wait_for(lambda: "HIDDEN" in self._states(wid)):
+            raise self._failed("minimize", "the window stayed visible", "Minimise it yourself.")
+
+    def _maximize(self, wid: int) -> None:
+        self._unhide(wid, "maximize")
+        if self._states(wid) >= _MAX_FLAGS:
+            return
+        self._set_maximized(wid, True)
+        if not self._wait_for(lambda: self._states(wid) >= _MAX_FLAGS):
+            raise self._failed("maximize", "the window did not fill the screen", "Try again.")
+
+    def _restore(self, wid: int) -> None:
+        self._unhide(wid, "restore")
+        if not _MAX_FLAGS & self._states(wid):
+            return
+        self._set_maximized(wid, False)
+        if not self._wait_for(lambda: not _MAX_FLAGS & self._states(wid)):
+            raise self._failed("restore", "the window stayed maximised", "Try again.")
+
+    def _close(self, wid: int) -> WindowView:
+        before = self.view(wid)
+        self._port.send(
+            wid, "_NET_CLOSE_WINDOW", [self._port.server_time(), _SOURCE_PAGER, 0, 0, 0]
+        )
+        if not self._wait_for(lambda: wid not in self._port.stacking()):
+            raise self._failed(
+                "close", "the window is still open", "It may be asking to save first; check it."
+            )
+        return before

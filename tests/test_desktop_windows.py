@@ -4,7 +4,14 @@ from collections.abc import Callable
 
 import pytest
 
-from jarvis.desktop.windows import Rect, WindowError, WindowManager, make_ref, parse_ref
+from jarvis.desktop.windows import (
+    WINDOW_OPS,
+    Rect,
+    WindowError,
+    WindowManager,
+    make_ref,
+    parse_ref,
+)
 from tests.x_fake import FakeX
 
 
@@ -262,3 +269,160 @@ def test_should_not_send_anything_when_the_window_is_unknown() -> None:
     with pytest.raises(WindowError):
         manager(fake).focus("nowhere")
     assert fake.sent == []
+
+
+MAX = ("_NET_WM_STATE_MAXIMIZED_VERT", "_NET_WM_STATE_MAXIMIZED_HORZ")
+
+
+def sent_messages(fake: FakeX) -> list[str]:
+    return [message for _, message, _ in fake.sent]
+
+
+def test_should_minimise_with_the_iconic_state_message_and_say_so() -> None:
+    fake = FakeX()
+    fake.add(1, "Calc")
+    (view,) = manager(fake).window_op("calc", "minimize")
+    assert fake.sent == [(1, "WM_CHANGE_STATE", (3,))]
+    assert "HIDDEN" in fake.windows[1].states
+    assert view.state == ("minimized",)
+
+
+def test_should_send_nothing_to_minimise_a_window_that_is_already_minimised() -> None:
+    fake = FakeX()
+    fake.add(1, "Calc", states=["HIDDEN"])
+    manager(fake).window_op("calc", "minimize")
+    assert fake.sent == []
+
+
+def test_should_maximise_with_the_exact_state_message() -> None:
+    fake = FakeX()
+    fake.add(1, "Calc")
+    (view,) = manager(fake).window_op("calc", "maximize")
+    assert fake.sent == [(1, "_NET_WM_STATE", (1, *MAX, 2, 0))]
+    assert view.state == ("maximized",)
+
+
+def test_should_restore_a_minimised_window_before_maximising_it() -> None:
+    fake = FakeX()
+    fake.add(1, "Calc", states=["HIDDEN"])
+    (view,) = manager(fake).window_op("calc", "maximize")
+    assert sent_messages(fake) == ["_NET_ACTIVE_WINDOW", "_NET_WM_STATE"]
+    assert view.state == ("maximized", "focused")
+
+
+def test_should_send_nothing_to_maximise_a_window_that_is_already_maximised() -> None:
+    fake = FakeX()
+    fake.add(1, "Calc", states=["MAXIMIZED_VERT", "MAXIMIZED_HORZ"])
+    manager(fake).window_op("calc", "maximize")
+    assert fake.sent == []
+
+
+def test_should_restore_a_maximised_window_by_removing_both_flags() -> None:
+    fake = FakeX()
+    fake.add(1, "Calc", states=["MAXIMIZED_VERT", "MAXIMIZED_HORZ"])
+    (view,) = manager(fake).window_op("calc", "restore")
+    assert fake.sent == [(1, "_NET_WM_STATE", (0, *MAX, 2, 0))]
+    assert view.state == ("normal",)
+
+
+def test_should_restore_a_minimised_window_by_activating_it() -> None:
+    fake = FakeX()
+    fake.add(1, "Calc", states=["HIDDEN"])
+    manager(fake).window_op("calc", "restore")
+    assert fake.sent == [(1, "_NET_ACTIVE_WINDOW", (2, 4242, 0, 0, 0))]
+    assert "HIDDEN" not in fake.windows[1].states
+
+
+def test_should_send_nothing_to_restore_a_window_that_is_normal() -> None:
+    fake = FakeX()
+    fake.add(1, "Calc")
+    manager(fake).window_op("calc", "restore")
+    assert fake.sent == []
+
+
+def test_should_close_with_the_exact_message_and_report_the_window_as_it_was() -> None:
+    fake = FakeX()
+    fake.add(1, "Calc")
+    fake.active = 1
+    (view,) = manager(fake).window_op("calc", "close")
+    assert fake.sent == [(1, "_NET_CLOSE_WINDOW", (4242, 2, 0, 0, 0))]
+    assert 1 not in fake.windows
+    assert (view.title, view.state) == ("Calc", ("focused",))
+
+
+@pytest.mark.parametrize(
+    ("op", "states", "word"),
+    [
+        ("minimize", [], "stayed visible"),
+        ("maximize", [], "did not fill"),
+        ("restore", ["MAXIMIZED_VERT", "MAXIMIZED_HORZ"], "stayed maximised"),
+        ("close", [], "still open"),
+    ],
+)
+def test_should_fail_an_op_the_window_manager_ignores_and_name_the_op(
+    op: str, states: list[str], word: str
+) -> None:
+    fake = FakeX()
+    fake.add(1, "Calc", states=states)
+    fake.responsive = False
+    clock = Clock()
+    with pytest.raises(WindowError) as info:
+        manager(fake, clock).window_op("calc", op)
+    assert info.value.code == "ACTION_FAILED"
+    assert info.value.message.startswith(f"{op} did not work")
+    assert word in info.value.message
+    assert clock.t == pytest.approx(1.0, abs=0.06)
+
+
+def test_should_say_a_close_may_be_waiting_for_a_save() -> None:
+    fake = FakeX()
+    fake.add(1, "Calc")
+    fake.responsive = False
+    with pytest.raises(WindowError) as info:
+        manager(fake).window_op("calc", "close")
+    assert "asking to save" in info.value.message
+
+
+def test_should_fail_to_maximise_a_window_that_cannot_be_restored_first() -> None:
+    fake = FakeX()
+    fake.add(1, "Calc", states=["HIDDEN"])
+    fake.responsive = False
+    with pytest.raises(WindowError) as info:
+        manager(fake).window_op("calc", "maximize")
+    assert "stayed minimised" in info.value.message
+
+
+@pytest.mark.parametrize("op", ["explode", "", "MINIMIZE", "minimise"])
+def test_should_refuse_an_unknown_op_and_list_the_valid_ones(op: str) -> None:
+    fake = FakeX()
+    fake.add(1, "Calc")
+    with pytest.raises(WindowError) as info:
+        manager(fake).window_op("calc", op)
+    assert info.value.code == "INVALID_ARGUMENT"
+    for valid in WINDOW_OPS:
+        assert valid in info.value.message
+    assert fake.sent == []
+
+
+def test_should_not_send_anything_for_an_op_on_an_unknown_window() -> None:
+    fake = FakeX()
+    fake.add(1, "Calc")
+    with pytest.raises(WindowError) as info:
+        manager(fake).window_op("nothing here", "close")
+    assert info.value.code == "NOT_FOUND"
+    assert fake.sent == []
+
+
+def test_should_wait_for_an_op_whose_effect_arrives_late() -> None:
+    fake = FakeX()
+    fake.add(1, "Calc")
+    fake.responsive = False
+    clock = Clock()
+
+    def minimise_on_third_poll(sleeps: int) -> None:
+        if sleeps == 3:
+            fake.windows[1].states.add("HIDDEN")
+
+    clock.on_sleep.append(minimise_on_third_poll)
+    manager(fake, clock).window_op("calc", "minimize")
+    assert clock.sleeps == 3
