@@ -33,6 +33,8 @@ def tier(cmd: str) -> Tier:
         "sh <<EOF\nls\nsudo id\nEOF",
         "bash <<<",
         "python3 <<< 'import shutil; shutil.rmtree(\"x\")'",
+        "python3 <<< 'print(1)'",  # R98: any program on stdin is T3
+        "python3 - <<< 'print(1)'",
         "python3 <<EOF\nimport os\nos.remove('x')\nEOF",
         "echo cm0gLXJmIH4K | base64 -d | sh",
         "echo x | base64 -d | bash",
@@ -78,7 +80,6 @@ def test_should_classify_t3_when_the_command_is_hidden_or_cannot_be_read(cmd: st
         "eval",
         "bash <<< 'ls'",
         "sh -s <<< 'echo hi'",
-        "python3 <<< 'print(1)'",
         "bash <<EOF\nls\nEOF",
         "bash -c 'ls'",
         "ps aux | grep python",
