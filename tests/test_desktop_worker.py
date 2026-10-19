@@ -1,5 +1,6 @@
 """Tests for the desktop worker (JSON-line protocol)."""
 
+import contextlib
 import io
 import json
 import subprocess
@@ -11,6 +12,7 @@ import pytest
 from jarvis.desktop.backend import DesktopBackend, Hooks
 from jarvis.desktop.volume import VolumeError
 from jarvis.desktop.worker import serve
+from tests.x_fake import FakeX
 
 
 def _backend(runner: Any = None) -> DesktopBackend:
@@ -22,6 +24,7 @@ def _backend(runner: Any = None) -> DesktopBackend:
             closer=lambda _i: None,
             launcher=lambda _a: None,
             sleep=lambda _s: None,
+            port=lambda: contextlib.nullcontext(FakeX()),  # never the real display
         )
     )
 

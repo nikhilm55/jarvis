@@ -456,8 +456,8 @@ To handle "literally anything", Jarvis gives the brain **layered capabilities**.
 
 | ID | Tool group | Tools (indicative) | Pri |
 |---|---|---|---|
-| FR-PC-01 | **Apps** | `list_apps`, `launch_app(name)`, `close_app`, `is_running`. Fuzzy names and aliases ("teams" → "Microsoft Teams (work or school)"). App index built from Start Menu shortcuts, AppX/UWP and the registry on Windows; `.desktop` files, Flatpak and Snap on Linux. | M |
-| FR-PC-02 | **Windows** | `list_windows`, `focus_window`, `minimize`, `maximize`, `restore`, `close`, `move_to_monitor`, `snap(left/right)`, `tile`. "Displayed to the user" means the app is **focused and in front**, not just running. | M |
+| FR-PC-01 | **Apps** | `list_apps`, `launch_app(name)`, `close_app`, `is_running`. Fuzzy names and aliases ("teams" → "Microsoft Teams (work or school)"; Linux: `[apps.aliases]` in `config.toml`, an alias beats fuzzy matching and one whose app is missing finds nothing). App index built from Start Menu shortcuts, AppX/UWP and the registry on Windows; `.desktop` files, Flatpak and Snap on Linux. | M |
+| FR-PC-02 | **Windows** | `list_windows`, `focus_window`, `minimize`, `maximize`, `restore`, `close`, `move_to_monitor`, `snap(left/right)`, `tile`. "Displayed to the user" means the app is **focused and in front**, not just running. Every operation checks its result on the window (focus, state, or position within 10 px) and reports `ACTION_FAILED` with a remedy when the window manager did not obey; a window that is not found is `NOT_FOUND` with the closest titles. | M |
 | FR-PC-03 | **Input** | `type_text(text)` (Unicode-safe, uses the clipboard for long text), `press_keys("ctrl+shift+m")`, `click(element_ref \| x,y)`, `scroll`, `drag`. | M |
 | FR-PC-04 | **Screen understanding** | `read_ui(window)` → simplified accessibility tree with element refs; `find_element(label, role)`; `screenshot(window\|screen)`; `ocr(region)`. | M |
 | FR-PC-05 | **Clipboard and selection** | `get_selection`, `get_clipboard`, `set_clipboard` (clipboard history is read only on explicit request) | M |

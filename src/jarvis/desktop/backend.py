@@ -1,9 +1,11 @@
 """Desktop operations (open/close apps, volume) behind injectable hooks."""
 
+import contextlib
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import AbstractContextManager
 
 from jarvis.config import ConfigError, load_settings
 from jarvis.desktop.apps import (
@@ -21,6 +23,7 @@ from jarvis.desktop.volume import (
     volume_set,
     volume_step,
 )
+from jarvis.desktop.windows import WindowManager, WindowView, XPort
 from jarvis.desktop.x11 import (
     WindowInfo,
     X11Error,
@@ -29,6 +32,7 @@ from jarvis.desktop.x11 import (
     list_windows,
     new_windows,
 )
+from jarvis.desktop.xport import open_port
 
 _OPEN_POLLS = 40
 _OPEN_POLL_S = 0.1
@@ -88,6 +92,7 @@ class Hooks:
         closer: Callable[[int], None] | None = None,
         launcher: Callable[[AppEntry], None] | None = None,
         runner: Runner | None = None,
+        port: Callable[[], AbstractContextManager[XPort]] | None = None,
         sleep: Callable[[float], None] | None = None,
     ) -> None:
         self.entries = entries or load_index
@@ -96,6 +101,7 @@ class Hooks:
         self.closer = closer or close_window
         self.launcher = launcher or launch_app
         self.runner = runner or run_wpctl
+        self.port = port or open_port
         self.sleep = sleep or time.sleep
 
 
@@ -145,6 +151,47 @@ class DesktopBackend:
                 raise
             closed += 1
         return {"app": app.name, "closed": closed}
+
+    @contextlib.contextmanager
+    def _manager(self) -> Iterator[WindowManager]:
+        with self._hooks.port() as port:
+            yield WindowManager(port, sleep=self._hooks.sleep)
+
+    def _app_of(self, view: WindowView) -> tuple[str, str]:
+        """The (name, id) of the app a window belongs to: its launcher, else its WM_CLASS."""
+        info = WindowInfo(view.wid, view.wm_instance, view.wm_class, None, view.title)
+        for entry in self._hooks.entries():
+            if app_matches(entry, info):
+                return entry.name, entry.desktop_id
+        return view.wm_class, view.wm_class.casefold()
+
+    def _describe(self, view: WindowView) -> dict[str, object]:
+        name, app_id = self._app_of(view)
+        return {
+            "ref": view.ref,
+            "title": view.title,
+            "app": name,
+            "app_id": app_id,
+            "monitor": view.monitor,
+            "state": list(view.state),
+        }
+
+    def list_windows(self) -> dict[str, object]:
+        with self._manager() as manager:
+            views = manager.list()
+        return {"windows": [self._describe(v) for v in views]}
+
+    def focus_window(self, ref: str) -> dict[str, object]:
+        with self._manager() as manager:
+            view = manager.focus(ref)
+        return self._describe(view)
+
+    def window_op(
+        self, ref: str, op: str, monitor: int | None = None, with_refs: Sequence[str] = ()
+    ) -> dict[str, object]:
+        with self._manager() as manager:
+            views = manager.apply_op(ref, op, monitor=monitor, with_targets=with_refs)
+        return {"op": op, "windows": [self._describe(v) for v in views]}
 
     def list_apps(self) -> dict[str, object]:
         apps = [
