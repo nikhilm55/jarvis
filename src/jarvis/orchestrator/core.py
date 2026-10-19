@@ -229,10 +229,11 @@ class Orchestrator:
                 continue  # a turn is running or queued: its context must not be wiped (R52)
             try:
                 await brain.reset()
-                if self._parts.grants is not None:
-                    self._parts.grants.end("brain_reset")  # session grants die with the session
             except Exception:
                 logger.exception("brain reset failed")
+            finally:
+                if self._parts.grants is not None:
+                    self._parts.grants.end("brain_reset")  # session grants die with the session
 
     async def _shutdown(self, tasks: list[asyncio.Task[None]]) -> None:
         """Stop the worker tasks, capture thread and close every child."""
