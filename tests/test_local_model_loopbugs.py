@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -106,14 +109,66 @@ def test_should_give_pytest_the_flag_timeout_and_the_other_tools_15_minutes(
 ) -> None:
     seen: dict[str, int] = {}
 
-    def fake_run(cmd: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
-        seen[cmd[3]] = kw["timeout"]
-        return subprocess.CompletedProcess(cmd, 0, "", "")
+    class FakeProc:
+        def __init__(self, cmd: list[str], **kw: Any) -> None:
+            self.cmd, self.returncode = cmd, 0
+
+        def __enter__(self) -> FakeProc:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+        def communicate(self, timeout: int) -> tuple[str, str]:
+            seen[self.cmd[3]] = timeout
+            return "", ""
 
     monkeypatch.setattr(local_model, "PYTEST_TIMEOUT_S", 7)
-    monkeypatch.setattr(local_model.subprocess, "run", fake_run)
+    monkeypatch.setattr(local_model.subprocess, "Popen", FakeProc)
     local_model.check(tmp_path, ["a.py"], ["tests"], tmp_path / "c", (0, 0))
     assert seen == {"ruff": 900, "mypy": 900, "pytest": 7}
+
+
+def alive(pid: int) -> bool:
+    """Is the process running (a zombie waiting to be reaped is dead)?"""
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").rsplit(")", 1)[1].split()[0]
+    except OSError:
+        return False
+    return state != "Z"
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="looks for survivors in /proc and stubs `uv` with a sh script"
+)
+def test_should_kill_the_hung_tests_whole_process_group_on_a_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    (repo / "tests").mkdir(parents=True)
+    pids = tmp_path / "pids.txt"
+    (repo / "tests" / "test_hang.py").write_text(
+        "import subprocess, sys, time\n\n\ndef test_hang():\n"
+        "    child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(600)'])\n"
+        f"    open({str(pids)!r}, 'w').write(str(child.pid))\n"
+        "    time.sleep(600)\n",
+        encoding="utf-8",
+    )
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    uv = bin_dir / "uv"  # `uv run --quiet <tool> ...` -> `python -m <tool> ...`
+    uv.write_text(f'#!/bin/sh\nshift 2\nexec {sys.executable} -m "$@"\n', encoding="utf-8")
+    uv.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setattr(local_model, "PYTEST_TIMEOUT_S", 3)
+    started = time.monotonic()
+    ok, report = local_model.check(repo, [], ["tests"], tmp_path / "cache", (0, 0))
+    assert time.monotonic() - started < 30
+    assert ok is False
+    assert "TIMEOUT:" in report
+    grandchild = int(pids.read_text(encoding="utf-8"))
+    time.sleep(0.5)
+    assert not alive(grandchild)
 
 
 def test_should_set_the_pytest_timeout_from_the_flag(
@@ -131,3 +186,38 @@ def test_should_set_the_pytest_timeout_from_the_flag(
     local_model.main(argv)
     assert seen
     assert set(seen) == {7}
+
+
+def test_should_show_the_model_the_timeout_in_the_fix_round(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    timeout = "PYTEST:\nTIMEOUT: tests did not finish in 300 s (a test may hang)"
+    model = FakeModel()
+    implement(repo, monkeypatch, model, FakeChecks((False, timeout), (True, "")))
+    fix = [p for p in model.prompts("src/new.py") if "## The checks failed" in p]
+    assert fix
+    assert "TIMEOUT: tests did not finish" in fix[0]
+
+
+EDIT_A = "<<<<<<< SEARCH\nA = 1\n=======\n{new}\n>>>>>>> REPLACE"
+
+
+def test_should_call_a_formatting_only_edit_no_change(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model = FakeModel({"src/old.py": EDIT_A.format(new="A  =  1")})
+    code, summary, _ = implement(
+        repo, monkeypatch, model, FakeChecks((True, "")), write=["src/old.py"]
+    )
+    assert (repo / "src" / "old.py").read_text(encoding="utf-8").startswith("A  =  1")
+    assert (summary["status"], code, summary["untouched"]) == ("no_change", 1, ["src/old.py"])
+
+
+def test_should_still_call_an_edit_that_changes_the_code_green(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model = FakeModel({"src/old.py": EDIT_A.format(new="A = 3")})
+    _, summary, _ = implement(
+        repo, monkeypatch, model, FakeChecks((True, "")), write=["src/old.py"]
+    )
+    assert (summary["status"], summary["untouched"]) == ("green", [])
