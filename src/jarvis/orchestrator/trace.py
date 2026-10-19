@@ -5,6 +5,7 @@ from jarvis.config import PolicySettings
 from jarvis.mcp import Dispatch
 from jarvis.policy.decision import TurnContext
 from jarvis.policy.model import Mode
+from jarvis.policy.ports import ConsentBroker, NoConsent
 
 __all__ = ["ToolTrace"]
 
@@ -14,10 +15,16 @@ _MAX_CALLS = 200
 class ToolTrace:
     """Records tool calls made during a turn for the activity log."""
 
-    def __init__(self, policy: PolicySettings | None = None, mode: Mode = "safe") -> None:
-        """Start empty; `policy` and `mode` are what a call is judged by outside any turn."""
+    def __init__(
+        self,
+        policy: PolicySettings | None = None,
+        mode: Mode = "safe",
+        consent: ConsentBroker | None = None,
+    ) -> None:
+        """Start empty; `policy`, `mode` and `consent` judge a call made outside any turn."""
         self._policy = policy or PolicySettings()
         self._mode = mode
+        self._consent: ConsentBroker = consent or NoConsent()
         self._calls: list[ToolCallRecord] = []
         self.ctx: TurnContext | None = None  # the running turn's policy context
 
@@ -34,7 +41,7 @@ class ToolTrace:
 
     def turn_context(self) -> TurnContext:
         """The running turn's context; between turns an anonymous one with the user's lists."""
-        return self.ctx or TurnContext("no-turn", self._policy, self._mode)
+        return self.ctx or TurnContext("no-turn", self._policy, self._mode, consent=self._consent)
 
     def take(self) -> list[ToolCallRecord]:
         """Return the recorded calls and reset the buffer and the turn context."""

@@ -3,13 +3,14 @@
 import asyncio
 import contextlib
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from jarvis.activity import ActivityLog, Route, ToolCallRecord, TurnRecord
 from jarvis.brain import BrainUnavailable
 from jarvis.brain.failures import internal_response
 from jarvis.config import Settings
+from jarvis.consent.session import SessionGrants
 from jarvis.contract import FinalResponse
 from jarvis.desktop.client import DesktopClient
 from jarvis.fastpath import FastPathDeclined, Intent, execute
@@ -23,6 +24,7 @@ from jarvis.orchestrator.voice import Voice
 from jarvis.orchestrator.windows import Windows
 from jarvis.policy import Mode
 from jarvis.policy.decision import TurnContext
+from jarvis.policy.ports import ConsentBroker, NoConsent
 from jarvis.stt import Transcript
 
 logger = get_logger("turns")
@@ -57,6 +59,8 @@ class TurnServices:
     timing: Timing
     windows: Windows
     trace: ToolTrace
+    consent: ConsentBroker = field(default_factory=NoConsent)
+    grants: SessionGrants | None = None  # once grants end with the command (FR-CON-09)
 
 
 class TurnRunner:
@@ -67,13 +71,19 @@ class TurnRunner:
         self._s = services
         self._hud = services.hud
         self._spoken = False
+        self._root: str | None = None  # the first turn of the command being run
 
     async def run(self, command: Command) -> None:
         """Run a command, then every follow-up answer its final response asks for (R60)."""
         current: Command | None = command
-        while current is not None:
-            final = await self._turn(current)
-            current = await self._follow_up(current, final)
+        self._root = None
+        try:
+            while current is not None:
+                final = await self._turn(current)
+                current = await self._follow_up(current, final)
+        finally:
+            if self._root is not None and self._s.grants is not None:
+                self._s.grants.end_turn(self._root)  # a "once" grant ends with its command
 
     async def _follow_up(self, command: Command, final: FinalResponse) -> Command | None:
         """Open the reply window when the final expects an answer; the answer is a new command."""
@@ -99,7 +109,10 @@ class TurnRunner:
             route=route,
         )
         record.durations_ms["stt"] = command.stt_ms
-        ctx = TurnContext(turn_id, self._s.settings.policy, self._s.mode)
+        if self._s.grants is not None:
+            self._s.grants.start_turn(turn_id, follows=self._root)
+        self._root = self._root or turn_id
+        ctx = TurnContext(turn_id, self._s.settings.policy, self._s.mode, consent=self._s.consent)
         record.policy_decisions = ctx.policy_decisions  # the gate appends as it decides
         self._spoken = False
         started = time.monotonic()
