@@ -66,9 +66,16 @@ class _Verdict:
     confirmed_by: str | None = None
 
 
+def _consent_remedy(scopes: tuple[str, ...]) -> str:
+    """FR-CON-08: how to change your mind, naming each source ("messages.teams" -> "teams")."""
+    names = sorted({s.partition(":")[0].rpartition(".")[2] for s in scopes} - {""})
+    allow = " or ".join(f"'Jarvis, allow {name}'" for name in names) or "'Jarvis, allow <source>'"
+    return f"Say {allow}, or turn it on in Settings → Permissions."
+
+
 def _refusal(verdict: _Verdict) -> ToolResult:
     remedy = {
-        "CONSENT_DENIED": "Allow access in Jarvis's permissions, then ask again.",
+        "CONSENT_DENIED": _consent_remedy(verdict.decision.scopes),
         "CANCELLED": "Ask again if you do want it done.",
     }.get(verdict.code, "Check the activity log for the reason.")
     if verdict.reason == UNRESOLVABLE_REASON:
@@ -131,11 +138,13 @@ async def _judge(call: ToolCall, ctx: TurnContext) -> _Verdict:
     decision = await asyncio.to_thread(decide, call, ctx.mode, ctx)
     if decision.action == "deny":
         return _Verdict(False, decision, decision.reason)
+    # A "run" that names scopes is YOLO: the broker still has to honour "never" (FR-CON-10).
+    asks = decision.action == "consent" or (decision.action == "run" and bool(decision.scopes))
+    if asks and await ctx.consent.require(decision.scopes, decision.prompt or "", ctx) != "granted":
+        return _Verdict(False, decision, "consent denied", code="CONSENT_DENIED")
     if decision.action == "run":
         return _Verdict(True, decision, decision.reason)
     if decision.action == "consent":
-        if await ctx.consent.require(decision.scopes, decision.prompt or "", ctx) != "granted":
-            return _Verdict(False, decision, "consent denied", code="CONSENT_DENIED")
         if decision.then_confirm is None:
             return _Verdict(True, decision, "consent granted")
         return await _confirm(call, ctx, decision, decision.then_confirm)
