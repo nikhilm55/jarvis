@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 from jarvis.config import ConsentSettings
 from jarvis.consent.scope import Scope, ScopeError, parse_scopes
-from jarvis.consent.session import SessionGrants
+from jarvis.consent.session import NO_TURN, SessionGrants
 from jarvis.consent.store import Grant, GrantMethod, GrantStore, Lifetime
 from jarvis.log import audit, get_logger
 from jarvis.paths import data_dir
@@ -255,6 +255,8 @@ class Broker:
             return _denied("no" if choice == "no" else "no answer", method), _nothing
         if method not in _GRANT_METHODS:  # silence never grants, whatever the choice says
             return _denied(f"{choice} without an answer", method), _nothing
+        if choice == "once" and ctx.turn_id == NO_TURN:  # nothing would ever end it (M1)
+            return _denied("once outside a turn", method), _nothing
         grant_method = cast(GrantMethod, method)
         if choice == "never":
             return _denied("never", method), lambda: self._remember(missing, "never", grant_method)
