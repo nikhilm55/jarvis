@@ -14,7 +14,7 @@ _PROGRAM_FLAGS = {
     "osascript": ("e", "l"),
 }
 _LONG_PROGRAM = frozenset({"--command", "--eval", "--print"})
-_POWERSHELL = ("-command", "-encodedcommand")
+_POWERSHELL = ("-command", "-encodedcommand", "-ec")  # -ec is an alias, not a prefix
 
 
 def _family(name: str) -> str:
