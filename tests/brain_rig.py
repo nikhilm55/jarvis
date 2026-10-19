@@ -2,7 +2,7 @@
 
 import asyncio
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,6 +37,23 @@ class FakeDesktop:
 
     async def close_app(self, query: str) -> dict[str, object]:
         return await self._record("close_app", query)
+
+    async def list_windows(self) -> dict[str, object]:
+        return await self._record("list_windows")
+
+    async def focus_window(self, ref: str) -> dict[str, object]:
+        return await self._record("focus_window", ref)
+
+    async def window_op(
+        self, ref: str, op: str, monitor: int | None = None, with_refs: Sequence[str] = ()
+    ) -> dict[str, object]:
+        return await self._record("window_op", ref, op, monitor, tuple(with_refs))
+
+    async def list_apps(self) -> dict[str, object]:
+        return await self._record("list_apps")
+
+    async def is_running(self, query: str) -> dict[str, object]:
+        return await self._record("is_running", query)
 
     async def volume_get(self) -> dict[str, object]:
         return await self._record("volume_get")

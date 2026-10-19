@@ -1,6 +1,7 @@
 """Tests for jarvis.brain.desktop_tools.call_desktop."""
 
 import asyncio
+from collections.abc import Sequence
 from typing import Any
 
 import pytest
@@ -9,6 +10,7 @@ import jarvis.brain.desktop_tools as module
 from jarvis.brain.desktop_tools import call_desktop
 from jarvis.brain.failures import ToolError
 from jarvis.desktop.client import DesktopError
+from jarvis.desktop.windows import WINDOW_OPS as MANAGER_OPS
 
 
 class FakeDesktop:
@@ -36,6 +38,30 @@ class FakeDesktop:
         if self._error is not None:
             raise self._error
         return {"ok": True}
+
+    async def _answer(self, *call: object) -> dict[str, object]:
+        self.calls.append(call)
+        await self._maybe_delay()
+        if self._error is not None:
+            raise self._error
+        return {"ok": True}
+
+    async def list_windows(self) -> dict[str, object]:
+        return await self._answer("list_windows")
+
+    async def focus_window(self, ref: str) -> dict[str, object]:
+        return await self._answer("focus_window", ref)
+
+    async def window_op(
+        self, ref: str, op: str, monitor: int | None = None, with_refs: Sequence[str] = ()
+    ) -> dict[str, object]:
+        return await self._answer("window_op", ref, op, monitor, list(with_refs))
+
+    async def list_apps(self) -> dict[str, object]:
+        return await self._answer("list_apps")
+
+    async def is_running(self, query: str) -> dict[str, object]:
+        return await self._answer("is_running", query)
 
     async def volume_get(self) -> dict[str, object]:
         self.calls.append(("volume_get",))
@@ -172,3 +198,74 @@ def test_should_raise_tool_error_when_client_times_out() -> None:
 def test_should_have_longer_open_timeout_when_compared_to_default() -> None:
     """The default timeout for open_app is longer than for other tools."""
     assert module._OPEN_TIMEOUT_S > module._DEFAULT_TIMEOUT_S
+
+
+@pytest.mark.parametrize(
+    ("tool", "args", "call"),
+    [
+        ("desktop.list_windows", {}, ("list_windows",)),
+        ("desktop.list_apps", {}, ("list_apps",)),
+        ("desktop.is_running", {"name": " Firefox "}, ("is_running", "Firefox")),
+        ("desktop.focus_window", {"ref": " x11:0x1a "}, ("focus_window", "x11:0x1a")),
+        (
+            "desktop.window_op",
+            {"ref": "firefox", "op": "snap_left"},
+            ("window_op", "firefox", "snap_left", None, []),
+        ),
+        (
+            "desktop.window_op",
+            {"ref": "a", "op": "move_to_monitor", "monitor": 1},
+            ("window_op", "a", "move_to_monitor", 1, []),
+        ),
+        (
+            "desktop.window_op",
+            {"ref": "a", "op": "tile", "with_refs": [" b ", "c"]},
+            ("window_op", "a", "tile", None, ["b", "c"]),
+        ),
+    ],
+)
+def test_should_forward_the_window_and_app_tools_with_checked_arguments(
+    tool: str, args: dict[str, object], call: tuple[object, ...]
+) -> None:
+    fake = FakeDesktop()
+    asyncio.run(call_desktop(fake, tool, args))
+    assert fake.calls == [call]
+
+
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [
+        ("desktop.list_windows", {"x": 1}),
+        ("desktop.list_apps", {"x": 1}),
+        ("desktop.is_running", {}),
+        ("desktop.is_running", {"name": " "}),
+        ("desktop.focus_window", {}),
+        ("desktop.focus_window", {"ref": ""}),
+        ("desktop.focus_window", {"ref": 5}),
+        ("desktop.focus_window", {"ref": "x" * 201}),
+        ("desktop.focus_window", {"ref": "a\x00b"}),
+        ("desktop.focus_window", {"ref": "a", "extra": 1}),
+        ("desktop.window_op", {"ref": "a"}),
+        ("desktop.window_op", {"op": "close"}),
+        ("desktop.window_op", {"ref": "a", "op": "explode"}),
+        ("desktop.window_op", {"ref": "a", "op": 3}),
+        ("desktop.window_op", {"ref": "a", "op": "close", "extra": 1}),
+        ("desktop.window_op", {"ref": "a", "op": "move_to_monitor", "monitor": -1}),
+        ("desktop.window_op", {"ref": "a", "op": "move_to_monitor", "monitor": 16}),
+        ("desktop.window_op", {"ref": "a", "op": "move_to_monitor", "monitor": True}),
+        ("desktop.window_op", {"ref": "a", "op": "tile", "with_refs": "b"}),
+        ("desktop.window_op", {"ref": "a", "op": "tile", "with_refs": [1]}),
+        ("desktop.window_op", {"ref": "a", "op": "tile", "with_refs": ["b"] * 9}),
+    ],
+)
+def test_should_refuse_bad_arguments_to_the_window_and_app_tools(
+    tool: str, args: dict[str, object]
+) -> None:
+    fake = FakeDesktop()
+    with pytest.raises(ToolError):
+        asyncio.run(call_desktop(fake, tool, args))
+    assert fake.calls == []
+
+
+def test_should_offer_the_brain_exactly_the_ops_the_window_manager_has() -> None:
+    assert module.WINDOW_OPS == MANAGER_OPS
