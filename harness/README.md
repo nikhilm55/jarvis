@@ -44,6 +44,8 @@ What the loop's sensors guarantee, and what they do not.
 - **The test lock is the hard guarantee.** A locked test file is compared as an AST; a weakened, skipped, reordered or rebound test is restored, and the run ends `test_weakened`.
 - **The implementation tamper rule is a deterrent, not a sandbox.** It catches accidental or lazy tampering (importing pytest, patching `_pytest`, `os._exit`, `sys.modules` stores). It is a denylist, so a deliberate escape (an aliased `import_module`, `getattr` tricks, `sys._getframe`, `gc`) can get past it. The pytest-summary check backs it up on the result: pytest counts as green only when its exit code is 0 and its stdout's last line reports `N passed` with nothing failed, N at least the number of locked tests (passes are counted against the locked tests, not just the exit code), and no more skipped or xfailed than the locked tests' own skip markers (extra skips count as not clean). An escape that still prints a believable clean summary, for example by writing to stdout after pytest has finished, is for the finisher and the task review.
 - **Appended round-0 tests can still mutate shared state** (through calls or aliases) in a test file that already existed. Reviewers check the new tests in existing files.
+- **An import protected only by `# noqa: E402` (or any code but F401) may be removed** by the lock's unused-import rule. That is safe here because ruff selects F401 and would remove it anyway; in a `--repo` that does not select F401 it is not.
+- **A hung test that starts a child in its own new session leaks that child** after the timeout kill (the group kill does not reach it). The run does not hang (the pipe drain is bounded); the child lingers.
 
 ## Files
 

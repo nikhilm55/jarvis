@@ -655,3 +655,204 @@ def test_should_allow_the_skips_the_locked_tests_have_and_no_more() -> None:
 )
 def test_should_drop_only_the_verbosity_flags_from_a_repos_addopts(addopts: str, kept: str) -> None:
     assert hc.quiet_addopts(addopts) == kept
+
+
+# --- import moves are not weakening; a real rebinding still is ------------------------------
+
+IMPORTS_BASE = """import os
+import pytest
+from a import b
+from a import c
+from x import y as z
+
+THRESHOLD = 3
+
+
+def test_a(repo):
+    assert b(os.sep, c) == z
+    with pytest.raises(ValueError):
+        b(THRESHOLD, repo)
+"""
+HEAD = "import os\nimport pytest\nfrom a import b\nfrom a import c\nfrom x import y as z\n"
+MERGED = "import os\nimport pytest\nfrom a import b, c\nfrom x import y as z\n"
+FIXTURE = "from rig import repo\n"
+GUARD_NOQA = "from tests.guards import no_network  # noqa: F401\n"
+KEPT = {  # imports that look unused to ruff but are not: the lock must keep every one of them
+    "an imported test function (noqa)": "from tests.shared import test_contract  # noqa: F401\n",
+    "an imported test function": "from tests.shared import test_contract\n",
+    "an imported test class (noqa)": "from tests.shared import TestContract  # noqa: F401\n",
+    "an imported test class": "from tests.shared import TestContract\n",
+    "an imported autouse fixture": "from tests.shared import strict  # noqa: F401\n",
+    "a side-effect import (bare noqa)": "import jarvis.strict_mode  # noqa\n",
+    "a side-effect import next to import of the package": "import jarvis\n"
+    "import jarvis.strict_mode  # noqa: F401\n",
+    "a multi-line import with noqa": "from tests.shared import (  # noqa: F401\n    strict,\n)\n",
+}
+# (locked imports, new imports): each only moves, merges, splits or drops what nothing uses
+IMPORT_MOVES = {
+    "reordered": (
+        HEAD,
+        "import pytest\nimport os\nfrom x import y as z\nfrom a import c\nfrom a import b\n",
+    ),
+    "merged": (HEAD, MERGED),
+    "split": (MERGED, HEAD),
+    "re-sorted into groups": (
+        HEAD,
+        "import os\n\nimport pytest\nfrom a import b, c\nfrom x import y as z\n",
+    ),
+    "an import nothing uses removed": (HEAD + "import json\n", HEAD),
+    "a second import of the same name dropped": (HEAD + "import os\n", HEAD),
+    "import a and import a.b": (HEAD.replace("import os\n", "import os\nimport os.path\n"), HEAD),
+    "a noqa import moved to the top": (
+        HEAD + KEPT["an imported autouse fixture"],
+        KEPT["an imported autouse fixture"] + HEAD,
+    ),
+    "a noqa import merged into its package's line": (
+        HEAD + "from tests.shared import a\nfrom tests.shared import strict  # noqa: F401\n",
+        HEAD + "from tests.shared import a, strict  # noqa: F401\n",
+    ),
+    "a noqa import for another rule is not kept on purpose": (
+        HEAD + "from tests.shared import unused  # noqa: E402\n",
+        HEAD,
+    ),
+    "import a.b added next to import a": (
+        HEAD,
+        HEAD.replace("import os\n", "import os\nimport os.path\n"),
+    ),
+}
+IMPORT_REBINDS = {
+    "name from a different module": (HEAD, HEAD.replace("from a import b", "from other import b")),
+    "second binding of a used name": (HEAD, HEAD + "from other import b\n"),
+    "asname shadows another import": (
+        HEAD,
+        HEAD.replace("from a import c", "from a import b as c"),
+    ),
+    "asname shadows a test": (HEAD, HEAD.replace("from a import c", "from a import c as test_a")),
+    "module aliased over another": (HEAD, HEAD.replace("import os\n", "import os.path as os\n")),
+    "star import": (HEAD, HEAD + "from x import *\n"),
+    "used import removed": (HEAD, HEAD.replace("from a import b\n", "")),
+    "used import removed from a merge": (MERGED, MERGED.replace("b, c", "c")),
+    "fixture import removed": (HEAD + FIXTURE, HEAD),
+    **{f"{name} removed": (HEAD + line, HEAD) for name, line in KEPT.items()},
+    "the noqa stripped from an import kept on purpose": (
+        HEAD + GUARD_NOQA,
+        HEAD + "from tests.guards import no_network\n",
+    ),
+    "an import kept on purpose moved into a parenthesised import without noqa": (
+        HEAD + GUARD_NOQA,
+        HEAD + "from tests.guards import (\n    no_network,\n)\n",
+    ),
+    "the noqa swapped for one that does not stop ruff": (
+        HEAD + GUARD_NOQA,
+        HEAD + "from tests.guards import no_network  # noqa: E402\n",
+    ),
+    "a noqa import dropped while its name is still bound": (
+        HEAD + "import jarvis\nimport jarvis.strict_mode  # noqa: F401\n",
+        HEAD + "import jarvis\n",
+    ),
+}
+LOCK_MODES = [{}, {"extend": True}, {"annotations": True}]
+
+
+def swap_imports(old: str, new: str) -> tuple[str, str]:
+    """The test source with `old` as its imports, and the same source with `new`."""
+    return IMPORTS_BASE.replace(HEAD, old), IMPORTS_BASE.replace(HEAD, new)
+
+
+@pytest.mark.parametrize("flags", LOCK_MODES)
+@pytest.mark.parametrize("name", IMPORT_MOVES)
+def test_should_allow_an_import_to_move_merge_split_or_go_when_nothing_binds_differently(
+    name: str, flags: dict[str, bool]
+) -> None:
+    locked, new = swap_imports(*IMPORT_MOVES[name])
+    assert new != locked
+    assert hc.lock_violations(locked, new, **flags) == []
+
+
+@pytest.mark.parametrize("flags", LOCK_MODES)
+@pytest.mark.parametrize("name", IMPORT_REBINDS)
+def test_should_still_catch_an_import_that_rebinds_or_drops_a_name_in_use(
+    name: str, flags: dict[str, bool]
+) -> None:
+    locked, new = swap_imports(*IMPORT_REBINDS[name])
+    assert new != locked
+    assert hc.lock_violations(locked, new, **flags)
+
+
+# The loop's real first drafts of tests (from its logs), cut down, and the import lines the
+# formatter and `ruff check --fix` changed in them. The lock called each of these a weakened test.
+# (locked source, the import lines ruff changed, what they became)
+REPLAY = {
+    "t03-store: two unused names dropped from a from-import": (
+        "from datetime import UTC, datetime\nfrom pathlib import Path\n\nimport pytest\n\n"
+        "from jarvis.consent.scope import Scope\n"
+        "from jarvis.consent.store import Grant, GrantStore, GrantsFileError, "
+        "GrantsWriteError\n\n\n"
+        "def test_round_trip(tmp_path: Path) -> None:\n"
+        "    clock = lambda: datetime(2025, 1, 1, tzinfo=UTC)\n"
+        "    store = GrantStore(tmp_path / 'g.json', clock=clock)\n"
+        "    assert store.grant(Scope.parse('a:b'), 'always', 'voice')\n"
+        "    with pytest.raises(GrantsWriteError):\n"
+        "        store.grant(Scope.parse('a:b'), 'x', 'y')\n",
+        "from jarvis.consent.store import Grant, GrantStore, GrantsFileError, GrantsWriteError",
+        "from jarvis.consent.store import GrantStore, GrantsWriteError",
+    ),
+    "t01r3-wrappers: an unused `import itertools` dropped": (
+        '"""Wrapper corpus."""\n\nimport itertools\n\nimport pytest\n\n'
+        "from jarvis.policy.model import Tier\nfrom jarvis.policy.shell import classify_shell\n\n\n"
+        "def test_wrapped_rm_stays_t3() -> None:\n"
+        "    assert classify_shell('timeout 5s rm -rf ~') == Tier.T3\n"
+        "    with pytest.raises(ValueError):\n        classify_shell('')\n",
+        "import itertools\n\n",
+        "",
+    ),
+    "t03-wiring: unused names dropped, an `as` import split onto its own line": (
+        "from typing import Any\n\nimport pytest\n\n"
+        "from jarvis.consent.broker import Broker, build_consent\n"
+        "from jarvis.policy import Tier, ToolSpec, registry\n"
+        "from tests.orchestrator_rig import FakeBrain, command, make_rig as make_turn_rig, "
+        "until\n\n\n"
+        "def test_grant(tmp_path) -> None:\n"
+        "    assert build_consent(tmp_path) == registry.get(Tier.T0)\n"
+        "    assert (FakeBrain, command, make_turn_rig, until, pytest)\n",
+        "from jarvis.consent.broker import Broker, build_consent\n"
+        "from jarvis.policy import Tier, ToolSpec, registry\n"
+        "from tests.orchestrator_rig import FakeBrain, command, make_rig as make_turn_rig, until\n",
+        "from jarvis.consent.broker import build_consent\n"
+        "from jarvis.policy import Tier, registry\n"
+        "from tests.orchestrator_rig import FakeBrain, command, until\n"
+        "from tests.orchestrator_rig import make_rig as make_turn_rig\n",
+    ),
+}
+
+
+@pytest.mark.parametrize("flags", LOCK_MODES)
+@pytest.mark.parametrize("name", REPLAY)
+def test_should_not_flag_the_formatter_and_ruff_fix_on_the_loops_real_first_drafts(
+    name: str, flags: dict[str, bool]
+) -> None:
+    locked, old, new = REPLAY[name]
+    assert old in locked
+    assert hc.lock_violations(locked, locked.replace(old, new), **flags) == []
+
+
+@pytest.mark.parametrize("flags", LOCK_MODES)
+def test_should_let_ruff_strip_the_noqa_from_an_import_the_file_uses(
+    flags: dict[str, bool],
+) -> None:
+    """RUF100 removes a noqa that is not needed; an import used by name stays bound regardless."""
+    body = "\n\n\ndef test_g() -> None:\n    assert no_network()\n"
+    locked = IMPORT_HEAD_FOR_GUARD + GUARD_NOQA + body
+    new = IMPORT_HEAD_FOR_GUARD + "from tests.guards import no_network\n" + body
+    assert hc.lock_violations(locked, new, **flags) == []
+    unused = body.replace("assert no_network()", "assert 1")  # nothing uses it: the noqa is needed
+    assert hc.lock_violations(
+        IMPORT_HEAD_FOR_GUARD + GUARD_NOQA + unused, new_unused(unused), **flags
+    )
+
+
+IMPORT_HEAD_FOR_GUARD = "import pytest\n"
+
+
+def new_unused(body: str) -> str:
+    return IMPORT_HEAD_FOR_GUARD + "from tests.guards import no_network\n" + body
