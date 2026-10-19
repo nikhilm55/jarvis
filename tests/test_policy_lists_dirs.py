@@ -7,7 +7,7 @@ import pytest
 
 from jarvis.config import PolicySettings
 from jarvis.policy.commandline import command_like, dir_changes, words_of
-from jarvis.policy.lists import denied
+from jarvis.policy.lists import UNRESOLVABLE_REASON, denied
 from jarvis.policy.shell import classify_shell
 
 DENY = PolicySettings(deny_paths=["~/work/secrets"])
@@ -126,3 +126,24 @@ def test_should_resolve_a_directory_change_as_the_cwd_of_later_relative_paths(ho
     assert classify_shell("cat a")[1] == ()  # without a move, `a` is under home, not Documents
     assert classify_shell("cd ~/Documents && cd .. && cat a")[1] == ("files.documents:read",)
     assert classify_shell("env -C ~/Documents rm a")[1] == ("files.documents:write",)
+
+
+@pytest.mark.parametrize("key", ["cmd", "script", "note"])
+@pytest.mark.parametrize(
+    "line",
+    [
+        "cd ~/work; ls",
+        "tar -C ~/work -xf a",
+        "tar -Cwork -xf a",
+        "env -C x ls",
+        "git -C x log",
+        "ls $(pwd)",
+    ],
+)
+def test_should_refuse_an_untraceable_line_by_itself_when_only_a_deny_command_is_set(
+    line: str, key: str
+) -> None:
+    """With no protected folder to compare against, an untraceable line is still refused (R96)."""
+    only_commands = PolicySettings(deny_commands=["^never$"])
+    assert denied({key: line}, only_commands) == UNRESOLVABLE_REASON
+    assert denied({key: line}, PolicySettings()) is None
