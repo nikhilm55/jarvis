@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast
 from jarvis.config import ConsentSettings
 from jarvis.consent.scope import Scope, ScopeError, parse_scopes
 from jarvis.consent.session import SessionGrants
-from jarvis.consent.store import Grant, GrantMethod, GrantStore
+from jarvis.consent.store import Grant, GrantMethod, GrantStore, Lifetime
 from jarvis.log import audit, get_logger
 from jarvis.paths import data_dir
 from jarvis.policy import lists
@@ -85,6 +85,10 @@ def _granted(reason: str, method: str) -> _Outcome:
 
 def _denied(reason: str, method: str = "none") -> _Outcome:
     return _Outcome("denied", reason, method)
+
+
+def _nothing() -> None:
+    """The step of an answer that changes no grant."""
 
 
 class Broker:
@@ -221,8 +225,13 @@ class Broker:
         names = tuple(str(scope) for scope in missing)
         self._audit(ctx, names, "consent prompt", _Outcome("asking", reason, "ask"))
         answer = await self._answer(missing, reason, ctx, offer_always=not safe)
-        outcome = self._apply(answer, missing, ctx, safe)
-        self._audit(ctx, names, "consent answer", outcome)
+        outcome, commit = self._apply(answer, missing, ctx, safe)
+        try:
+            self._audit(ctx, names, "consent answer", outcome)
+        except Exception:
+            logger.exception("consent answer audit failed")
+            return _denied("error: audit unavailable")  # nothing was granted: commit never ran
+        commit()  # a grant changes only once its answer is on the record (I1)
         return outcome
 
     async def _answer(
@@ -239,22 +248,31 @@ class Broker:
 
     def _apply(
         self, answer: AskAnswer, missing: tuple[Scope, ...], ctx: "TurnContext", safe: bool
-    ) -> _Outcome:
+    ) -> tuple[_Outcome, Callable[[], None]]:
+        """The outcome of an answer, and the step that makes it so; the caller audits in between."""
         choice, method = answer.choice, answer.method
         if choice in ("no", "timeout"):
-            return _denied("no" if choice == "no" else "no answer", method)
+            return _denied("no" if choice == "no" else "no answer", method), _nothing
         if method not in _GRANT_METHODS:  # silence never grants, whatever the choice says
-            return _denied(f"{choice} without an answer", method)
+            return _denied(f"{choice} without an answer", method), _nothing
         grant_method = cast(GrantMethod, method)
         if choice == "never":
-            for scope in missing:
-                self._store.grant(scope, "never", grant_method)
-            return _denied("never", method)
+            return _denied("never", method), lambda: self._remember(missing, "never", grant_method)
         if choice == "always" and safe:
             choice = "session"  # Safe mode keeps no "always" (FR-CON-11)
+        if choice == "always":
+            return _granted(choice, method), lambda: self._remember(missing, "always", grant_method)
+        held: Literal["once", "session"] = "once" if choice == "once" else "session"
+        return _granted(choice, method), lambda: self._hold(missing, held, ctx)
+
+    def _remember(
+        self, missing: tuple[Scope, ...], lifetime: Lifetime, method: GrantMethod
+    ) -> None:
         for scope in missing:
-            if choice == "always":
-                self._store.grant(scope, "always", grant_method)
-            else:
-                self._session.grant(scope, "once" if choice == "once" else "session", ctx.turn_id)
-        return _granted(choice, method)
+            self._store.grant(scope, lifetime, method)
+
+    def _hold(
+        self, missing: tuple[Scope, ...], lifetime: Literal["once", "session"], ctx: "TurnContext"
+    ) -> None:
+        for scope in missing:
+            self._session.grant(scope, lifetime, ctx.turn_id)
