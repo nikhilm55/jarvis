@@ -194,7 +194,7 @@ def test_should_redact_credentials_when_echoing_a_blocked_command() -> None:
 
 BRIEF = (
     "# Brief: add a thing\n\n## Goal\nx\n\n## Context\ny\n\n## Constraints\nz\n\n"
-    "## Done when\n- [ ] tests\n\n## Report\nuse report.md\n"
+    "## Done when\n- [ ] tests\n\n## Report\nuse report.md\n\n## Local model\nMode: loop\n"
 )
 
 
@@ -238,7 +238,7 @@ def test_should_block_dispatch_when_one_section_is_missing(missing: str) -> None
 @pytest.mark.parametrize("level", ["#", "##", "###", "####"])
 def test_should_accept_markdown_headings_at_levels_1_to_4(level: str) -> None:
     prompt = "\n".join(f"{level} {n}\ntext" for n in ("Goal", "Context", "Constraints"))
-    prompt += f"\n{level} Done when\nx\n{level} Report\ny\n"
+    prompt += f"\n{level} Done when\nx\n{level} Report\ny\n{level} Local model\nMode: loop\n"
     assert decision(delegate(prompt)) == "allow"
 
 
@@ -250,10 +250,12 @@ def test_should_block_when_heading_is_level_5_or_not_at_line_start() -> None:
 @pytest.mark.parametrize(
     "prompt",
     [
-        "**Goal:** a\n**Context:** b\n**Constraints:** c\n**Done when:** d\n**Report:** e",
-        "**Goal** a\n**Context**: b\n**Constraints**: c\n**Done when**: d\n**Report**: e",
-        "Goal: a\nContext: b\nConstraints: c\nDone when: d\nReport: e",
-        "GOAL: a\ncontext: b\n  Constraints: c\nDONE WHEN: d\n## report\ne",
+        "**Goal:** a\n**Context:** b\n**Constraints:** c\n**Done when:** d\n**Report:** e\n"
+        "**Local model:** loop",
+        "**Goal** a\n**Context**: b\n**Constraints**: c\n**Done when**: d\n**Report**: e\n"
+        "**Local model**: loop",
+        "Goal: a\nContext: b\nConstraints: c\nDone when: d\nReport: e\nLocal model: loop",
+        "GOAL: a\ncontext: b\n  Constraints: c\nDONE WHEN: d\n## report\ne\nLOCAL MODEL: loop",
     ],
 )
 def test_should_accept_bold_or_plain_labels_in_any_case(prompt: str) -> None:
@@ -304,7 +306,10 @@ def test_should_wire_the_delegation_guard_in_settings() -> None:
 
 def render(**bodies: str) -> str:
     """A brief with every section; `Done_when` stands for the `Done when` heading."""
-    full = dict.fromkeys(("Goal", "Context", "Constraints", "Done_when", "Report"), "real content")
+    full = dict.fromkeys(
+        ("Goal", "Context", "Constraints", "Done_when", "Report", "Local_model"), "real content"
+    )
+    full["Local_model"] = "Mode: loop"
     full.update(bodies)
     return "".join(f"## {name.replace('_', ' ')}\n{body}\n\n" for name, body in full.items())
 

@@ -15,7 +15,7 @@ import re
 
 from _hooklib import allow, block, read_payload, tool_input
 
-REQUIRED = ("Goal", "Context", "Constraints", "Done when", "Report")
+REQUIRED = ("Goal", "Context", "Constraints", "Done when", "Report", "Local model")
 EXEMPT_AGENTS = frozenset({"Explore", "claude-code-guide", "statusline-setup"})
 COMMENT = re.compile(r"<!--.*?(?:-->|\Z)", re.S)
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})[^\n]*\n.*?(?:^ {0,3}\1[ \t]*$|\Z)", re.M | re.S)
@@ -41,6 +41,24 @@ def label(line: str) -> tuple[str, str] | None:
     return None
 
 
+def local_model_mode_ok(content: str) -> bool:
+    """True when the Local model section's first content line names a valid mode."""
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("Mode:"):
+            stripped = stripped[len("Mode:") :].strip()
+        lowered = stripped.lower()
+        if lowered.startswith(("loop", "finisher", "review")):
+            return True
+        if lowered.startswith("exempt:"):
+            reason = stripped[len("exempt:") :].strip()
+            return len(reason.split()) >= 3
+        return False
+    return False
+
+
 def sections(prompt: str) -> dict[str, bool]:
     """Each required section found in the prompt, and whether it has real content."""
     text = FENCE.sub("[code]\n", COMMENT.sub("", prompt))
@@ -56,6 +74,21 @@ def sections(prompt: str) -> dict[str, bool]:
         if current and content.strip() and not PLACEHOLDER.fullmatch(content):
             found[current] = True
     return found
+
+
+def _local_model_content(prompt: str) -> str:
+    """The Local model section's content, outside code fences and comments."""
+    text = FENCE.sub("[code]\n", COMMENT.sub("", prompt))
+    lines = text.splitlines()
+    current: str | None = None
+    collected: list[str] = []
+    for line in lines:
+        start = label(line)
+        if start or HEADING.match(line):
+            current = start[0] if start else None
+        if current == "Local model":
+            collected.append(start[1] if start else line)
+    return "\n".join(collected)
 
 
 def main() -> None:
@@ -75,9 +108,16 @@ def main() -> None:
             "This subagent prompt is not a harness brief. "
             + problems
             + "Write each section from harness/brief.md (Goal, Context, Constraints, Done when, "
-            "Report) with real content, not a placeholder, and dispatch again; "
+            "Report, Local model) with real content, not a placeholder, and dispatch again; "
             "see harness/README.md."
         )
+    local_model = found.get("Local model")
+    if local_model is True:
+        content = _local_model_content(prompt)
+        if not local_model_mode_ok(content):
+            block(
+                "Local model section must name a mode: loop, finisher, review or exempt: <reason>"
+            )
     allow()
 
 
