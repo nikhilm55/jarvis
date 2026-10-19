@@ -4,6 +4,7 @@ import re
 
 from jarvis.fastpath.intents import (
     CloseApp,
+    FocusWindow,
     Intent,
     Mute,
     OpenApp,
@@ -12,6 +13,7 @@ from jarvis.fastpath.intents import (
     TellTime,
     VolumeSet,
     VolumeStep,
+    WindowAction,
 )
 
 # Precompiled regexes for normalisation.
@@ -52,6 +54,11 @@ _SET = re.compile(
     r"(?:(?:set|change|put|make) )?(?:the )?volume (?:to |at |of )?(?P<n>\d{1,3})(?: percent)?"
 )
 _APP = re.compile(r"(?P<verb>open|launch|start|run|close|quit|exit|kill) (?P<target>.+)")
+_WINDOW = re.compile(
+    r"(?:(?P<focus>switch to|focus on|focus|bring up) (?P<f>.+?)"
+    r"|bring (?P<b>.+?) to the front"
+    r"|(?P<verb>minimi[sz]e|maximi[sz]e|close) (?P<t>.+))"
+)
 _NAME_TOKEN = re.compile(r"[^\W_][\w+#-]*")
 
 # Words that never belong in a plain app name: any of them means the command says more than
@@ -79,6 +86,15 @@ _DENY_START = frozenset(
     script test tests command routine
     backup backups update updates scan build music video videos game games download downloads
     install server service job task
+    """.split()  # noqa: SIM905  (a word list reads better than a quoted list)
+)
+
+# Words that make "switch to X" / "close X window" something other than an app's window: a
+# setting, a place on the screen, a person. Kept apart from _DENY so open/close are unchanged.
+_DENY_WINDOW = frozenset(
+    """
+    mode theme monitor monitors tab tabs workspace workspaces desktop desktops user account
+    display layout left right top bottom
     """.split()  # noqa: SIM905  (a word list reads better than a quoted list)
 )
 
@@ -187,6 +203,43 @@ def _app_name(target: str, verb: str) -> str | None:
     return " ".join(tokens)
 
 
+def _window_name(target: str, *, needs_window: bool = False) -> str | None:
+    """The app name in "the X window" / "X": 1-4 plain tokens, or None if it is doubtful."""
+    tokens = target.split()
+    if tokens and tokens[0] == "the":
+        tokens = tokens[1:]
+    has_window = bool(tokens) and tokens[-1] == "window"
+    if has_window:
+        tokens = tokens[:-1]
+    elif needs_window:
+        return None
+    if tokens and tokens[-1] in {"app", "application"}:
+        tokens = tokens[:-1]
+    if not tokens or len(tokens) > 4 or all(tok.isdigit() for tok in tokens):
+        return None
+    if any(tok in _DENY_WINDOW for tok in tokens) or not _valid_tokens(tokens, "focus"):
+        return None
+    return " ".join(tokens)
+
+
+def _match_window(s: str) -> Intent | None:
+    """Match "switch to X", "focus X", "bring X to the front", "minimise/maximise X" and
+    "close the X window". Closing needs the word "window": "close X" closes the app."""
+    m = _WINDOW.fullmatch(s)
+    if m is None:
+        return None
+    if m.group("verb") is None:
+        name = _window_name(m.group("f") or m.group("b"))
+        return None if name is None else FocusWindow(name=name)
+    verb = m.group("verb")
+    name = _window_name(m.group("t"), needs_window=verb == "close")
+    if name is None:
+        return None
+    if verb == "close":
+        return WindowAction(name=name, op="close")
+    return WindowAction(name=name, op="minimize" if verb.startswith("min") else "maximize")
+
+
 def _match_app(s: str) -> Intent | None:
     """Match an open/close app command."""
     m = _APP.fullmatch(s)
@@ -212,6 +265,7 @@ def match(command: str) -> Intent | None:
         _match_mute,
         _match_volume_step,
         _match_volume_set,
+        _match_window,
         _match_app,
     ):
         result = handler(s)

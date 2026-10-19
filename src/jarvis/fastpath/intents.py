@@ -1,6 +1,7 @@
 """Intent types the fast path can recognise (FRS 5.4)."""
 
 from dataclasses import dataclass
+from typing import Literal
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,21 @@ class CloseApp:
     """Intent to close a named application."""
 
     name: str
+
+
+@dataclass(frozen=True)
+class FocusWindow:
+    """Intent to bring a named app's window to the front."""
+
+    name: str
+
+
+@dataclass(frozen=True)
+class WindowAction:
+    """Intent to minimise, maximise or close a named app's window."""
+
+    name: str
+    op: Literal["minimize", "maximize", "close"]
 
 
 @dataclass(frozen=True)
@@ -65,10 +81,22 @@ class Stop:
     """Intent to stop the current action."""
 
 
-Intent = OpenApp | CloseApp | TellTime | TellDate | VolumeSet | VolumeStep | Mute | Stop
+Intent = (
+    OpenApp
+    | CloseApp
+    | FocusWindow
+    | WindowAction
+    | TellTime
+    | TellDate
+    | VolumeSet
+    | VolumeStep
+    | Mute
+    | Stop
+)
 
 __all__ = [
     "CloseApp",
+    "FocusWindow",
     "Intent",
     "Mute",
     "OpenApp",
@@ -77,4 +105,5 @@ __all__ = [
     "TellTime",
     "VolumeSet",
     "VolumeStep",
+    "WindowAction",
 ]

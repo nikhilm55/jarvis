@@ -30,6 +30,7 @@ _REMEDY = {
     "ELEVATED_WINDOW": "Close that window yourself, or run Jarvis's admin helper.",
     "NOT_FOUND": "Check the name and ask again.",
     "AMBIGUOUS": "Say which one you mean.",
+    "ACTION_FAILED": "Try it yourself for now, or ask again in a moment.",
 }
 
 
