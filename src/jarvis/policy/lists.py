@@ -8,7 +8,7 @@ import shlex
 from collections.abc import Mapping
 
 from jarvis.config import PolicySettings
-from jarvis.policy.commandline import command_like, dir_changes, tree_walkers
+from jarvis.policy.commandline import command_like, dir_changes, read_only
 
 _PATH_KEYS = frozenset(
     {"path", "paths", "file", "files", "src", "dst", "source", "dest", "destination"}
@@ -192,10 +192,23 @@ def denied(args: Mapping[str, object], settings: PolicySettings) -> str | None:
         for path in [text, *_shell_paths(text)]:
             if any(is_under(r, root) for r in _resolved(path) for root in roots):
                 return f"denied: {path} is on the deny list"
-    for cmd in commands:  # a recursive command given a parent of a protected folder walks into it
-        for path in (p for paths in tree_walkers(cmd) for p in paths):
-            if any(is_under(root, r) for r in _resolved(path) for root in roots):
-                return f"denied: {path} holds a protected folder and the command walks it"
+    return _holds_protected(texts, roots)
+
+
+def _holds_protected(texts: list[str], roots: list[str]) -> str | None:
+    """A word that is a parent of a protected folder is denied unless the command only looks.
+
+    Anything that could walk, copy, link or mount a parent reaches the folder inside it, and no
+    list of walkers can be complete (F3). `ls`, `stat`, `file`, `test`, `realpath`, `readlink`,
+    `basename` and `dirname` name a path without reading below it, so they may.
+    """
+    for text in texts:
+        for segment in re.split(r"[;&|\n]+", text):
+            if read_only(segment):
+                continue
+            for path in _shell_paths(segment):
+                if any(is_under(root, r) for r in _resolved(path) for root in roots):
+                    return f"denied: {path} holds a protected folder and the command may walk it"
     return None
 
 

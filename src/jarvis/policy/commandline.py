@@ -6,80 +6,66 @@ import shlex
 
 DIR_CHANGES = frozenset({"cd", "pushd", "popd"})
 _DIR_LONG = ("--directory", "--chdir", "--cwd")
-# Commands that read, copy, move or change everything under the directories they are given.
-_ALWAYS_RECURSIVE = frozenset(
+# Commands that only look, never walk: the one place a parent of a protected folder may appear.
+READ_ONLY = frozenset(
+    ["ls", "stat", "file", "test", "[", "realpath", "readlink", "basename", "dirname"]
+)
+# A string with one of these as its first word is read as a command line, whatever its key.
+_KNOWN = frozenset(
     [
+        "cd",
+        "pushd",
+        "popd",
+        "cp",
+        "rm",
+        "ls",
+        "mv",
         "rsync",
         "tar",
         "zip",
         "unzip",
         "7z",
-        "7za",
-        "7zr",
         "find",
         "du",
         "tree",
         "rg",
-        "ag",
-        "ack",
-        "mv",
-        "scp",
-        "ditto",
+        "grep",
+        "egrep",
+        "fgrep",
+        "chmod",
+        "chown",
+        "cat",
+        "head",
+        "tail",
+        "less",
+        "more",
+        "tee",
+        "sed",
+        "awk",
+        "echo",
+        "curl",
+        "wget",
+        "env",
+        "sudo",
+        "xargs",
+        "git",
+        "make",
+        "ln",
+        "mount",
+        "sh",
+        "bash",
+        "zsh",
+        "dash",
+        "ksh",
+        "fish",
+        "eval",
+        "source",
+        "python",
+        "python3",
+        "perl",
+        "ruby",
+        "node",
     ]
-)
-_RECURSIVE_FLAGS: dict[str, frozenset[str]] = {
-    "cp": frozenset({"-r", "-R", "-a", "--recursive", "--archive"}),
-    "rm": frozenset({"-r", "-R", "--recursive"}),
-    "ls": frozenset({"-R", "--recursive"}),
-    "chmod": frozenset({"-R", "--recursive"}),
-    "chown": frozenset({"-R", "--recursive"}),
-    "chgrp": frozenset({"-R", "--recursive"}),
-    "grep": frozenset({"-r", "-R", "--recursive", "--dereference-recursive"}),
-    "egrep": frozenset({"-r", "-R", "--recursive"}),
-    "fgrep": frozenset({"-r", "-R", "--recursive"}),
-}
-# A string with one of these as its first word is read as a command line, whatever its key.
-_KNOWN = (
-    _ALWAYS_RECURSIVE
-    | DIR_CHANGES
-    | frozenset(_RECURSIVE_FLAGS)
-    | frozenset(
-        [
-            "cat",
-            "head",
-            "tail",
-            "less",
-            "more",
-            "tee",
-            "sed",
-            "awk",
-            "echo",
-            "curl",
-            "wget",
-            "env",
-            "sudo",
-            "xargs",
-            "git",
-            "make",
-        ]
-    )
-    | frozenset(
-        [
-            "sh",
-            "bash",
-            "zsh",
-            "dash",
-            "ksh",
-            "fish",
-            "eval",
-            "source",
-            "python",
-            "python3",
-            "perl",
-            "ruby",
-            "node",
-        ]
-    )
 )
 _SPLIT = re.compile(r"[;&|\n]+")
 
@@ -112,27 +98,18 @@ def command_like(text: str) -> bool:
     return bool(words) and any(os.path.basename(w) in _KNOWN for w in words or [])
 
 
-def _flag_set(words: list[str]) -> set[str]:
-    flags: set[str] = set()
-    for word in words:
-        if word.startswith("--"):
-            flags.add(word.split("=", 1)[0])
-        elif word.startswith("-") and len(word) > 1:
-            flags.update(f"-{c}" for c in word[1:])
-    return flags
+def lists_a_tree(words: list[str]) -> bool:
+    """`ls -R` and `ls --recursive`: not a plain look."""
+    return any(
+        w == "--recursive" or (w.startswith("-") and not w.startswith("--") and "R" in w)
+        for w in words
+    )
 
 
-def tree_walkers(text: str) -> list[list[str]]:
-    """For each command of `text` that walks a whole tree, its non-option words (the paths)."""
-    found: list[list[str]] = []
-    for part in _SPLIT.split(text):
-        words = words_of(part)
-        for i, word in enumerate(words or []):
-            name = os.path.basename(word)
-            rest = (words or [])[i + 1 :]
-            recursive = name in _ALWAYS_RECURSIVE or bool(
-                _RECURSIVE_FLAGS.get(name, frozenset()) & _flag_set(rest)
-            )
-            if recursive:
-                found.append([w for w in rest if not w.startswith("-")])
-    return found
+def read_only(segment: str) -> bool:
+    """A command of the read-only allowlist (and `ls` without `-R`): it names, never walks."""
+    words = words_of(segment) or []
+    if not words:
+        return False
+    name = os.path.basename(words[0])
+    return name in READ_ONLY and not (name == "ls" and lists_a_tree(words[1:]))

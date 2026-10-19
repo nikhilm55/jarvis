@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 
 from jarvis.config import PolicySettings
-from jarvis.policy.commandline import command_like, dir_changes, tree_walkers, words_of
-from jarvis.policy.lists import denied
+from jarvis.policy.commandline import command_like, dir_changes, words_of
+from jarvis.policy.lists import UNRESOLVABLE_REASON, denied
 from jarvis.policy.shell import classify_shell
 
 DENY = PolicySettings(deny_paths=["~/work/secrets"])
@@ -112,14 +112,6 @@ def test_should_find_the_directories_a_line_moves_into() -> None:
     assert dir_changes(words_of("ls -la ~") or []) == []
 
 
-def test_should_list_the_paths_of_each_tree_walking_command() -> None:
-    assert tree_walkers("cp -r a b; ls -l c") == [["a", "b"]]
-    assert tree_walkers("find x -name y | du z") == [["x", "y"], ["z"]]
-    assert tree_walkers("cp a b") == []
-    assert tree_walkers("grep pat f") == []
-    assert tree_walkers("grep -rn pat d") == [["pat", "d"]]
-
-
 def test_should_read_a_string_as_a_command_line_only_when_it_holds_a_known_command() -> None:
     assert command_like("cd ~/x && ls")
     assert command_like("/usr/bin/tar -xf a")
@@ -134,3 +126,24 @@ def test_should_resolve_a_directory_change_as_the_cwd_of_later_relative_paths(ho
     assert classify_shell("cat a")[1] == ()  # without a move, `a` is under home, not Documents
     assert classify_shell("cd ~/Documents && cd .. && cat a")[1] == ("files.documents:read",)
     assert classify_shell("env -C ~/Documents rm a")[1] == ("files.documents:write",)
+
+
+@pytest.mark.parametrize("key", ["cmd", "script", "note"])
+@pytest.mark.parametrize(
+    "line",
+    [
+        "cd ~/work; ls",
+        "tar -C ~/work -xf a",
+        "tar -Cwork -xf a",
+        "env -C x ls",
+        "git -C x log",
+        "ls $(pwd)",
+    ],
+)
+def test_should_refuse_an_untraceable_line_by_itself_when_only_a_deny_command_is_set(
+    line: str, key: str
+) -> None:
+    """With no protected folder to compare against, an untraceable line is still refused (R96)."""
+    only_commands = PolicySettings(deny_commands=["^never$"])
+    assert denied({key: line}, only_commands) == UNRESOLVABLE_REASON
+    assert denied({key: line}, PolicySettings()) is None
