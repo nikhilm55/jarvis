@@ -9,6 +9,7 @@ import re
 import shlex
 from collections.abc import Callable, Mapping, Sequence
 from contextvars import ContextVar
+from dataclasses import dataclass
 
 from jarvis.config import DEFAULT_CONSENT_FOLDERS
 from jarvis.policy.commandline import dir_changes
@@ -100,10 +101,61 @@ _GIT_SAFE_SHORT = re.compile(r"-(?:[0-9]+|[nsbpuvq]|U[0-9]+|n[0-9]+)")
 _SHELL_C = re.compile(r"-[a-z]*c[a-z]*")
 _RECURSIVE = re.compile(r"-[A-Za-z]*R[A-Za-z]*|--recursive")
 _ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
-# Words that run what follows them; skipped to find the command that really runs.
-_WRAPPERS = _words("env command nohup time exec nice xargs timeout setsid unbuffer stdbuf ionice")
-_WRAPPERS |= _words("busybox flock watch chroot taskset chrt nsenter unshare setpriv runuser")
-_WRAPPERS |= _words("if then do else elif while until ! { }")
+
+
+@dataclass(frozen=True)
+class _Wrapper:
+    """How a wrapper's own arguments look, so the command it runs can be found after them."""
+
+    valued: frozenset[str] = frozenset()  # options that take the next word as their value
+    positional: int = 0  # words it needs before the command (a duration, a mask, a root)
+
+
+def _wrap(valued: str = "", positional: int = 0) -> _Wrapper:
+    return _Wrapper(frozenset(valued.split()), positional)
+
+
+# Words that run another command, and the arguments each takes first (R94, F1).
+_WRAPPER_SPECS: dict[str, _Wrapper] = {
+    "env": _wrap("-u -C -S --unset --chdir --split-string"),
+    "nice": _wrap("-n --adjustment"),
+    "ionice": _wrap("-c -n -p -P -u --class --classdata"),
+    "timeout": _wrap("-s -k --signal --kill-after", positional=1),
+    "taskset": _wrap("-c --cpu-list", positional=1),
+    "chrt": _wrap(positional=1),
+    "stdbuf": _wrap("-i -o -e --input --output --error"),
+    "setpriv": _wrap(
+        "--reuid --regid --ruid --euid --rgid --egid --groups --inh-caps --ambient-caps"
+        " --bounding-set --securebits --pdeathsig --selinux-label --apparmor-profile"
+    ),
+    "unshare": _wrap("--propagation --setgroups --wd -w -R --root -S -G"),
+    "runuser": _wrap("-u -g -G -s -l --user --group --supp-group --shell"),
+    "nsenter": _wrap("-t --target -S -G -w --wd"),
+    "flock": _wrap("-w --timeout -E --conflict-exit-code", positional=1),
+    "chroot": _wrap("--userspec --groups", positional=1),
+    "watch": _wrap("-n --interval"),
+    "xargs": _wrap("-n -I -P -L -s -d -a -E --max-args --max-procs --replace"),
+    "time": _wrap("-f -o --format --output"),
+}
+for _bare in [
+    "command",
+    "nohup",
+    "exec",
+    "setsid",
+    "unbuffer",
+    "busybox",
+    "if",
+    "then",
+    "do",
+    "else",
+    "elif",
+    "while",
+    "until",
+    "!",
+    "{",
+    "}",
+]:
+    _WRAPPER_SPECS[_bare] = _wrap()
 _FORK_BOMB = ":(){:|:&};:"
 _INTERPRETER = re.compile(r"python[0-9.]*|perl|ruby|nodejs|node|php|lua|osascript|pwsh|powershell")
 # The flag that hands an interpreter its program text, per language. Any such program is T3
@@ -381,13 +433,48 @@ _NESTED_CHECKS: dict[str, Callable[[list[str]], bool]] = {
 }
 
 
+def _skip_wrapper_args(seg: list[str], at: int, spec: _Wrapper) -> int:
+    """Index of the first word after a wrapper's own options, values and positional words."""
+    positional = spec.positional
+    while at < len(seg):
+        word = seg[at]
+        if word == "--":
+            return at + 1
+        if word.startswith("-") and len(word) > 1:
+            if word in {"-c", "--cpu-list"} and "-c" in spec.valued:
+                positional = 0  # `taskset -c LIST cmd` has no mask word
+            at += 2 if word in spec.valued else 1
+        elif _ASSIGNMENT.match(word):
+            at += 1  # `env FOO=1 cmd`
+        elif positional:
+            positional -= 1
+            at += 1
+        else:
+            break
+    return at
+
+
+def _command_starts(seg: list[str]) -> list[int]:
+    """Where the commands of a segment start: the first word, and what each wrapper runs."""
+    starts: list[int] = []
+    at = 0
+    while at < len(seg):
+        while at < len(seg) and _ASSIGNMENT.match(seg[at]):
+            at += 1
+        if at >= len(seg):
+            break
+        starts.append(at)
+        spec = _WRAPPER_SPECS.get(os.path.basename(seg[at]).lower())
+        if spec is None:
+            break
+        at = _skip_wrapper_args(seg, at + 1, spec)
+    return starts
+
+
 def _head(seg: list[str]) -> str | None:
-    """The command that really runs: past assignments, wrappers and their flags and numbers."""
-    for token in seg:
-        skip = _ASSIGNMENT.match(token) or token.startswith("-") or token.isdigit()
-        if not skip and os.path.basename(token).lower() not in _WRAPPERS:
-            return token
-    return None
+    """The command that really runs: past assignments and wrappers with their own arguments."""
+    starts = _command_starts(seg)
+    return seg[starts[-1]] if starts else None
 
 
 def _reads_program(head: str | None) -> bool:
@@ -421,22 +508,11 @@ def _program_text_t3(seg: list[str], head: str, doc: str | None) -> bool:
     return False
 
 
-def _wrapperish(token: str, name: str) -> bool:
-    """A word that may sit before the real command: a wrapper, an option, a number, a path."""
-    return bool(
-        _ASSIGNMENT.match(token)
-        or token.startswith("-")
-        or token.isdigit()
-        or "/" in token
-        or name in _WRAPPERS
-    )
-
-
-def _t3_at(seg: list[str], pos: int, name: str, may_start: bool) -> bool:
+def _t3_at(seg: list[str], pos: int, name: str, skip_nested: bool) -> bool:
     """Whether the word at `pos`, taken as a command name, makes the segment T3."""
     if name in _ALWAYS_T3 or name.startswith("mkfs"):
         return True
-    nested = _NESTED_CHECKS.get(name) if may_start else None
+    nested = None if skip_nested else _NESTED_CHECKS.get(name)
     check = nested or _T3_CHECKS.get(name)
     interpreter = bool(_INTERPRETER.fullmatch(name))
     if check is None and not interpreter:
@@ -448,13 +524,18 @@ def _t3_at(seg: list[str], pos: int, name: str, may_start: bool) -> bool:
 
 def _is_t3(segments: list[list[str]], seps: list[str], docs: dict[int, str]) -> bool:
     for i, seg in enumerate(segments):
-        may_start = True  # every word before this one is a wrapper, option, number or path
+        starts = set(_command_starts(seg))
+        evaled = False  # one `eval` reads everything after it, so a second one adds nothing
         for pos, token in enumerate(seg):
             name = os.path.basename(token).lower()
-            # A word with a `/` is a path (`cat ~/notes/su`), a command only where one may start.
-            if ("/" not in token or may_start) and _t3_at(seg, pos, name, may_start):
+            # A word with a `/` is data (`cat ~/notes/su`) unless a command starts there: first, or
+            # right after a wrapper's own arguments (`timeout 5s /bin/rm`). An unknown wrapper
+            # before a full path is not seen (N3).
+            if "/" in token and pos not in starts:
+                continue
+            if _t3_at(seg, pos, name, skip_nested=evaled and name == "eval"):
                 return True
-            may_start = may_start and _wrapperish(token, name)
+            evaled = evaled or name == "eval"
         if _redirects_into_sensitive(seg):
             return True
         head = _head(seg)
