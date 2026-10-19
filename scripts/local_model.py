@@ -25,11 +25,14 @@ summary.json. See harness/README.md.
 from __future__ import annotations
 
 import argparse
+import ast
 import configparser
+import contextlib
 import hashlib
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -127,19 +130,57 @@ def inside_repo(repo: Path, rel: str) -> bool:
 PYTEST_TIMEOUT_S = 300  # seconds pytest may run; set by `implement --test-timeout`
 
 
+def same_content(rel: str, now: str | None, before: str | None) -> bool:
+    """Exact text, except a Python file: the same syntax tree is the same (a formatting-only edit,
+    or one that only moves comments, changed nothing)."""
+    if now == before:
+        return True
+    if now is None or before is None or not rel.endswith(".py"):
+        return False
+    try:
+        return ast.dump(ast.parse(now)) == ast.dump(ast.parse(before))
+    except SyntaxError:
+        return False
+
+
+def kill_tree(proc: subprocess.Popen[str]) -> None:
+    """Kill `proc` and everything it started (it leads its own process group / tree)."""
+    if sys.platform == "win32":
+        subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True, check=False
+        )
+    else:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(proc.pid, signal.SIGKILL)  # start_new_session: the group id is the pid
+    with contextlib.suppress(OSError):
+        proc.kill()
+
+
 def run_split(cmd: list[str], repo: Path) -> tuple[int, str, str]:
-    """(exit code, stdout, stderr). Pytest gets PYTEST_TIMEOUT_S, ruff and mypy 15 minutes."""
+    """(exit code, stdout, stderr). Pytest gets PYTEST_TIMEOUT_S, ruff and mypy 15 minutes. The
+    command runs in its own process group; on a timeout the whole group is killed (a hung test
+    process must not outlive the run or keep the pipes open) and TimeoutExpired is raised."""
     timeout = PYTEST_TIMEOUT_S if "pytest" in cmd else 900
-    proc = subprocess.run(
+    group: dict[str, Any] = {"start_new_session": True}
+    if sys.platform == "win32":
+        group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    with subprocess.Popen(
         cmd,
         cwd=repo,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
-        timeout=timeout,
-        check=False,
-    )
-    return proc.returncode, proc.stdout, proc.stderr
+        **group,
+    ) as proc:
+        try:
+            out, err = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            kill_tree(proc)
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                proc.communicate(timeout=10)  # drain; never wait on a pipe a survivor holds
+            raise
+        return proc.returncode, out, err
 
 
 def run(cmd: list[str], repo: Path) -> tuple[int, str]:
@@ -571,7 +612,11 @@ class Implementer:
             status = "sensor_tamper"
         elif self.weakened and status != "scope_violation":
             status = "test_weakened"
-        untouched = sorted(rel for rel in self.opts.write if self.read(rel) == self.before.get(rel))
+        untouched = sorted(
+            rel
+            for rel in self.opts.write
+            if same_content(rel, self.read(rel), self.before.get(rel))
+        )
         if status == "green" and len(untouched) == len(self.opts.write):
             status = "no_change"
         review, reviewed = self.review() if status == "green" else ([], False)
