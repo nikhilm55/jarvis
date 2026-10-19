@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from jarvis.config import PolicySettings
-from jarvis.policy.commandline import command_like, dir_changes, tree_walkers, words_of
+from jarvis.policy.commandline import command_like, dir_changes, words_of
 from jarvis.policy.lists import denied
 from jarvis.policy.shell import classify_shell
 
@@ -110,14 +110,6 @@ def test_should_find_the_directories_a_line_moves_into() -> None:
     assert words is not None
     assert dir_changes(words) == ["a", "b", "c", "d", "e", "f", ""]
     assert dir_changes(words_of("ls -la ~") or []) == []
-
-
-def test_should_list_the_paths_of_each_tree_walking_command() -> None:
-    assert tree_walkers("cp -r a b; ls -l c") == [["a", "b"]]
-    assert tree_walkers("find x -name y | du z") == [["x", "y"], ["z"]]
-    assert tree_walkers("cp a b") == []
-    assert tree_walkers("grep pat f") == []
-    assert tree_walkers("grep -rn pat d") == [["pat", "d"]]
 
 
 def test_should_read_a_string_as_a_command_line_only_when_it_holds_a_known_command() -> None:
