@@ -7,7 +7,7 @@ record is on disk.
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TypeVar
 
 from jarvis.activity import PolicyRecord
@@ -64,6 +64,7 @@ class _Verdict:
     reason: str
     code: ErrorCode = "BLOCKED_BY_POLICY"
     confirmed_by: str | None = None
+    consent_checked: bool = False  # the broker was asked about this call's scopes
 
 
 def _consent_remedy(scopes: tuple[str, ...]) -> str:
@@ -138,10 +139,18 @@ async def _judge(call: ToolCall, ctx: TurnContext) -> _Verdict:
     decision = await asyncio.to_thread(decide, call, ctx.mode, ctx)
     if decision.action == "deny":
         return _Verdict(False, decision, decision.reason)
-    # A "run" that names scopes is YOLO: the broker still has to honour "never" (FR-CON-10).
-    asks = decision.action == "consent" or (decision.action == "run" and bool(decision.scopes))
-    if asks and await ctx.consent.require(decision.scopes, decision.prompt or "", ctx) != "granted":
+    # Any verdict that names scopes must be checked against the broker first (FR-CON-10):
+    # "never" beats every mode at every tier, including YOLO confirm/guardrail.
+    checked = bool(decision.scopes)
+    if (
+        checked
+        and await ctx.consent.require(decision.scopes, decision.prompt or "", ctx) != "granted"
+    ):
         return _Verdict(False, decision, "consent denied", code="CONSENT_DENIED")
+    return replace(await _after_consent(call, ctx, decision), consent_checked=checked)
+
+
+async def _after_consent(call: ToolCall, ctx: TurnContext, decision: Decision) -> _Verdict:
     if decision.action == "run":
         return _Verdict(True, decision, decision.reason)
     if decision.action == "consent":
@@ -176,6 +185,8 @@ async def _authorise(call: ToolCall, ctx: TurnContext) -> _Verdict:
     deny = Decision("deny", None)
     try:
         verdict = _mismatch(call, ctx) or await _judge(call, ctx)
+        if verdict.allowed and verdict.decision.scopes and not verdict.consent_checked:
+            raise RuntimeError("allowed with scopes but no consent check")  # an invariant
     except Exception as exc:
         verdict = _Verdict(False, deny, f"policy error: {type(exc).__name__}")
     try:
