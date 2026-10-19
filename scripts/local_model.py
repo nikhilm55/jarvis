@@ -124,10 +124,20 @@ def inside_repo(repo: Path, rel: str) -> bool:
     return repo in target.parents
 
 
+PYTEST_TIMEOUT_S = 300  # seconds pytest may run; set by `implement --test-timeout`
+
+
 def run_split(cmd: list[str], repo: Path) -> tuple[int, str, str]:
-    """(exit code, stdout, stderr)."""
+    """(exit code, stdout, stderr). Pytest gets PYTEST_TIMEOUT_S, ruff and mypy 15 minutes."""
+    timeout = PYTEST_TIMEOUT_S if "pytest" in cmd else 900
     proc = subprocess.run(
-        cmd, cwd=repo, capture_output=True, text=True, encoding="utf-8", timeout=900, check=False
+        cmd,
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=timeout,
+        check=False,
     )
     return proc.returncode, proc.stdout, proc.stderr
 
@@ -158,6 +168,9 @@ def pytest_addopts(repo: Path) -> str:
     return ""
 
 
+NO_TOOLS = "\n\nDo not call tools. Reply only with the requested code in the required format."
+
+
 def check(
     repo: Path, files: list[str], tests: list[str], cache: Path, expect: tuple[int, int] = (0, 0)
 ) -> tuple[bool, str]:
@@ -181,7 +194,14 @@ def check(
     # the repo's addopts usually hold a -q; a second one (-qq) drops the summary line
     addopts = hc.quiet_addopts(pytest_addopts(repo))
     pytest = [*uv, "pytest", "-o", f"addopts={addopts}", "-q", "-x", "-p", "no:cacheprovider"]
-    code, out, err = run_split([*pytest, *tests], repo)
+    try:
+        code, out, err = run_split([*pytest, *tests], repo)
+    except subprocess.TimeoutExpired:
+        report.append(
+            "PYTEST:\nTIMEOUT: tests did not finish in "
+            f"{PYTEST_TIMEOUT_S} s (a test may hang, e.g. waiting on a fake clock)"
+        )
+        return False, "\n\n".join(report)
     if code or not hc.pytest_clean(out, *expect):
         last = (out.strip().splitlines() or [""])[-1]
         note = "" if code else f"{hc.CLEAN_MSG} (exit 0, last line: {last!r})\n"
@@ -265,6 +285,7 @@ class Implementer:
         self.lint_done: set[str] = set()
         self.disputes: list[dict[str, str]] = []
         self.notes: dict[str, list[str]] = {}
+        self.before: dict[str, str | None] = {}  # each --write file's content at the start
         self.weakened: list[dict[str, Any]] = []
         self.dirty: dict[str, str] = {}  # dirty before the run -> content hash
         self.top, self.prefix = self.repo, ""
@@ -316,24 +337,39 @@ class Implementer:
             )
         print("plan: no valid JSON after a retry; continuing without one", file=sys.stderr)
 
+    def _ask(self, rel: str, fmt: str, prompt: str, tag: str) -> str:
+        """One model call for `rel`; TEST-DISPUTE lines in the reply are recorded."""
+        reply = self.call(fmt, prompt, tag)
+        for line in re.findall(r"^\s*TEST-DISPUTE:(.*)$", reply, re.M):
+            self.disputes.append({"file": rel, "step": tag, "text": line.strip()})
+        return reply
+
+    @staticmethod
+    def _extract_code(reply: str, editing: bool, old: str | None) -> tuple[str | None, list[str]]:
+        """Usable code in a reply (SEARCH/REPLACE edits applied to `old`, or a whole-file block),
+        with the notes to show the model when there is none or an edit failed."""
+        if editing and old is not None:
+            edits = hc.parse_edits(reply)
+            if not edits:
+                return None, ["no SEARCH/REPLACE block in the reply"]
+            return hc.apply_edits(old, edits)
+        code = last_code_block(reply)
+        return code, [] if code is not None else ["no code block in the reply"]
+
     def write(self, rel: str, prompt: str, tag: str) -> None:
-        """Existing or big files change by SEARCH/REPLACE; new small ones are written whole."""
+        """Existing or big files change by SEARCH/REPLACE; new small ones are written whole.
+        A reply that is a `<tool_call>` instead of code gets one retry."""
         path = self.repo / rel
         old = path.read_text(encoding="utf-8") if path.exists() else None
         editing = old is not None and (rel in self.existing or len(old.splitlines()) > EDIT_LIMIT)
-        reply = self.call((EDIT_FORMAT if editing else WHOLE_FORMAT).format(rel=rel), prompt, tag)
-        self.notes[rel], code = [], None
-        for line in re.findall(r"^\s*TEST-DISPUTE:(.*)$", reply, re.M):
-            self.disputes.append({"file": rel, "step": tag, "text": line.strip()})
-        if editing and old is not None:
-            edits = hc.parse_edits(reply)
-            code, self.notes[rel] = hc.apply_edits(old, edits)
-            if not edits:
-                code, self.notes[rel] = None, ["no SEARCH/REPLACE block in the reply"]
-        else:
-            code = last_code_block(reply)
+        fmt = (EDIT_FORMAT if editing else WHOLE_FORMAT).format(rel=rel)
+        reply = self._ask(rel, fmt, prompt, tag)
+        code, self.notes[rel] = self._extract_code(reply, editing, old)
+        if code is None and "<tool_call>" in reply:
+            reply = self._ask(rel, fmt, prompt + NO_TOOLS, f"{tag}-retry")
+            code, self.notes[rel] = self._extract_code(reply, editing, old)
             if code is None:
-                self.notes[rel] = ["no code block in the reply"]
+                self.notes[rel] = ["reply was a tool call, not code"]
         if code is not None:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(code, encoding="utf-8")
@@ -523,6 +559,7 @@ class Implementer:
         start = time.time()
         self.locate()
         self.dirty = {p: self.digest(p) for p in hc.porcelain_paths(self.porcelain())}
+        self.before = {rel: self.read(rel) for rel in self.opts.write}
         self.make_plan()
         self.draft()
         planned = {str(t.get("test")).rsplit("::", 1)[-1] for t in self.plan_tests()}
@@ -534,6 +571,9 @@ class Implementer:
             status = "sensor_tamper"
         elif self.weakened and status != "scope_violation":
             status = "test_weakened"
+        untouched = sorted(rel for rel in self.opts.write if self.read(rel) == self.before.get(rel))
+        if status == "green" and len(untouched) == len(self.opts.write):
+            status = "no_change"
         review, reviewed = self.review() if status == "green" else ([], False)
         missing = [str(i.get("requirement")) for i in review if i["status"] == "missing"]
         plan_reqs = len({str(t.get("requirement")) for t in self.plan_tests()})
@@ -556,6 +596,7 @@ class Implementer:
             "scope_violations": self.stray,
             "minutes": round((time.time() - start) / 60, 1),
             "files": self.opts.write,
+            "untouched": untouched,
             "remaining": report,
         }
         (self.log / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
@@ -585,6 +626,7 @@ def parse(argv: list[str]) -> argparse.Namespace:
     imp.add_argument("--rounds", type=int, default=5)
     imp.add_argument("--max-tokens", type=int, default=8000)
     imp.add_argument("--timeout", type=int, default=900)
+    imp.add_argument("--test-timeout", type=int, default=PYTEST_TIMEOUT_S)
     imp.add_argument("--log-dir", required=True, type=Path)
     return parser.parse_args(argv)
 
@@ -607,6 +649,8 @@ def main(argv: list[str]) -> int:
             return 2
         opts.write = list(dict.fromkeys(canonical(repo, f) for f in opts.write))
         opts.log_dir.mkdir(parents=True, exist_ok=True)
+        global PYTEST_TIMEOUT_S  # noqa: PLW0603 - the module constant is set by --test-timeout
+        PYTEST_TIMEOUT_S = opts.test_timeout
         return Implementer(opts).run()
     except LocalModelError as exc:
         print(exc, file=sys.stderr)
