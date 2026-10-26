@@ -513,7 +513,8 @@ def split_report(report: str) -> dict[str, str]:
 
 
 def errors_for_file(report: str, rel: str) -> dict[str, str]:
-    """The lines of each section that concern `rel`; pytest's FAILED/ERROR summaries always stay."""
+    """The lines of each section that concern `rel`; pytest's FAILED/ERROR summaries and a TIMEOUT
+    line (it names no file, and the model must see the tests hang) always stay."""
     routed: dict[str, str] = {}
     for key, body in split_report(report).items():
         summary = key == "PYTEST"
@@ -521,7 +522,10 @@ def errors_for_file(report: str, rel: str) -> dict[str, str]:
             line
             for line in body.splitlines()
             if rel in line
-            or (summary and (line.startswith(("FAILED ", "ERROR ")) or CLEAN_MSG in line))
+            or (
+                summary
+                and (line.startswith(("FAILED ", "ERROR ", "TIMEOUT:")) or CLEAN_MSG in line)
+            )
         ]
         if kept:
             routed[key] = "\n".join(kept)
