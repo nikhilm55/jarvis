@@ -12,7 +12,7 @@ dependencies = [
     "numpy>=2.4.6",
     "onnxruntime>=1.30.0",
     "platformdirs>=4.12.3",
-    "pydantic>=2.13.5",
+    "pydantic>=2.14.1",
     "python-xlib>=0.33",
     "sounddevice>=0.5.6",
 ]
