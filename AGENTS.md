@@ -69,7 +69,8 @@ Only libraries listed in `pyproject.toml` exist. Add one with `uv add <pkg>` (as
 11. Commits use Conventional Commits and end with the `Co-Authored-By:` trailer for the AI agent used (docs/ai/policy.md §Attribution).
 12. Keep PRs small: aim for ≤ 400 changed lines excluding docs and lockfile; split larger work.
 13. Show evidence (command plus real output) before saying anything is done or fixed.
-14. **Delegating work** (to a subagent or the local model) runs inside the harness: brief from `harness/brief.md`, report with `harness/report.md`, review with `harness/review.md`. A hook rejects briefs without Goal / Context / Constraints / Done when / Report.
+14. **Delegating work** (to a subagent or the local model) runs inside the harness: brief from `harness/brief.md`, report with `harness/report.md`, review with `harness/review.md`. A hook rejects briefs without Goal / Context / Constraints / Done when / Report / Local model.
+15. **Local model first.** New code and new tests are drafted by `scripts/local_model.py implement` (Qwen, no Claude in the loop); a Claude agent then *finishes* from the diff, `summary.json` and the remaining errors. A Claude agent writes new code first only when the brief's `## Local model` section says `exempt: <reason>`, and only for these reasons: the loop is unreachable; debugging or diagnosis; a small edit to already-reviewed code; docs; review or research (no code). Fix rounds follow the same rule: mechanical fixes and new test tables go back through the loop. Every report has a per-file author table (loop / finisher / exempt + reason) with the loop's status and log path.
 
 ## Skills — read before doing
 

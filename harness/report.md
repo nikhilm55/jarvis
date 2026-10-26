@@ -26,7 +26,12 @@ What differs and why. "None" if none.
 
 ## Who wrote what
 
-Share of final lines per model (e.g. local model ~85 % of `x.py`, the rest Sonnet), fix rounds, and what each model got wrong. A low share is useful data, not a failure.
+A per-file author table:
+
+| File | Mode (loop / finisher / exempt: reason) | Loop status and log dir | Local model's surviving share |
+|---|---|---|---|
+
+Then fix rounds and what each model got wrong. A low share is useful data, not a failure. A missing table, or a file written by Claude with no exemption in the brief, fails review.
 
 ## Open questions and follow-ups
 
