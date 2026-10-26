@@ -110,13 +110,84 @@ def _bindings(tree: ast.Module) -> dict[str, frozenset[Binding]]:
     for node in tree.body:
         if isinstance(node, ast.Import):
             for a in node.names:
-                key = (a.asname or a.name).split(".")[0]
-                found.setdefault(key, set()).add((-1, a.name.removeprefix("src."), ""))
+                # `import a.b` binds the name `a` to module a; `import a.b as c` binds c to a.b
+                target = a.name if a.asname else a.name.split(".")[0]
+                found.setdefault(a.asname or target, set()).add(
+                    (-1, target.removeprefix("src."), "")
+                )
         elif isinstance(node, ast.ImportFrom):
             mod = (node.module or "").removeprefix("src.")
             for a in node.names:
                 found.setdefault(a.asname or a.name, set()).add((node.level, mod, a.name))
     return {k: frozenset(v) for k, v in found.items()}
+
+
+Alias = tuple[int, str, str, str]  # (level or -1, module, name, asname): one imported name
+# a bare noqa comment, or one that lists F401: ruff --fix leaves such an import alone, so it is
+# there on purpose (a fixture, a side-effect import, an imported test)
+NOQA = re.compile(r"#\s*noqa(?![\w])(?::\s*(?P<codes>[\w, ]+))?", re.IGNORECASE)
+
+
+def _aliases(node: ast.stmt) -> set[Alias]:
+    if isinstance(node, ast.Import):
+        return {(-1, a.name.removeprefix("src."), "", a.asname or "") for a in node.names}
+    if isinstance(node, ast.ImportFrom):
+        mod = (node.module or "").removeprefix("src.")
+        return {(node.level, mod, a.name, a.asname or "") for a in node.names}
+    return set()
+
+
+def _kept_on_purpose(source: str, tree: ast.Module) -> set[Alias]:
+    """The imported names on lines carrying a `# noqa` that ruff honours for F401."""
+    lines = source.splitlines()
+    found: set[Alias] = set()
+    for node in tree.body:
+        text = "\n".join(lines[node.lineno - 1 : node.end_lineno])
+        for m in NOQA.finditer(text):
+            if m.group("codes") is None or "F401" in m.group("codes").upper():
+                found |= _aliases(node)
+    return found
+
+
+def _bound_name(alias: Alias) -> str:
+    level, module, name, asname = alias
+    return asname or (module.split(".")[0] if level == -1 else name)
+
+
+def _import_problem(
+    locked: str, new: str, trees: tuple[ast.Module, ast.Module], rename: tuple[Collection[str], ...]
+) -> bool:
+    """A locked import was dropped while in use, or rebound, or one kept on purpose is gone. An
+    import nothing uses may go (ruff --fix), but a `test*` / `Test*` name is collected by pytest
+    and a `# noqa` import is a fixture or a side effect: neither is ever "unused". An import kept
+    on purpose must keep its noqa too (or be used by name): a comment is invisible to the AST, and
+    ruff --fix deletes the import once the noqa is gone."""
+    old_tree, new_tree = trees
+    before, after = _bindings(old_tree), _bindings(new_tree)
+    used = _used_names(new_tree)
+    changed = {
+        b
+        for b, v in before.items()
+        if b in after and after[b] != v and _renamed(v, after[b], *rename)
+    }
+    now_kept = _kept_on_purpose(new, new_tree)
+    present = {
+        a for n in new_tree.body for a in _aliases(n) if a in now_kept or _bound_name(a) in used
+    }
+    renamed_names = {n for b in changed for _, _, n in before[b]}
+    purposeful = {a for a in _kept_on_purpose(locked, old_tree) if a[2] not in renamed_names}
+    return (
+        not purposeful <= present
+        or any(b in used or b.startswith(("test", "Test")) for b in before if b not in after)
+        or any(after[b] != v and b not in changed for b, v in before.items() if b in after)
+    )
+
+
+def _used_names(tree: ast.Module) -> set[str]:
+    """Every name the file reads, including a test's parameter names (a fixture is used by name)."""
+    return {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)} | {
+        n.arg for n in ast.walk(tree) if isinstance(n, ast.arg)
+    }
 
 
 def _bare(node: ast.stmt) -> ast.stmt:
@@ -268,10 +339,9 @@ def lock_violations(
         )
     elif kept != [ast.dump(prep(n)) for n in _statements(old_tree)]:
         problems.append("locked statements were reordered")
-    if any(
-        after.get(b) != v and not _renamed(v, after.get(b, frozenset()), *rename)
-        for b, v in before.items()
-    ):
+    # An import may move, merge, split or be re-sorted (the formatter and ruff --fix do), and an
+    # import nothing uses may go; but a name must stay bound to the same target while it is used.
+    if _import_problem(locked, new, (old_tree, new_tree), rename):
         problems.append("an import the test file already had was removed or rebound")
     if (set(after) - set(before)) & _defined(old_tree):
         problems.append("a new import shadows a name the tests define")
