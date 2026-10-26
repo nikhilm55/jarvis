@@ -106,6 +106,21 @@ class PolicySettings(_Section):
                 raise ValueError(f"{pattern!r} is not a valid regex: {error}") from error
         return patterns
 
+    @field_validator("consent_folders")
+    @classmethod
+    def _valid_sources(cls, folders: dict[str, str]) -> dict[str, str]:
+        from jarvis.consent.scope import (  # noqa: PLC0415 - the consent package imports this module
+            Scope,
+            ScopeError,
+        )
+
+        for folder, source in folders.items():
+            try:
+                Scope(source, "read")  # the same source rules as every scope
+            except ScopeError as error:
+                raise ValueError(f"consent_folders[{folder!r}]: {error}") from error
+        return folders
+
 
 class ConsentSettings(_Section):
     """Consent behaviour (FRS 5.11): how long a question waits and when grants expire."""

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 posix_only = pytest.mark.skipif(
-    sys.platform != "linux", reason="POSIX file modes and symlinks: Windows has neither the same"
+    sys.platform == "win32", reason="POSIX file modes and symlinks are not available on Windows"
 )
 
 AuditRecords = list[tuple[str, dict[str, object]]]

@@ -270,8 +270,7 @@ class Broker:
     def _remember(
         self, missing: tuple[Scope, ...], lifetime: Lifetime, method: GrantMethod
     ) -> None:
-        for scope in missing:
-            self._store.grant(scope, lifetime, method)
+        self._store.grant_all(missing, lifetime, method)  # one transaction: all scopes or none
 
     def _hold(
         self, missing: tuple[Scope, ...], lifetime: Literal["once", "session"], ctx: "TurnContext"
