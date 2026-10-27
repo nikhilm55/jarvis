@@ -23,7 +23,7 @@ from jarvis.desktop.volume import (
     volume_set,
     volume_step,
 )
-from jarvis.desktop.windows import WindowManager, WindowView, XPort
+from jarvis.desktop.windows import WindowError, WindowManager, WindowView, XPort, make_ref
 from jarvis.desktop.x11 import (
     WindowInfo,
     X11Error,
@@ -35,6 +35,7 @@ from jarvis.desktop.x11 import (
 from jarvis.desktop.xport import open_port
 
 _OPEN_POLLS = 40
+_RUNNING_POLLS = 10  # an app that was already running mostly just raises its window
 _OPEN_POLL_S = 0.1
 
 
@@ -126,16 +127,47 @@ class DesktopBackend:
 
     def open_app(self, query: str) -> dict[str, object]:
         app = self._resolve(query)
-        before = {w.window_id for w in self._hooks.windows()}
+        windows = self._hooks.windows()
+        before = {w.window_id for w in windows}
+        running = any(app_matches(app, w) for w in windows)
         self._hooks.launcher(app)
+        polls = _RUNNING_POLLS if running else _OPEN_POLLS
         fresh: list[WindowInfo] = []
-        for attempt in range(_OPEN_POLLS):
-            fresh = [w for w in new_windows(before, self._hooks.windows()) if app_matches(app, w)]
+        latest = windows
+        for attempt in range(polls):
+            latest = self._hooks.windows()
+            fresh = [w for w in new_windows(before, latest) if app_matches(app, w)]
             if fresh:
                 break
-            if attempt < _OPEN_POLLS - 1:
+            if attempt < polls - 1:
                 self._hooks.sleep(_OPEN_POLL_S)
-        return {"app": app.name, "window_ids_new": [w.window_id for w in fresh]}
+        result: dict[str, object] = {
+            "app": app.name,
+            "window_ids_new": [w.window_id for w in fresh],
+        }
+        mine = fresh or [w for w in latest if app_matches(app, w)]
+        result["focused"] = False  # no window yet: the app is still starting
+        if mine:
+            result.update(self._bring_to_front(app, [w.window_id for w in mine]))
+        return result
+
+    def _bring_to_front(self, app: AppEntry, wids: Sequence[int]) -> dict[str, object]:
+        """Focus the app's frontmost window among `wids` and check it (S1): focused and in front."""
+        try:
+            with self._manager() as manager:
+                front = next((v.wid for v in manager.list() if v.wid in wids), None)
+                if front is None:  # a window of a kind the user does not see as a window
+                    return {}
+                view = manager.focus(make_ref(front))
+        except WindowError as exc:
+            raise WorkerError(
+                "ACTION_FAILED", f"{app.name} opened but is not in front: {exc.message}"
+            ) from exc
+        except X11Error as exc:
+            if exc.code == "UNSUPPORTED_ON_PLATFORM":
+                return {}  # the app was launched; only the bring-to-front needs X11
+            raise
+        return {"focused": True, "ref": view.ref}
 
     def close_app(self, query: str) -> dict[str, object]:
         app = self._resolve(query)

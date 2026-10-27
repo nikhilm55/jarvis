@@ -2,7 +2,7 @@
 
 import contextlib
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +16,7 @@ from jarvis.desktop.backend import (
     configured_aliases,
     launch_app,
 )
+from jarvis.desktop.windows import XPort
 from jarvis.desktop.x11 import WindowInfo, X11Error
 from tests.x_fake import FakeX
 
@@ -71,15 +72,25 @@ def test_should_return_new_window_ids_when_matching_window_appears() -> None:
         [_win(9, "Other"), _win(3, "Other"), _win(2, "ExampleCalc")],
     )
     launched: list[AppEntry] = []
+    fake = FakeX()
+    fake.add(9, "Other", "other")
+    fake.add(2, "Calculator", "ExampleCalc")
     backend = DesktopBackend(
         _hooks(
             windows=windows,
             launcher=launched.append,
             sleep=calls.append,
+            port=lambda: contextlib.nullcontext(fake),
         )
     )
     result = backend.open_app("calculator")
-    assert result == {"app": "Calculator", "window_ids_new": [2]}
+    assert result == {
+        "app": "Calculator",
+        "window_ids_new": [2],
+        "focused": True,
+        "ref": "x11:0x2",
+    }
+    assert fake.active == 2  # S1: focused and in front, not just running
     assert len(launched) == 1
     assert calls.count(0.1) == 1
 
@@ -90,6 +101,7 @@ def test_should_return_empty_when_no_matching_window_ever() -> None:
     backend = DesktopBackend(_hooks(windows=windows, sleep=sleeps.append))
     result = backend.open_app("calculator")
     assert result["window_ids_new"] == []
+    assert result["focused"] is False  # still starting: nothing to bring to the front yet
     assert windows.calls == 41
     assert len(sleeps) == 39
 
@@ -300,3 +312,92 @@ def test_should_ignore_aliases_when_the_settings_file_is_broken(
     monkeypatch.setattr("jarvis.config.config_dir", lambda: config)
     assert configured_aliases() == {}
     assert "ignoring app aliases" in capsys.readouterr().err
+
+
+def _calc_windows(*ids: int) -> list[WindowInfo]:
+    return [_win(i, "ExampleCalc") for i in ids]
+
+
+def test_should_focus_the_frontmost_window_of_an_app_that_was_already_running() -> None:
+    fake = FakeX()
+    for wid in (5, 6):
+        fake.add(wid, f"Calculator {wid}", "ExampleCalc")
+    fake.add(7, "Other", "other")  # on top, but not the app's
+    sleeps: list[float] = []
+    backend = DesktopBackend(
+        _hooks(
+            windows=lambda: _calc_windows(5, 6),
+            sleep=sleeps.append,
+            port=lambda: contextlib.nullcontext(fake),
+        )
+    )
+    result = backend.open_app("calculator")
+    assert result["window_ids_new"] == []
+    assert (result["focused"], result["ref"]) == (True, "x11:0x6")
+    assert fake.active == 6
+    assert len(sleeps) == 9  # it already had windows: a short wait for a new one, not 4 s
+
+
+def test_should_focus_the_frontmost_of_several_new_windows() -> None:
+    fake = FakeX()
+    fake.add(3, "First", "ExampleCalc")
+    fake.add(4, "Second", "ExampleCalc")
+    windows = _Seq([], _calc_windows(3, 4))
+    result = DesktopBackend(
+        _hooks(windows=windows, port=lambda: contextlib.nullcontext(fake))
+    ).open_app("calculator")
+    assert result["window_ids_new"] == [3, 4]
+    assert result["ref"] == "x11:0x4"
+
+
+def test_should_not_say_it_opened_the_app_when_the_window_will_not_come_to_the_front() -> None:
+    fake = FakeX()
+    fake.add(3, "Calculator", "ExampleCalc")
+    fake.responsive = False
+    backend = DesktopBackend(
+        _hooks(
+            windows=_Seq([], _calc_windows(3)),
+            port=lambda: contextlib.nullcontext(fake),
+        )
+    )
+    with pytest.raises(WorkerError) as info:
+        backend.open_app("calculator")
+    assert info.value.code == "ACTION_FAILED"
+    assert "Calculator opened but is not in front" in info.value.message
+
+
+def test_should_still_open_the_app_when_there_is_no_x11_to_focus_it_with() -> None:
+    @contextlib.contextmanager
+    def no_x() -> Iterator[XPort]:
+        raise X11Error("UNSUPPORTED_ON_PLATFORM", "no X11")
+        yield FakeX()  # pragma: no cover
+
+    launched: list[AppEntry] = []
+    result = DesktopBackend(
+        _hooks(windows=_Seq([], _calc_windows(3)), launcher=launched.append, port=no_x)
+    ).open_app("calculator")
+    assert len(launched) == 1
+    assert result["focused"] is False
+    assert result["window_ids_new"] == [3]
+
+
+def test_should_pass_on_any_other_x11_failure_while_focusing() -> None:
+    @contextlib.contextmanager
+    def broken() -> Iterator[XPort]:
+        raise X11Error("INTERNAL", "boom")
+        yield FakeX()  # pragma: no cover
+
+    backend = DesktopBackend(_hooks(windows=_Seq([], _calc_windows(3)), port=broken))
+    with pytest.raises(X11Error) as info:
+        backend.open_app("calculator")
+    assert info.value.code == "INTERNAL"
+
+
+def test_should_leave_a_window_of_a_hidden_kind_alone_when_bringing_to_the_front() -> None:
+    fake = FakeX()
+    fake.add(3, "Panel", "ExampleCalc", types=["DOCK"])
+    result = DesktopBackend(
+        _hooks(windows=_Seq([], _calc_windows(3)), port=lambda: contextlib.nullcontext(fake))
+    ).open_app("calculator")
+    assert result["focused"] is False
+    assert fake.sent == []
