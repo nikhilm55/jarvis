@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from jarvis import policy
+from jarvis.brain.desktop_tools import WINDOW_OPS
 from jarvis.contract import FinalResponse
 
 SERVER_NAME = "jarvis"
@@ -108,6 +109,77 @@ TOOLS: tuple[McpTool, ...] = (
                 }
             },
             ["name"],
+        ),
+    ),
+    McpTool(
+        name="list_apps",
+        policy_name="desktop.list_apps",
+        description="List the installed desktop applications (name, id, and where installed from).",
+        input_schema=_object_schema({}, []),
+    ),
+    McpTool(
+        name="is_running",
+        policy_name="desktop.is_running",
+        description="Say whether an application has a window open, and how many.",
+        input_schema=_object_schema(
+            {"name": {"type": "string", "description": "Application name, e.g. Firefox."}},
+            ["name"],
+        ),
+    ),
+    McpTool(
+        name="list_windows",
+        policy_name="desktop.list_windows",
+        description=(
+            "List the open windows, frontmost first: ref, title, app, monitor and state "
+            "(normal, minimized, maximized, focused)."
+        ),
+        input_schema=_object_schema({}, []),
+    ),
+    McpTool(
+        name="focus_window",
+        policy_name="desktop.focus_window",
+        description=(
+            "Bring a window to the front and focus it; a minimised window is restored first. "
+            "The answer confirms it is focused."
+        ),
+        input_schema=_object_schema(
+            {
+                "ref": {
+                    "type": "string",
+                    "description": "A ref from list_windows, or words of its title or app name.",
+                }
+            },
+            ["ref"],
+        ),
+    ),
+    McpTool(
+        name="window_op",
+        policy_name="desktop.window_op",
+        description=(
+            "Minimise, maximise, restore, close, snap left or right, move to another monitor, "
+            "or tile windows. Each answer confirms the result."
+        ),
+        input_schema=_object_schema(
+            {
+                "ref": {
+                    "type": "string",
+                    "description": "A ref from list_windows, or words of its title or app name.",
+                },
+                "op": {"type": "string", "enum": list(WINDOW_OPS)},
+                "monitor": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 15,
+                    "description": "For move_to_monitor: the monitor, 0 is the leftmost.",
+                },
+                "with_refs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 7,
+                    "description": "For tile: the other windows to tile with ref.",
+                },
+            },
+            ["ref", "op"],
         ),
     ),
     McpTool(

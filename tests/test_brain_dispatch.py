@@ -1,6 +1,7 @@
 """Tests for jarvis.brain.dispatch."""
 
 import asyncio
+from collections.abc import Sequence
 from typing import NamedTuple
 
 import pytest
@@ -22,6 +23,28 @@ class FakeDesktop:
 
     async def close_app(self, query: str) -> dict[str, object]:
         self.calls.append(("close_app", query))
+        return {"ok": True}
+
+    async def list_windows(self) -> dict[str, object]:
+        self.calls.append(("list_windows", ""))
+        return {"ok": True}
+
+    async def focus_window(self, ref: str) -> dict[str, object]:
+        self.calls.append(("focus_window", ref))
+        return {"ok": True}
+
+    async def window_op(
+        self, ref: str, op: str, monitor: int | None = None, with_refs: Sequence[str] = ()
+    ) -> dict[str, object]:
+        self.calls.append(("window_op", f"{ref} {op}"))
+        return {"ok": True}
+
+    async def list_apps(self) -> dict[str, object]:
+        self.calls.append(("list_apps", ""))
+        return {"ok": True}
+
+    async def is_running(self, query: str) -> dict[str, object]:
+        self.calls.append(("is_running", query))
         return {"ok": True}
 
     async def volume_get(self) -> dict[str, object]:

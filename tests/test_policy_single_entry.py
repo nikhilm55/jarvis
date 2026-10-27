@@ -36,7 +36,7 @@ _MARKER = re.compile(r"#\s*gate-ok:\s*(\S.*?)\s*$")
 EXPECTED_MARKERS: Counter[tuple[str, str]] = Counter(
     {
         ("desktop/worker.py", "worker runs the op"): 11,
-        ("brain/desktop_tools.py", "via MCP impl"): 6,
+        ("brain/desktop_tools.py", "via MCP impl"): 11,
         ("brain/dispatch.py", "via MCP impl"): 2,
         ("brain/session.py", "via MCP impl"): 2,
         ("orchestrator/assemble.py", "late-bound brain hook"): 1,

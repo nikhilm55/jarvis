@@ -14,6 +14,11 @@ EXPECTED_NAMES = (
     "respond",
     "open_app",
     "close_app",
+    "list_apps",
+    "is_running",
+    "list_windows",
+    "focus_window",
+    "window_op",
     "volume_get",
     "volume_set",
     "volume_step",
@@ -26,6 +31,11 @@ POLICY_MAP = {
     "respond": "jarvis.respond",
     "open_app": "desktop.open_app",
     "close_app": "desktop.close_app",
+    "list_apps": "desktop.list_apps",
+    "is_running": "desktop.is_running",
+    "list_windows": "desktop.list_windows",
+    "focus_window": "desktop.focus_window",
+    "window_op": "desktop.window_op",
     "volume_get": "desktop.volume_get",
     "volume_set": "desktop.volume_set",
     "volume_step": "desktop.volume_step",
@@ -33,7 +43,7 @@ POLICY_MAP = {
 }
 
 
-def test_should_expose_nine_tools_in_order_when_module_loaded() -> None:
+def test_should_expose_the_fourteen_tools_in_order_when_module_loaded() -> None:
     assert [t.name for t in TOOLS] == list(EXPECTED_NAMES)
 
 
@@ -126,3 +136,35 @@ def test_should_have_empty_properties_when_volume_get_schema_used() -> None:
 def test_should_require_string_name_when_app_tools_used(name: str) -> None:
     prop = TOOLS_BY_NAME[name].input_schema["properties"]["name"]
     assert prop["type"] == "string"
+
+
+def test_should_offer_every_window_op_and_require_ref_and_op_when_window_op_used() -> None:
+    schema = TOOLS_BY_NAME["window_op"].input_schema
+    assert schema["required"] == ["ref", "op"]
+    assert schema["properties"]["op"]["enum"] == [
+        "minimize",
+        "maximize",
+        "restore",
+        "close",
+        "snap_left",
+        "snap_right",
+        "move_to_monitor",
+        "tile",
+    ]
+    assert schema["properties"]["monitor"]["type"] == "integer"
+    assert schema["properties"]["with_refs"]["type"] == "array"
+
+
+def test_should_require_a_ref_when_focus_window_used() -> None:
+    schema = TOOLS_BY_NAME["focus_window"].input_schema
+    assert schema["required"] == ["ref"]
+    assert schema["properties"]["ref"]["type"] == "string"
+
+
+@pytest.mark.parametrize("name", ["list_windows", "list_apps"])
+def test_should_take_no_arguments_when_a_listing_tool_used(name: str) -> None:
+    assert TOOLS_BY_NAME[name].input_schema["properties"] == {}
+
+
+def test_should_require_a_name_when_is_running_used() -> None:
+    assert TOOLS_BY_NAME["is_running"].input_schema["required"] == ["name"]
