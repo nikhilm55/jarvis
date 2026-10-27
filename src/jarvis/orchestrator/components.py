@@ -43,6 +43,7 @@ class Components:
     consent: ConsentBroker = field(default_factory=NoConsent)  # what a turn asks for scopes
     grants: SessionGrants | None = None  # the once and session grants `consent` consults
     answers: HudAnswers | None = None  # HUD answers to confirmations; None: nothing confirms
+    barge_in: bool = False  # the source is echo-cancelled, so "stop" is heard over Jarvis (R88)
 
 
 async def start_components(parts: Components) -> BrainUnavailable | None:

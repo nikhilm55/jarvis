@@ -25,6 +25,8 @@ class AudioSettings(_Section):
     device: str | None = None
     trailing_ms: int = Field(default=700, ge=400, le=1500)
     cap_s: int = Field(default=30, ge=2, le=300)
+    # R88: listen through PipeWire's echo-cancelled mic while speaking, when it is loaded
+    barge_in: Literal["auto", "off"] = "auto"
 
 
 class WakeSettings(_Section):

@@ -94,6 +94,7 @@ class Orchestrator:
             timing=self._timing,
             submit=self._submit,
             stop=lambda: self.killswitch.trigger("voice"),
+            barge_in=parts.barge_in,
         )
         self._listener = Listener(listener_services)
 

@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from jarvis.audio import (
     Utterance,
     WavFileSource,
 )
+from jarvis.audio.echo import ENABLE_HINT, echo_cancel_source
 from jarvis.config import ConfigError, Settings, load_settings
 from jarvis.hotkey import Hotkey
 from jarvis.hud.runtime import running_hud
@@ -62,6 +64,7 @@ async def _run_loop(  # noqa: PLR0913 - the run command's switches
 ) -> None:
     # `build_components` is looked up in this module's globals, so tests can replace it.
     parts = await build_components(settings, source, mode=mode, with_brain=with_brain)
+    parts.barge_in = isinstance(source, MicSource) and source.echo_cancelled
     stops: list[Orchestrator] = []  # the HUD starts first, so its Stop button binds late
 
     async def hud_stop() -> None:
@@ -84,10 +87,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
         settings = load_settings()
         if settings.user.name is None:
             print(NAME_TIP)
+        # R88: barge-in only through an echo-cancelled mic; a file source never has one
+        echo = None if args.source or settings.audio.barge_in == "off" else echo_cancel_source()
         source = (
             WavFileSource(args.source, realtime=True)
             if args.source
-            else MicSource(settings.audio.device)
+            else MicSource(settings.audio.device, capture_from=echo)
         )
         # The Ctrl+Alt+Esc grab is for a live session; a file run (tests, demos) leaves it free.
         hotkey = None if args.source else Hotkey
@@ -199,6 +204,27 @@ def _human_size(size: int) -> str:
     return f"{value:.1f} GB"
 
 
+def _cmd_doctor(_args: argparse.Namespace) -> int:
+    """Check what the safety features need on this PC and say how to fix what is missing."""
+    try:
+        settings = load_settings()
+    except ConfigError as error:
+        print(f"config: {error}")
+        return 1
+    echo = echo_cancel_source()
+    if settings.audio.barge_in == "off":
+        print('barge-in: off (audio.barge_in = "off")')
+    elif echo is not None:
+        print(f"barge-in: on, through the echo-cancelled microphone {echo}")
+    else:
+        print(f"barge-in: {ENABLE_HINT}")
+    if os.environ.get("DISPLAY"):
+        print("kill switch: Ctrl+Alt+Esc is grabbed when `jarvis run` listens to the microphone")
+    else:
+        print("kill switch: no X display, so Ctrl+Alt+Esc is off; 'Jarvis, stop' still works")
+    return 0
+
+
 def _cmd_models_list(_args: argparse.Namespace) -> int:
     for spec in models.REGISTRY.values():
         path = models.model_path(spec)
@@ -251,6 +277,8 @@ def build_parser() -> argparse.ArgumentParser:
     who.add_argument("--name", metavar="NAME", help="what Jarvis calls you")
     who.add_argument("--clear-name", action="store_true", help="stop addressing you by name")
     setup.set_defaults(handler=_cmd_setup)
+    doctor = commands.add_parser("doctor", help="check barge-in and the kill switch")
+    doctor.set_defaults(handler=_cmd_doctor)
     models_parser = commands.add_parser("models", help="list or download model files")
     actions = models_parser.add_subparsers(dest="action", required=True)
     actions.add_parser("list", help="show known models and cached sizes").set_defaults(

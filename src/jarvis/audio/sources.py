@@ -1,5 +1,6 @@
 """Audio sources: the microphone and WAV files, both as 16 kHz mono int16 frames."""
 
+import os
 import queue
 import threading
 import time
@@ -86,8 +87,14 @@ class WavFileSource:
 class MicSource:
     """Microphone via sounddevice. Audio stays in RAM; nothing is written to disk (FR-AUD-05)."""
 
-    def __init__(self, device: str | None = None) -> None:
+    def __init__(self, device: str | None = None, *, capture_from: str | None = None) -> None:
+        """`capture_from` names a PipeWire/Pulse source (the echo-cancelled mic, R88).
+
+        It is reached through the `pulse` device with PULSE_SOURCE, which only steers capture,
+        so playback is untouched; an explicit `device` setting wins over it.
+        """
         self._device = device
+        self._capture_from = capture_from
         self._blocks: queue.Queue[Pcm] = queue.Queue(maxsize=256)
         self._closed = threading.Event()
 
@@ -105,6 +112,9 @@ class MicSource:
         except (ImportError, OSError) as error:
             raise AudioDeviceError(f"sounddevice/PortAudio is unavailable: {error}") from error
         device: int | str | None = self._device
+        if device is None and self._capture_from is not None:
+            os.environ["PULSE_SOURCE"] = self._capture_from
+            device = "pulse"
         if isinstance(device, str) and device.isdigit():
             device = int(device)
         try:
@@ -128,6 +138,11 @@ class MicSource:
         finally:
             stream.stop()
             stream.close()
+
+    @property
+    def echo_cancelled(self) -> bool:
+        """True when capture goes through the echo-cancelled source (R88 barge-in)."""
+        return self._device is None and self._capture_from is not None
 
     def close(self) -> None:
         self._closed.set()
