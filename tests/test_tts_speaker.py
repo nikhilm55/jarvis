@@ -349,3 +349,18 @@ def test_should_cancel_direct_engine_when_handle_cancelled() -> None:
         assert direct.cancelled.is_set() is True
     finally:
         speaker.close()
+
+
+def test_should_synthesise_a_short_first_chunk_when_the_reply_opens_with_a_long_sentence() -> None:
+    engine = FakeEngine()
+    sinks: list[FakeSink] = []
+    speaker = make_speaker(engine, sinks)
+    try:
+        handle = speaker.say("That arrives in a later version, so for now I can open apps.")
+        assert handle.wait(5.0) is True
+    finally:
+        speaker.close()
+    assert engine.texts == [
+        "That arrives in a later version,",
+        "so for now I can open apps.",
+    ]

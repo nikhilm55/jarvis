@@ -1,10 +1,10 @@
-"""Tests for jarvis.tts.text.split_sentences."""
+"""Tests for jarvis.tts.text: split_sentences and split_for_speech."""
 
 from __future__ import annotations
 
 import pytest
 
-from jarvis.tts.text import split_sentences
+from jarvis.tts.text import split_for_speech, split_sentences
 
 
 def test_should_return_single_sentence_when_text_has_terminal_punctuation() -> None:
@@ -174,3 +174,73 @@ def test_should_handle_unicode_accents_when_text_contains_accented_characters() 
     result = split_sentences(text)
     # Assert
     assert result == ["Café au lait.", "Crème brûlée.", "Voilà!"]
+
+
+def test_should_cut_a_long_first_sentence_after_its_first_clause() -> None:
+    text = "That arrives in a later version, so for now I can open apps and change the volume."
+    assert split_for_speech(text) == [
+        "That arrives in a later version,",
+        "so for now I can open apps and change the volume.",
+    ]
+
+
+@pytest.mark.parametrize("words", range(1, 25))
+def test_should_never_cut_a_sentence_that_has_no_clause_mark(words: int) -> None:
+    text = " ".join(["word"] * words) + "."
+    assert split_for_speech(text) == [text]
+
+
+def test_should_never_produce_a_four_word_fragment_without_a_clause_mark() -> None:
+    """L3: the old four-word cut left mid-sentence dead air; only a clause mark may cut."""
+    text = "I can't run commands or create files yet."
+    assert split_for_speech(text) == [text]
+    assert "I can't run commands" not in split_for_speech(text)
+
+
+@pytest.mark.parametrize("mark", [",", ";", ":", "\u2014", "\u2013"])
+def test_should_cut_after_each_clause_mark(mark: str) -> None:
+    text = f"That arrives in a later version{mark} so for now I can open apps."
+    assert split_for_speech(text) == [
+        f"That arrives in a later version{mark}",
+        "so for now I can open apps.",
+    ]
+
+
+def test_should_cut_before_a_spaced_dash() -> None:
+    text = "That arrives later - so for now I can open apps."
+    assert split_for_speech(text) == [
+        "That arrives later -",
+        "so for now I can open apps.",
+    ]
+
+
+def test_should_only_cut_at_a_clause_mark_within_the_first_six_words() -> None:
+    text = "One two three four five six seven, eight nine ten."
+    assert split_for_speech(text) == [text]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Opening Calculator.",
+        "Calculator is open now.",
+        "Volume is now forty percent.",
+        "No, thanks.",
+        "Yes, I can open that app.",  # a comma too early (one word) leaves too short a head
+    ],
+)
+def test_should_keep_a_short_first_sentence_whole(text: str) -> None:
+    assert split_for_speech(text) == split_sentences(text)
+
+
+def test_should_leave_later_sentences_alone() -> None:
+    text = "Done. I opened Calculator and set the volume to forty percent for you, as asked."
+    assert split_for_speech(text) == split_sentences(text)
+
+
+def test_should_not_cut_when_the_clause_leaves_too_little_behind() -> None:
+    assert split_for_speech("Opening it now, thanks.") == ["Opening it now, thanks."]
+
+
+def test_should_return_nothing_for_blank_text() -> None:
+    assert split_for_speech("  \n ") == []
