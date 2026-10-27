@@ -109,3 +109,29 @@ def test_should_return_zero_percent_when_wall_s_is_zero() -> None:
         wall_clock=wall_clock,
     )
     assert result.percent == 0.0
+
+
+def test_should_repeat_the_clip_to_the_requested_length_when_looping() -> None:
+    clip = np.array([1, 2, 3], dtype=np.int16)
+    looped = idle.loop_pcm(clip, 7 / 16000)
+    assert looped.tolist() == [1, 2, 3, 1, 2, 3, 1]
+    assert looped.dtype == np.int16
+
+
+def test_should_return_nothing_when_looping_an_empty_clip() -> None:
+    assert len(idle.loop_pcm(np.zeros(0, dtype=np.int16), 1.0)) == 0
+
+
+def test_should_report_the_speech_share_of_vad_windows() -> None:
+    run = idle.RoomIdle(idle.IdleResult("room", 10, 0, 1.0, 0.03, 3.0), 200, 5)
+    assert run.speech_percent == 2.5
+    assert idle.RoomIdle(run.result, 0, 0).speech_percent == 0.0
+    assert "2.5% marked speech" in idle.idle_line(run)
+
+
+def test_should_refuse_to_run_without_a_scratch_home(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("JARVIS_HOME", raising=False)
+    assert idle.main(["--seconds", "1"]) == 2
+    assert "JARVIS_HOME" in capsys.readouterr().err
