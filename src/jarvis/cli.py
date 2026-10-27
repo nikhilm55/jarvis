@@ -55,7 +55,7 @@ async def _run_loop(
 ) -> None:
     # `build_components` is looked up in this module's globals, so tests can replace it.
     parts = await build_components(settings, source, mode=mode, with_brain=with_brain)
-    async with running_hud(settings.hud, enabled=hud) as sink:
+    async with running_hud(settings.hud, enabled=hud, answers=parts.answers) as sink:
         await Orchestrator(settings, parts, mode=mode, hud=_tee(_print_hud, sink)).run()
 
 

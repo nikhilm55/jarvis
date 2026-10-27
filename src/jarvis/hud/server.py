@@ -12,9 +12,10 @@ from pathlib import Path
 import uvicorn
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, Response, StreamingResponse
+from starlette.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
+from jarvis.confirm import HudAnswer, HudAnswers
 from jarvis.hud.page import read_page
 from jarvis.log import get_logger
 from jarvis.mcp.guard import GuardMiddleware
@@ -25,6 +26,13 @@ logger = get_logger("hud")
 
 FONT_ROUTE = "/fonts/InterVariable.woff2"
 FONT_PATH = Path(__file__).with_name("fonts") / "InterVariable.woff2"
+_METHODS = ("button", "key", "typed")
+# WebKit hands a streamed chunk to the page only when a later one arrives (measured: a card
+# event sat unseen until the next keepalive), so a quiet stream gets an empty comment soon
+# after each event. One sent straight after the event is coalesced with it and does not help.
+_FLUSH = b":\n\n"
+FLUSH_AFTER_S = 0.1
+MAX_ANSWER = 200  # characters: a typed answer is a few words, never a document
 
 
 @dataclass(eq=False)
@@ -38,8 +46,16 @@ class Subscriber:
 class HudServer:
     """Loopback events API for the Jarvis HUD."""
 
-    def __init__(self, *, queue_size: int = 64, keepalive_s: float = 15.0) -> None:
-        """Create the server with the given queue size and keepalive interval."""
+    def __init__(
+        self,
+        *,
+        queue_size: int = 64,
+        keepalive_s: float = 15.0,
+        answers: HudAnswers | None = None,
+    ) -> None:
+        """Create the server; `answers` takes the card's answers (none: POST /answer refuses)."""
+        self._answers = answers
+        self._card: bytes | None = None  # the open confirmation card, replayed on (re)connect
         self._queue_size = queue_size
         self._keepalive_s = keepalive_s
         self._subscribers: set[Subscriber] = set()
@@ -82,6 +98,7 @@ class HudServer:
             routes=[
                 Route("/hud", self._page),
                 Route("/events", self._events),
+                Route("/answer", self._answer, methods=["POST"]),
                 Route(FONT_ROUTE, self._font),
             ]
         )
@@ -153,6 +170,9 @@ class HudServer:
                 logger.warning("HUD event is not JSON-serialisable; dropped")
             return
         message = b"data: " + payload.encode("utf-8") + b"\n\n"
+        if event.state == "confirm":
+            # A page that (re)connects while a question is open must still show its card.
+            self._card = None if event.extra.get("closed") else message
         for subscriber in list(self._subscribers):
             try:
                 subscriber.queue.put_nowait(message)
@@ -163,6 +183,8 @@ class HudServer:
     def subscribe(self) -> Subscriber:
         """Create a new subscriber and register it."""
         subscriber = Subscriber(asyncio.Queue(maxsize=self._queue_size))
+        if self._card is not None:
+            subscriber.queue.put_nowait(self._card)
         self._subscribers.add(subscriber)
         return subscriber
 
@@ -214,6 +236,25 @@ class HudServer:
             },
         )
 
+    async def _answer(self, request: Request) -> Response:
+        """Take the card's answer: {"answer": text, "method": "button" | "key" | "typed"}.
+
+        204 when the open question took it, 409 when none is open, 400 for anything malformed.
+        """
+        try:
+            body = json.loads(await request.body())
+        except (ValueError, UnicodeDecodeError):
+            return JSONResponse({"error": "not JSON"}, status_code=400)
+        answer = body.get("answer") if isinstance(body, dict) else None
+        method = body.get("method") if isinstance(body, dict) else None
+        if not isinstance(answer, str) or not answer.strip() or len(answer) > MAX_ANSWER:
+            return JSONResponse({"error": "answer must be 1-200 characters"}, status_code=400)
+        if method not in _METHODS:
+            return JSONResponse({"error": "method must be button, key or typed"}, status_code=400)
+        if self._answers is None or not self._answers.post(HudAnswer(answer.strip(), method)):
+            return JSONResponse({"error": "no question is waiting"}, status_code=409)
+        return Response(status_code=204)
+
     async def _events(self, request: Request) -> StreamingResponse:
         """Stream server-sent events to a subscriber."""
         subscriber = self.subscribe()
@@ -223,6 +264,8 @@ class HudServer:
             headers={
                 "Cache-Control": "no-store",
                 "X-Accel-Buffering": "no",
+                # without it WebKit may hold the first bytes back to sniff the type (R82 card)
+                "X-Content-Type-Options": "nosniff",
             },
         )
 
@@ -230,14 +273,18 @@ class HudServer:
         """Yield SSE frames for a subscriber until it ends."""
         try:
             yield b": connected\n\n"
+            wait = self._keepalive_s
             while True:
                 try:
-                    item = await asyncio.wait_for(subscriber.queue.get(), self._keepalive_s)
+                    item = await asyncio.wait_for(subscriber.queue.get(), wait)
                 except TimeoutError:
-                    yield b": ping\n\n"
+                    # after an event: the flush that releases it; otherwise the keepalive
+                    yield _FLUSH if wait == FLUSH_AFTER_S else b": ping\n\n"
+                    wait = self._keepalive_s
                     continue
                 if item is None:
                     return
                 yield item
+                wait = FLUSH_AFTER_S
         finally:
             self.unsubscribe(subscriber)
