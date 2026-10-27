@@ -9,6 +9,12 @@ from jarvis.policy.model import Tier
 from jarvis.policy.shell import classify_shell
 
 
+@pytest.fixture(autouse=True)
+def run_from_a_temp_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The shell runs in home (R84), never in jarvisd's cwd: a cwd under /tmp must not matter."""
+    monkeypatch.chdir(tmp_path)
+
+
 def tier(cmd: str) -> Tier:
     return classify_shell(cmd)[0]
 
