@@ -1,6 +1,7 @@
 """What to do with a speech segment: wake rules, gate, windows, Stop (R21, R48-R51)."""
 
 import asyncio
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -45,6 +46,7 @@ class ListenerServices:
     submit: Callable[[Command], None]
     stop: Callable[[], Awaitable[None]]
     clock: Callable[[], float] = time.monotonic
+    barge_in: bool = False  # the mic is echo-cancelled: speech over Jarvis may stop it (R88)
 
 
 @dataclass(frozen=True)
@@ -75,6 +77,8 @@ class Listener:
         s = self._s
         if segment.tainted:
             s.windows.release()  # the speech that held a window was not the user's
+            if s.barge_in:
+                await self._barge_in(segment)
             return
         arrived = s.clock()
         kind = s.windows.kind
@@ -147,6 +151,23 @@ class Listener:
             return
         await s.hud(HudEvent("transcript", heard.text))
         s.windows.offer_answer(heard.text)
+
+    async def _barge_in(self, segment: Segment) -> None:
+        """Speech over Jarvis's voice (R88): only a stop word acts, anything else is ignored.
+
+        The echo canceller leaves residue of Jarvis's own speech, so nothing heard here may start
+        a turn; and a failed transcription stays silent rather than talking over the reply.
+        """
+        try:
+            transcript = await self._transcribe(segment, None)
+        except Exception:
+            logger.warning("barge-in transcription failed", exc_info=True)
+            return
+        if is_stop_phrase(transcript.text):
+            await self._s.hud(HudEvent("transcript", transcript.text.strip()))
+            await self._s.stop()
+        else:
+            logger.debug("speech over Jarvis ignored")
 
     async def _route(self, command: str, heard: Heard, arrived: float) -> None:
         """Route a command to the fast path or the turn worker."""
@@ -226,6 +247,21 @@ class Listener:
                 drop_reason=reason,
             )
         )
+
+
+_STOP_WORDS = (["stop"], ["cancel"], ["quiet"])
+
+
+def is_stop_phrase(text: str) -> bool:
+    """ "stop", "cancel" or "quiet", optionally after "(hey) Jarvis" and before "please"."""
+    words = re.findall(r"[a-z]+", text.lower())
+    if words[:1] == ["hey"]:
+        words = words[1:]
+    if words[:1] == ["jarvis"]:
+        words = words[1:]
+    if words[-1:] == ["please"]:
+        words = words[:-1]
+    return words in _STOP_WORDS
 
 
 def _ignore_result(work: asyncio.Future[Transcript]) -> None:
