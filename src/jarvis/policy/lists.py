@@ -52,6 +52,20 @@ def _shell_paths(cmd: str) -> list[str]:
     return paths
 
 
+def shell_target(cmd: str) -> tuple[str, str | None]:
+    """The command word and the last path-like argument of a command line's last command."""
+    last = [part for part in re.split(r"[;&|\n]+", cmd) if part.strip()][-1:]
+    try:
+        words = shlex.split(last[0]) if last else []
+    except ValueError:
+        words = last[0].split() if last else []
+    words = [w for w in words if "=" not in w.split("/")[0]]
+    if not words:
+        return "run", None
+    rest = [w for w in words[1:] if not w.startswith("-")]
+    return os.path.basename(words[0]), (rest[-1] if rest else None)
+
+
 def path_args(args: Mapping[str, object]) -> list[str]:
     """The path-like arguments of a call: path-named keys plus the words of a shell command."""
     paths: list[str] = []

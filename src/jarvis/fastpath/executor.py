@@ -89,28 +89,32 @@ def _action(intent: Intent) -> str:
 def _impls(desktop: DesktopClient, clock: Callable[[], datetime]) -> dict[str, ToolImpl]:
     """The fast path's tool implementations; only `gated_dispatch` may call them."""
 
-    @tool_impl
+    @tool_impl("desktop.open_app")
     async def open_app(args: Mapping[str, object]) -> object:
         return await desktop.open_app(cast(str, args["query"]))
 
-    @tool_impl
+    @tool_impl("desktop.close_app")
     async def close_app(args: Mapping[str, object]) -> object:
         return await desktop.close_app(cast(str, args["query"]))
 
-    @tool_impl
+    @tool_impl("desktop.volume_set")
     async def volume_set(args: Mapping[str, object]) -> object:
         return await desktop.volume_set(cast(int, args["pct"]))
 
-    @tool_impl
+    @tool_impl("desktop.volume_step")
     async def volume_step(args: Mapping[str, object]) -> object:
         return await desktop.volume_step(cast(int, args["delta"]))
 
-    @tool_impl
+    @tool_impl("desktop.mute")
     async def mute(args: Mapping[str, object]) -> object:
         return await desktop.mute(cast(bool, args["on"]))
 
-    @tool_impl
-    async def now(args: Mapping[str, object]) -> object:
+    @tool_impl("clock.time")
+    async def time_now(args: Mapping[str, object]) -> object:
+        return clock()
+
+    @tool_impl("clock.date")
+    async def date_now(args: Mapping[str, object]) -> object:
         return clock()
 
     return {
@@ -119,8 +123,8 @@ def _impls(desktop: DesktopClient, clock: Callable[[], datetime]) -> dict[str, T
         "desktop.volume_set": volume_set,
         "desktop.volume_step": volume_step,
         "desktop.mute": mute,
-        "clock.time": now,
-        "clock.date": now,
+        "clock.time": time_now,
+        "clock.date": date_now,
     }
 
 
