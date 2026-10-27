@@ -7,7 +7,7 @@ import pytest
 from jarvis.contract import ErrorInfo, FinalResponse, validate_response
 from jarvis.desktop.client import DesktopError
 from jarvis.fastpath import responses
-from jarvis.policy import Decision, Mode
+from jarvis.policy import Mode
 
 
 def error_of(response: FinalResponse) -> ErrorInfo:
@@ -65,7 +65,7 @@ def test_should_return_empty_actions_when_tool_is_none() -> None:
 
 
 def test_should_explain_balanced_mode_when_safe_mode_needs_confirmation() -> None:
-    resp = responses.blocked(Decision(allowed=False, reason="needs confirmation (M2)"), "safe")
+    resp = responses.blocked("needs confirmation (M2)", "safe")
     assert resp.status == "failed"
     err = error_of(resp)
     assert err.code == "BLOCKED_BY_POLICY"
@@ -85,7 +85,7 @@ def test_should_explain_balanced_mode_when_safe_mode_needs_confirmation() -> Non
 def test_should_not_blame_safe_mode_when_reason_is_not_a_confirmation(
     mode: Mode, reason: str
 ) -> None:
-    resp = responses.blocked(Decision(allowed=False, reason=reason), mode)
+    resp = responses.blocked(reason, mode)
     assert resp.status == "failed"
     err = error_of(resp)
     assert err.code == "BLOCKED_BY_POLICY"
@@ -96,7 +96,7 @@ def test_should_not_blame_safe_mode_when_reason_is_not_a_confirmation(
 
 
 def test_should_use_default_why_when_decision_reason_is_blank() -> None:
-    resp = responses.blocked(Decision(allowed=False, reason="   "), "safe")
+    resp = responses.blocked("   ", "safe")
     assert resp.status == "failed"
     err = error_of(resp)
     assert err.code == "BLOCKED_BY_POLICY"
