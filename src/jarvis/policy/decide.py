@@ -3,6 +3,7 @@
 from jarvis.policy import lists, registry
 from jarvis.policy.decision import Action, Decision, Kind, ToolCall, TurnContext
 from jarvis.policy.model import Mode, Tier, max_tier
+from jarvis.policy.prompts import describe
 
 _TABLE: dict[Mode, dict[Tier, tuple[Action, Kind | None]]] = {
     "safe": {
@@ -69,7 +70,7 @@ def _decide(call: ToolCall, mode: Mode, ctx: TurnContext) -> Decision:
             "confirm",
             tier,
             scopes_tuple,
-            prompt=f"Run {call.name}?",
+            prompt=describe(call.name, call.args, tier),
             kind=kind,
             reason=f"{tier.value} in {mode} mode needs confirmation",
         )

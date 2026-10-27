@@ -30,6 +30,7 @@ from jarvis.policy.ports import (
     NEEDS_CONFIRMATION_REASON,
     NoConfirmer,
 )
+from jarvis.policy.prompts import describe
 
 __all__ = ["ToolResult", "gated_dispatch", "tool_impl"]
 
@@ -121,7 +122,7 @@ def _target_phrase(call: ToolCall) -> str:
 
 async def _confirm(call: ToolCall, ctx: TurnContext, decision: Decision, kind: Kind) -> _Verdict:
     phrase = _target_phrase(call) if kind == "guardrail" else None
-    prompt = decision.prompt or f"Run {call.name}?"
+    prompt = describe(call.name, call.args, decision.tier)  # a consent's prompt asked for scopes
     answer = await ctx.confirmer.ask(prompt, kind, phrase)
     if answer.yes is True:  # anything else, a truthy string included, is not a yes
         return _Verdict(True, decision, "confirmed", confirmed_by=answer.method)

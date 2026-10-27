@@ -15,6 +15,7 @@ HudState = Literal[
     "speaking",
     "error",
     "reply",
+    "confirm",  # a confirmation card; extra["closed"] takes it down (FR-SAFE-07)
 ]
 
 

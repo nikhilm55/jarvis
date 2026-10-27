@@ -11,6 +11,7 @@ from jarvis.activity import ActivityLog, Route, ToolCallRecord, TurnRecord
 from jarvis.brain import BrainUnavailable
 from jarvis.brain.failures import internal_response
 from jarvis.config import Settings
+from jarvis.confirm import Confirmer, HudAnswers
 from jarvis.consent.session import SessionGrants
 from jarvis.contract import FinalResponse
 from jarvis.desktop.client import DesktopClient
@@ -25,7 +26,8 @@ from jarvis.orchestrator.voice import Voice
 from jarvis.orchestrator.windows import Windows
 from jarvis.policy import Mode
 from jarvis.policy.decision import TurnContext
-from jarvis.policy.ports import ConsentBroker, NoConsent
+from jarvis.policy.ports import Confirmer as PolicyConfirmer
+from jarvis.policy.ports import ConsentBroker, NoConfirmer, NoConsent
 from jarvis.stt import Transcript
 from jarvis.tts import SpeechHandle
 
@@ -65,6 +67,7 @@ class TurnServices:
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
     consent: ConsentBroker = field(default_factory=NoConsent)
     grants: SessionGrants | None = None  # once grants end with the command (FR-CON-09)
+    answers: HudAnswers | None = None  # HUD answers to confirmations; None: nothing confirms
 
 
 class TurnRunner:
@@ -117,7 +120,13 @@ class TurnRunner:
         if self._s.grants is not None:
             self._s.grants.start_turn(turn_id, follows=self._root)
         self._root = self._root or turn_id
-        ctx = TurnContext(turn_id, self._s.settings.policy, self._s.mode, consent=self._s.consent)
+        ctx = TurnContext(
+            turn_id,
+            self._s.settings.policy,
+            self._s.mode,
+            confirmer=self._confirmer(),
+            consent=self._s.consent,
+        )
         record.policy_decisions = ctx.policy_decisions  # the gate appends as it decides
         self._spoken = False
         self._thinking = None
@@ -192,6 +201,22 @@ class TurnRunner:
             return await self._s.brain.turn(envelope, self._on_say, self._on_ask)
         finally:
             record.durations_ms["brain"] = int((time.monotonic() - t0) * 1000)
+
+    def _confirmer(self) -> PolicyConfirmer:
+        """The turn's confirmer; it speaks, so the thinking earcon stops first (FR-TALK-02)."""
+        if self._s.answers is None:
+            return NoConfirmer()
+        return Confirmer(
+            self._s.voice,
+            self._s.windows,
+            self._hud,
+            self._s.answers,
+            before_speaking=self._mark_spoken,
+        )
+
+    def _mark_spoken(self) -> None:
+        self._spoken = True
+        self._cut_thinking()
 
     async def _on_say(self, text: str) -> None:
         """Speak a brain utterance and mirror it to the HUD."""
