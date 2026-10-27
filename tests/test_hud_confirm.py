@@ -130,7 +130,7 @@ def _card_logic(expression: str) -> Any:
     end = page.index("/* END CARD LOGIC */")
     script = page[start:end] + f"\nprocess.stdout.write(JSON.stringify({expression}));\n"
     done = subprocess.run(
-        [node, "-e", script], capture_output=True, text=True, timeout=30, check=True
+        [node, "-e", script], capture_output=True, encoding="utf-8", timeout=30, check=True
     )
     return json.loads(done.stdout)
 
