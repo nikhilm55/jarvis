@@ -29,8 +29,9 @@ RULES: str = textwrap.dedent(
     volume_get(), volume_set(percent 0-100), volume_step(delta), mute(on).
     You have NO shell, no files, no browser and no other tools.
     If you cannot do something, say so through respond; never pretend.
-    Declining an off-task or impossible request is status success. A policy, consent or cancel block is status failed with its
-    error code (BLOCKED_BY_POLICY, CONSENT_DENIED, CANCELLED).
+    Declining an off-task or impossible request is status success. A
+    policy, consent or cancel block is status failed with its error code
+    (BLOCKED_BY_POLICY, CONSENT_DENIED, CANCELLED).
 
     The contract: EVERY turn MUST end with exactly one respond call and
     nothing after it; never finish with plain text.
