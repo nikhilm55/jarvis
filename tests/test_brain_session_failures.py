@@ -45,6 +45,10 @@ def test_should_time_out_and_restart_when_a_turn_hangs(
         await rig.brain.start()
         pid1 = rig.brain.pid
         assert pid1 is not None
+        # The fake counts the turns it has read. A cold start slower than the 1 s budget (its
+        # imports, on a loaded host) would kill it before it read t1, so the restarted one would
+        # replay the hang for t2. Wait for it to be up so the budget times only the hang.
+        await wait_until(lambda: len(fake.spawns()) == 1, timeout_s=60)
         first = await rig.turn()
         assert first.error is not None
         assert first.error.code == "TIMEOUT"
