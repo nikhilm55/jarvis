@@ -8,7 +8,9 @@ environment (never argv) and reaches the page only in the URL fragment.
 The window is click-through via an empty X input shape (X11 only), except
 while a confirmation card shows (R82): then it takes clicks over the card's
 rectangle only and takes keyboard focus, so the buttons, the keys and the
-typed box work. The page says when, through the "hud" script message.
+typed box work. While Jarvis drives the input (FR-SAFE-06) it takes clicks over
+the Stop bar but never the focus. The page says when, through the "hud" script
+message.
 """
 
 import argparse
@@ -199,18 +201,29 @@ def _position_window(win: Any, gdk: Any) -> None:
         print("jarvis hud: could not make the window click-through", file=sys.stderr)
 
 
+def wants_focus(raw: str) -> bool:
+    """True only when the page asks for keys too (a card); the Stop bar never takes focus."""
+    try:
+        message = json.loads(raw)
+    except ValueError:
+        return False
+    return (
+        isinstance(message, dict) and message.get("focus") is True and parse_mode(raw) is not None
+    )
+
+
 def _follow_page(win: Any, view: Any, gdk: Any) -> None:
     """Switch between click-through and taking input over the card, as the page says (R82)."""
     manager = view.get_user_content_manager()
     manager.register_script_message_handler("hud")
 
     def on_message(_manager: Any, result: Any) -> None:
-        rect = parse_mode(result.get_js_value().to_string())
-        xid = win.get_window().get_xid()
-        set_input_shape(xid, rect)
-        win.set_accept_focus(rect is not None)
-        view.set_can_focus(rect is not None)
-        if rect is not None:
+        raw = result.get_js_value().to_string()
+        rect, focus = parse_mode(raw), wants_focus(raw)
+        set_input_shape(win.get_window().get_xid(), rect)
+        win.set_accept_focus(focus)
+        view.set_can_focus(focus)
+        if focus:
             win.present_with_time(gdk.CURRENT_TIME)
             view.grab_focus()
 

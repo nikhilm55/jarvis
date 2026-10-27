@@ -1,6 +1,8 @@
 """What the gate is asked (`ToolCall`, `TurnContext`) and what it answers (`Decision`)."""
 
+import contextlib
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -14,6 +16,13 @@ Kind = Literal["voice", "click", "guardrail"]
 Origin = Literal["fastpath", "brain", "internal"]
 # What a tool does once the gate lets it run; only `gated_dispatch` ever calls one.
 ToolImpl = Callable[[Mapping[str, object]], Awaitable[object]]
+# Shows "Jarvis is controlling your PC" for as long as it is entered (FR-SAFE-06).
+Controlling = Callable[[], AbstractAsyncContextManager[None]]
+
+
+def not_shown() -> AbstractAsyncContextManager[None]:
+    """No indicator to show (no HUD, or a test)."""
+    return contextlib.nullcontext()
 
 
 @dataclass(frozen=True)
@@ -42,6 +51,7 @@ class TurnContext:
     impls: Mapping[str, ToolImpl] = field(default_factory=dict)
     policy_decisions: list[PolicyRecord] = field(default_factory=list)
     heard: list[str] = field(default_factory=list)  # the user's words this turn (R83)
+    controlling: Controlling = not_shown  # entered around tools that drive the input
 
 
 @dataclass(frozen=True)

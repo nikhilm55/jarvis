@@ -66,6 +66,9 @@ body{font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;font-featur
 .btn-primary{background:var(--primary);color:var(--on-primary);border:0}
 .btn-primary:active{background:var(--primary-pressed)}
 .btn-ghost{background:transparent;border:1px solid var(--hairline)}
+.btn-sm{height:28px;padding:0 12px;font-size:12px;border-radius:var(--r-sm)}
+.control{pointer-events:auto}
+.control[hidden]{display:none}
 .quote{padding:10px 14px;border-radius:var(--r-md);background:var(--card);border:1px solid var(--hairline);color:var(--ink);font-size:15px}
 .quote[hidden]{display:none}
 .input{height:36px;padding:0 12px;border-radius:var(--r-md);background:var(--elevated);border:1px solid var(--hairline);font-size:14px;outline:none;color:var(--ink);font-family:inherit}
@@ -95,6 +98,11 @@ kbd{display:inline-flex;align-items:center;justify-content:center;min-width:22px
     </div>
     <div class="foot"><span id="card-say"></span><span>No answer in 15 s = no</span></div>
   </div>
+  <div class="pill control" id="control" role="status" aria-live="assertive" hidden>
+    <div class="orb think" aria-hidden="true"></div>
+    <span class="text" id="control-text"></span>
+    <button class="btn btn-sm btn-ghost" id="control-stop" type="button">Stop</button>
+  </div>
   <div class="pill compact" id="pill" role="status" aria-live="polite">
     <div class="orb idle" id="pill-orb" aria-hidden="true"></div>
     <div class="wave" id="pill-wave" aria-hidden="true" style="display:none"><i></i><i></i><i></i><i></i><i></i><i></i></div>
@@ -115,7 +123,8 @@ const LOOKS = {
   speaking:   { orb: 'listen',  wave: true,  label: 'Speaking' },
   error:      { orb: 'error',   wave: false, label: 'Something went wrong', hide: true },
   reply:      { orb: 'confirm', wave: false, label: 'Reply…', pulse: true, hide: true },
-  confirm:    { orb: 'confirm', wave: false, label: 'Confirm?', pulse: true }
+  confirm:    { orb: 'confirm', wave: false, label: 'Confirm?', pulse: true },
+  controlling:{ orb: 'think',   wave: false, label: 'Working…' }
 };
 /* END LOOKS */
 /* CARD LOGIC: no DOM here, so tests run it under node */
@@ -148,17 +157,34 @@ const label = document.getElementById('pill-label');
 const card = document.getElementById('card');
 const typed = document.getElementById('card-typed');
 let cardKind = null;
-function windowMode(interactive) {
-  // R82: the window takes clicks and keys only over the card, and only while it shows.
+const control = document.getElementById('control');
+function windowMode() {
+  // R82: the window takes clicks only over the card or the Stop bar while one shows, and keys
+  // only for the card. The Stop bar never takes focus: Jarvis may be typing into another app.
   const handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.hud;
   if (!handler) return;
-  const r = card.getBoundingClientRect();
+  const el = !card.hidden ? card : (!control.hidden ? control : null);
+  const r = el ? el.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };
   handler.postMessage(JSON.stringify({
-    interactive: interactive,
+    interactive: el !== null,
+    focus: el === card,
     rect: [r.left, r.top, r.width, r.height],
     scale: window.devicePixelRatio || 1
   }));
 }
+function showControl(ev) {
+  if ((ev.extra || {}).closed) {
+    if (control.hidden) return;
+    control.hidden = true;
+  } else {
+    document.getElementById('control-text').textContent = ev.text || '';
+    control.hidden = false;
+  }
+  windowMode();
+}
+document.getElementById('control-stop').addEventListener('click', function () {
+  fetch('/stop', { method: 'POST', headers: { Authorization: 'Bearer ' + token } }).catch(function () {});
+});
 function openCard(ev) {
   const model = cardModel(ev.extra || {});
   cardKind = (ev.extra || {}).kind || 'voice';
@@ -178,13 +204,13 @@ function openCard(ev) {
   typed.value = '';
   typed.placeholder = model.placeholder;
   card.hidden = false;
-  windowMode(true);  // getBoundingClientRect lays out now; an idle view may never run rAF
+  windowMode();  // getBoundingClientRect lays out now; an idle view may never run rAF
 }
 function closeCard() {
   if (card.hidden) return;
   card.hidden = true;
   cardKind = null;
-  windowMode(false);
+  windowMode();
 }
 async function answer(text, method) {
   try {
@@ -219,6 +245,7 @@ function render(ev) {
     if ((ev.extra || {}).closed) { closeCard(); return; }
     openCard(ev);
   }
+  if (ev.state === 'controlling') { showControl(ev); return; }
   const look = LOOKS[ev.state];
   const extra = ev.extra || {};
   orb.className = 'orb ' + look.orb;

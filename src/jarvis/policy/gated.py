@@ -16,7 +16,7 @@ from jarvis.contract.models import ErrorCode
 from jarvis.log import audit, get_logger
 from jarvis.policy import registry
 from jarvis.policy.decide import decide
-from jarvis.policy.decision import Decision, Kind, ToolCall, ToolImpl, TurnContext
+from jarvis.policy.decision import Decision, Kind, ToolCall, ToolImpl, TurnContext, not_shown
 from jarvis.policy.lists import (
     UNRESOLVABLE_REASON,
     command_of,
@@ -279,8 +279,11 @@ async def gated_dispatch(call: ToolCall, ctx: TurnContext) -> ToolResult:
             remedy=["Report this to the Jarvis developers."],
         )
         return ToolResult(error=error, decision=verdict.decision)
+    spec = registry.get(call.name)
+    indicator = ctx.controlling() if spec is not None and spec.drives_input else not_shown()
     try:
-        output = await impl(call.args)
+        async with indicator:
+            output = await impl(call.args)
     except Exception as exc:
         await _outcome(call, ctx, f"error: {type(exc).__name__}")
         raise
