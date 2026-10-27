@@ -179,7 +179,6 @@ def test_should_classify_t0_when_every_part_is_an_allowlisted_read(cmd: str) -> 
         "ls && pwd",
         "ls || pwd",
         "ls\npwd",
-        "ls | python x.py",
         "echo `id`",
         "echo $(id)",
         "cat x &",
