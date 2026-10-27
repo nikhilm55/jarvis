@@ -104,12 +104,29 @@ _WRAPPERS = _words("env command nohup time exec nice xargs timeout setsid unbuff
 _WRAPPERS |= _words("busybox flock watch chroot taskset chrt nsenter unshare setpriv runuser")
 _WRAPPERS |= _words("if then do else elif while until ! { }")
 _FORK_BOMB = ":(){:|:&};:"
-_INTERPRETER = re.compile(r"python[0-9.]*|perl|ruby|nodejs|node|php|lua")
-# The flag that hands an interpreter its program text, per language (R94).
+_INTERPRETER = re.compile(r"python[0-9.]*|perl|ruby|nodejs|node|php|lua|osascript|pwsh|powershell")
+# The flag that hands an interpreter its program text, per language. Any such program is T3
+# (R98): it cannot be classified reliably, so the brain must use the dedicated tools.
 _CODE_FLAG = re.compile(
     r"python[0-9.]*:-[A-Za-z]*c|perl:-[A-Za-z]*[eE]|ruby:-[A-Za-z]*e|node(?:js)?:(?:-[ep]|--eval|--print)"
-    r"|php:-r|lua:-e"
+    r"|php:-r|lua:-e|osascript:-e|(?:pwsh|powershell):(?i:-c|-command|-encodedcommand|-ec)"
 )
+# Files whose change gives a program lasting control of the account or the machine (R97).
+_SENSITIVE_PATHS = [
+    "~/.ssh",
+    "~/.gnupg",
+    "~/.bashrc",
+    "~/.bash_profile",
+    "~/.profile",
+    "~/.zshrc",
+    "~/.zprofile",
+    "~/.config/fish",
+    "~/.config/autostart",
+    "~/.config/systemd",
+    "~/.local/share/systemd",
+    "/etc",
+    "/var/spool/cron",
+]
 _DESTRUCTIVE_CODE = re.compile(
     r"rmtree|os\.(?:remove|rmdir|unlink|removedirs)|unlink|removedirs|rmSync|rimraf"
     r"|\brm\s+-[A-Za-z]*[rRfF]|\brm\s+--(?:recursive|force)|\bshred\b"
@@ -288,21 +305,55 @@ def _firewall(args: list[str]) -> bool:
 
 
 def _interpreter_code(name: str, args: list[str]) -> bool:
-    """An interpreter's inline program (`python -c`, `perl -e`...) that deletes files.
+    """An interpreter given a program on its command line (`python -c`, `perl -e`...): R98."""
+    return any(arg.startswith("-") and _CODE_FLAG.fullmatch(f"{name}:{arg}") for arg in args)
 
-    A code flag with no program after it cannot be read, so it counts as destructive.
-    """
-    for i, arg in enumerate(args):
-        if arg.startswith("-") and _CODE_FLAG.fullmatch(f"{name}:{arg}"):
-            return i + 1 >= len(args) or bool(_DESTRUCTIVE_CODE.search(args[i + 1]))
-    return False
+
+def _is_sensitive(path: str) -> bool:
+    resolved = real_path(path)
+    return any(is_under(resolved, real_path(root)) for root in _SENSITIVE_PATHS)
+
+
+def _writes_sensitive(name: str, args: list[str]) -> bool:
+    """`tee`, `cp`, `mv`, `install`, `ln` or `truncate` whose target is a sensitive path (R97)."""
+    flags, words = _flags(args)
+    attached = [a.split("=", 1)[1] for a in args if a.startswith("--target-directory=")]
+    if attached:
+        targets = attached
+    elif name in {"tee", "truncate"}:
+        targets = words
+    else:  # the last word names the target, or the one after `-t`
+        targets = words[:1] if "-t" in flags else words[-1:]
+    return any(_is_sensitive(t) for t in targets)
+
+
+def _dd(args: list[str]) -> bool:
+    """`dd` writing anywhere but /tmp or $TMPDIR (R97)."""
+    return any(a.startswith("of=") and not _in_tmp(a[3:]) for a in args)
+
+
+def _rsync(args: list[str]) -> bool:
+    return any(a.startswith("--delete") for a in args)
+
+
+def _redirects_into_sensitive(seg: list[str]) -> bool:
+    return any(
+        _is_redirect(tok) and ">" in tok and _is_sensitive(seg[i + 1])
+        for i, tok in enumerate(seg[:-1])
+    )
 
 
 _T3_CHECKS: dict[str, Callable[[list[str]], bool]] = {
     "rm": _rm,
     "chmod": _chperm,
     "chown": _chperm,
-    "mv": _mv,
+    "mv": lambda args: _mv(args) or _writes_sensitive("mv", args),
+    "tee": lambda args: _writes_sensitive("tee", args),
+    "truncate": lambda args: _writes_sensitive("truncate", args),
+    "cp": lambda args: _writes_sensitive("cp", args),
+    "install": lambda args: _writes_sensitive("install", args),
+    "ln": lambda args: _writes_sensitive("ln", args),
+    "rsync": _rsync,
     "find": _find,
     "git": _git,
     "crontab": lambda args: "-r" in _flags(args)[0],
@@ -315,7 +366,7 @@ _T3_CHECKS: dict[str, Callable[[list[str]], bool]] = {
     "iptables": _firewall,
     "ip6tables": _firewall,
     "nft": _firewall,
-    "dd": lambda args: any(a.startswith("of=/dev/") for a in args),
+    "dd": _dd,
     "reg": _reg,
     "del": _del,
     "erase": _del,
@@ -403,6 +454,8 @@ def _is_t3(segments: list[list[str]], seps: list[str], docs: dict[int, str]) -> 
             if ("/" not in token or may_start) and _t3_at(seg, pos, name, may_start):
                 return True
             may_start = may_start and _wrapperish(token, name)
+        if _redirects_into_sensitive(seg):
+            return True
         head = _head(seg)
         if head is not None:
             if _computed(head):
