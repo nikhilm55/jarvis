@@ -1,7 +1,7 @@
 """Test doubles for the fast-path executor: a fake desktop client, gates and a fixed clock."""
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime
 
 from jarvis.contract import ErrorInfo, FinalResponse
@@ -14,6 +14,8 @@ from jarvis.policy.decision import TurnContext
 _RESULTS: dict[str, dict[str, object]] = {
     "open_app": {"app": "Calculator", "window_ids_new": [1]},
     "close_app": {"app": "Calculator", "closed": 1},
+    "focus_window": {"ref": "x11:0x20", "app": "Calculator", "state": ["focused"]},
+    "window_op": {"op": "maximize", "windows": [{"ref": "x11:0x20", "app": "Calculator"}]},
     "volume_set": {"percent": 40, "muted": False},
     "volume_step": {"percent": 50, "muted": False},
     "mute": {"percent": 40, "muted": True},
@@ -33,12 +35,21 @@ class FakeDesktop(DesktopClient):
         self.events = events
         self.error = error
         self.results = results or _RESULTS
+        self.calls: list[tuple[str, tuple[object, ...]]] = []  # method and its arguments
 
     async def open_app(self, query: str) -> dict[str, object]:
         return self._record("open_app")
 
     async def close_app(self, query: str) -> dict[str, object]:
         return self._record("close_app")
+
+    async def focus_window(self, ref: str) -> dict[str, object]:
+        return self._record("focus_window", ref)
+
+    async def window_op(
+        self, ref: str, op: str, monitor: int | None = None, with_refs: Sequence[str] = ()
+    ) -> dict[str, object]:
+        return self._record("window_op", ref, op)
 
     async def volume_set(self, pct: int) -> dict[str, object]:
         return self._record("volume_set")
@@ -49,7 +60,8 @@ class FakeDesktop(DesktopClient):
     async def mute(self, on: bool) -> dict[str, object]:
         return self._record("mute")
 
-    def _record(self, method: str) -> dict[str, object]:
+    def _record(self, method: str, *args: object) -> dict[str, object]:
+        self.calls.append((method, args))
         self.events.append(f"desktop.{method}")
         if self.error is not None:
             raise self.error

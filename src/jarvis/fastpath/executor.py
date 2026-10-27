@@ -11,6 +11,7 @@ from jarvis.desktop.client import DesktopClient, DesktopError
 from jarvis.fastpath import responses
 from jarvis.fastpath.intents import (
     CloseApp,
+    FocusWindow,
     Intent,
     Mute,
     OpenApp,
@@ -19,6 +20,7 @@ from jarvis.fastpath.intents import (
     TellTime,
     VolumeSet,
     VolumeStep,
+    WindowAction,
 )
 from jarvis.policy.decision import ToolCall, ToolImpl, TurnContext
 from jarvis.policy.gated import gated_dispatch, tool_impl
@@ -53,6 +55,12 @@ def _tool_call(intent: Intent) -> tuple[str, dict[str, object]]:
         case CloseApp():
             tool = "desktop.close_app"
             args = {"query": intent.name}
+        case FocusWindow():
+            tool = "desktop.focus_window"
+            args = {"ref": intent.name}
+        case WindowAction():
+            tool = "desktop.window_op"
+            args = {"ref": intent.name, "op": intent.op}
         case TellTime():
             tool = "clock.time"
             args = {}
@@ -73,12 +81,23 @@ def _tool_call(intent: Intent) -> tuple[str, dict[str, object]]:
     return tool, args
 
 
+def _window_action(intent: FocusWindow | WindowAction) -> str:
+    if isinstance(intent, FocusWindow):
+        return f"switch to {intent.name}"
+    verbs = {"minimize": "minimise", "maximize": "maximise"}
+    if intent.op == "close":
+        return f"close the {intent.name} window"
+    return f"{verbs[intent.op]} {intent.name}"
+
+
 def _action(intent: Intent) -> str:
     """Return a short verb phrase describing the intent."""
     if isinstance(intent, OpenApp):
         return f"open {intent.name}"
     if isinstance(intent, CloseApp):
         return f"close {intent.name}"
+    if isinstance(intent, (FocusWindow, WindowAction)):
+        return _window_action(intent)
     if isinstance(intent, (VolumeSet, VolumeStep)):
         return "change the volume"
     if isinstance(intent, Mute):
@@ -96,6 +115,14 @@ def _impls(desktop: DesktopClient, clock: Callable[[], datetime]) -> dict[str, T
     @tool_impl("desktop.close_app")
     async def close_app(args: Mapping[str, object]) -> object:
         return await desktop.close_app(cast(str, args["query"]))
+
+    @tool_impl("desktop.focus_window")
+    async def focus_window(args: Mapping[str, object]) -> object:
+        return await desktop.focus_window(cast(str, args["ref"]))
+
+    @tool_impl("desktop.window_op")
+    async def window_op(args: Mapping[str, object]) -> object:
+        return await desktop.window_op(cast(str, args["ref"]), cast(str, args["op"]))
 
     @tool_impl("desktop.volume_set")
     async def volume_set(args: Mapping[str, object]) -> object:
@@ -120,6 +147,8 @@ def _impls(desktop: DesktopClient, clock: Callable[[], datetime]) -> dict[str, T
     return {
         "desktop.open_app": open_app,
         "desktop.close_app": close_app,
+        "desktop.focus_window": focus_window,
+        "desktop.window_op": window_op,
         "desktop.volume_set": volume_set,
         "desktop.volume_step": volume_step,
         "desktop.mute": mute,
@@ -135,6 +164,24 @@ def _respond_app(intent: OpenApp | CloseApp, result: Mapping[str, object]) -> Fi
     if result.get("closed") == 0:
         return responses.ok(f"{app} isn't open.", None)
     return responses.ok(f"Closed {app}.", "desktop.close_app", f"Closed {app}", undoable=False)
+
+
+def _respond_window(
+    intent: FocusWindow | WindowAction, result: Mapping[str, object]
+) -> FinalResponse:
+    windows = result.get("windows")
+    first = windows[0] if isinstance(windows, list) and windows else result
+    app = responses.text_of(first if isinstance(first, Mapping) else {}, "app", intent.name)
+    if isinstance(intent, FocusWindow):
+        return responses.ok(
+            f"{app} is in front.", "desktop.focus_window", f"Focused {app}", undoable=False
+        )
+    spoken, summary = {
+        "minimize": (f"Minimised {app}.", f"Minimised {app}"),
+        "maximize": (f"Maximised {app}.", f"Maximised {app}"),
+        "close": (f"Closed the {app} window.", f"Closed a {app} window"),
+    }[intent.op]
+    return responses.ok(spoken, "desktop.window_op", summary, undoable=intent.op == "close")
 
 
 def _respond_clock(intent: TellTime | TellDate, now: object) -> FinalResponse:
@@ -166,6 +213,8 @@ def _respond(intent: Intent, output: object) -> FinalResponse:
     result = cast("Mapping[str, object]", output) if isinstance(output, Mapping) else {}
     if isinstance(intent, (OpenApp, CloseApp)):
         return _respond_app(intent, result)
+    if isinstance(intent, (FocusWindow, WindowAction)):
+        return _respond_window(intent, result)
     if isinstance(intent, (TellTime, TellDate)):
         return _respond_clock(intent, output)
     if isinstance(intent, (VolumeSet, VolumeStep, Mute)):
@@ -195,7 +244,7 @@ async def execute(
             return responses.blocked(result.error.why, mode, result.error.code)
         return _respond(intent, result.output)
     except DesktopError as exc:
-        if isinstance(intent, (OpenApp, CloseApp)) and exc.code in (
+        if isinstance(intent, (OpenApp, CloseApp, FocusWindow, WindowAction)) and exc.code in (
             "NOT_FOUND",
             "AMBIGUOUS",
         ):
