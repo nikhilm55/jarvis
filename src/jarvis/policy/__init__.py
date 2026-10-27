@@ -1,6 +1,8 @@
 """Deterministic safety policy for tool calls (FRS 5.10)."""
 
-from jarvis.policy.legacy import Decision, gate
+from jarvis.policy.decide import decide
+from jarvis.policy.decision import Decision, ToolCall, TurnContext
+from jarvis.policy.gated import ToolResult, gated_dispatch, tool_impl
 from jarvis.policy.model import Mode, Tier, ToolSpec
 from jarvis.policy.ports import NEEDS_CONFIRMATION_REASON
 from jarvis.policy.registry import get, register
@@ -10,10 +12,15 @@ __all__ = [
     "Decision",
     "Mode",
     "Tier",
+    "ToolCall",
+    "ToolResult",
     "ToolSpec",
-    "gate",
+    "TurnContext",
+    "decide",
+    "gated_dispatch",
     "get",
     "register",
+    "tool_impl",
 ]
 
 _DESKTOP_TOOLS = (
