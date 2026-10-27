@@ -13,8 +13,15 @@ posix_only = pytest.mark.skipif(
     sys.platform == "win32", reason="POSIX file modes and symlinks are not available on Windows"
 )
 
+
+def is_root() -> bool:
+    """True when running as root; Windows has no `geteuid`, so never there."""
+    geteuid = getattr(os, "geteuid", None)
+    return geteuid is not None and geteuid() == 0
+
+
 needs_dir_permissions = pytest.mark.skipif(
-    sys.platform == "win32" or os.geteuid() == 0,
+    sys.platform == "win32" or is_root(),
     reason="root ignores directory permissions, and Windows has no POSIX directory modes",
 )
 

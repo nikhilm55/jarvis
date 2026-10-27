@@ -217,7 +217,7 @@ def test_should_name_both_conditions_in_the_directory_permission_skip_reason(
     spec.loader.exec_module(probe)
     reason = probe.needs_dir_permissions.mark.kwargs["reason"]
     assert "root" in reason and "Windows" in reason  # the condition tests both (F8)
-    assert probe.needs_dir_permissions.mark.args == (platform == "win32" or os.geteuid() == 0,)
+    assert probe.needs_dir_permissions.mark.args == (platform == "win32" or probe.is_root(),)
 
 
 # --- F2: the lock wait is bounded ----------------------------------------------------------------
