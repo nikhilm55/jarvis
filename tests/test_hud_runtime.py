@@ -26,6 +26,9 @@ class RecordingSpawner:
 class FailingServer:
     """A server whose start raises OSError."""
 
+    def __init__(self, **_: object) -> None:
+        return None
+
     async def start(self) -> None:
         raise OSError("port")
 

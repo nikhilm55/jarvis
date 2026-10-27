@@ -22,9 +22,10 @@ class FakeHud:
         self.calls: list[tuple[HudSettings, bool]] = []
 
     def __call__(
-        self, hud: HudSettings, *, enabled: bool = True
+        self, hud: HudSettings, *, enabled: bool = True, answers: object = None
     ) -> AbstractAsyncContextManager[HudSink | None]:
         self.calls.append((hud, enabled))
+        self.answers = answers
         return self._cm(enabled)
 
     @contextlib.asynccontextmanager
@@ -59,6 +60,7 @@ def test_should_disable_hud_and_skip_events_when_no_hud_flag_is_set(
     )
     assert code == 0
     assert fake.calls == [(Settings().hud, False)]
+    assert fake.answers is rig.parts.answers  # the card's answers reach the turn's confirmer
     assert fake.events == []
     out = capsys.readouterr().out
     assert "[speaking] Volume 40 percent." in out
