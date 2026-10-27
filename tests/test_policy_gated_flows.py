@@ -112,8 +112,12 @@ def phrase_asked(name: str, args: dict[str, object], **spec: Any) -> str | None:
     ("cmd", "words"),
     [
         ("rm -rf ~/Downloads/old", ("confirm", "rm", "~/Downloads/old")),
-        ("sudo rm -rf /var/lib/x/", ("confirm", "sudo", "/var/lib/x")),
-        ("cd ~/p && rm -rf build dist", ("confirm", "rm", "dist")),
+        ("sudo rm -rf /var/lib/x/", ("confirm", "rm", "/var/lib/x")),
+        ("rm -rf ~/a ~/b", ("confirm", "rm", "2", "paths:", "~/a,", "~/b")),
+        ("cd ~/p && rm -rf build dist", ("confirm", "rm", "2", "paths:", "build,", "dist")),
+        ("rm -rf a b c", ("confirm", "rm", "3", "paths:", "a,", "b,", "c")),
+        ("rm -rf ~/x/a ~/x/b ~/x/c ~/x/d", ("confirm", "rm", "4", "paths", "in", "~/x")),
+        ("rm -rf ~/x/a ~/y/b ~/z/c ~/z/d ~/e", ("confirm", "rm", "5", "paths", "in", "~")),
         ("FOO=1 mkfs.ext4 /dev/sdb1", ("confirm", "mkfs.ext4", "/dev/sdb1")),
         ("shutdown -h now", ("confirm", "shutdown", "now")),
     ],
@@ -130,7 +134,9 @@ def test_should_take_the_target_from_the_tools_declared_key_else_its_last_path()
         "t.delete_file", {"note": "x", "item": "~/Pictures/trip.jpg"}, target_key="item"
     )
     assert declared == "confirm delete file ~/Pictures/trip.jpg"
-    assert phrase_asked("t.erase", {"src": "a", "dst": "~/b/"}) == "confirm erase ~/b"
+    assert phrase_asked("t.erase", {"src": "a", "dst": "~/b/"}) == "confirm erase 2 paths: a, ~/b"
+    listed = phrase_asked("t.purge", {"items": ["x", "y"]}, target_key="items")
+    assert listed == "confirm purge 2 paths: x, y"
     assert phrase_asked("t.reset", {}) == "confirm reset"
 
 
