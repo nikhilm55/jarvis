@@ -201,7 +201,7 @@ class JarvisMcpServer:
         async def run(args: Mapping[str, object]) -> object:
             return await self._dispatch(name, dict(args))
 
-        return dataclasses.replace(base, impls={name: run})
+        return dataclasses.replace(base, impls={name: run})  # gate-ok: builds the impl table
 
     async def _call_tool(
         self,

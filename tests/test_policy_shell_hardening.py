@@ -5,8 +5,10 @@ import re
 
 import pytest
 
-from jarvis.policy.model import Tier
+from jarvis.policy import registry
+from jarvis.policy.model import Tier, ToolSpec
 from jarvis.policy.shell import classify_shell
+from tests.gated_rig import clean_state, dispatch  # noqa: F401
 
 
 def tier(cmd: str) -> Tier:
@@ -139,3 +141,24 @@ def test_should_never_classify_t0_when_a_command_holds_a_shell_metacharacter() -
         if tier(cmd) == Tier.T0:
             assert _PLAIN.fullmatch(cmd), cmd
     assert sum(tier(cmd) != Tier.T0 for cmd in corpus) > 400
+
+
+@pytest.mark.parametrize(
+    ("cmd", "runs_in"),
+    [
+        ("cat <(rm -rf ~)", ()),  # T3: a click is needed in every mode, and nothing can click
+        ("echo >(rm -rf ~)", ()),
+        ("ls >| ~/notes.txt", ("yolo",)),  # T2: YOLO runs it, Safe and Balanced confirm first
+    ],
+)
+def test_should_not_run_an_evasion_through_the_gate_without_a_confirmation(
+    cmd: str, runs_in: tuple[str, ...]
+) -> None:
+    """The reviewer's repro: a shell tool judged by `classify_shell`, no confirmer plugged in."""
+    registry.register(
+        ToolSpec("t.shell", Tier.T0, classify=lambda args: classify_shell(str(args["cmd"])))
+    )
+    for mode in ("safe", "balanced", "yolo"):
+        result, _, impl = dispatch("t.shell", {"cmd": cmd}, mode=mode)
+        assert bool(impl.calls) == (mode in runs_in), mode
+        assert (result.error is None) == (mode in runs_in), mode
