@@ -174,7 +174,7 @@ def test_should_post_answers_with_the_token_and_take_the_card_down_on_close() ->
     page = read_page()
     assert "fetch('/answer'" in page and "'Bearer ' + token" in page
     assert "if ((ev.extra || {}).closed) { closeCard(); return; }" in page
-    assert "windowMode(false)" in page[page.index("function closeCard()") :]
+    assert "windowMode()" in page[page.index("function closeCard()") :]
 
 
 # --- the window takes input over the card only (R82) ---------------------------------------------
@@ -231,7 +231,16 @@ def test_should_set_one_input_rectangle_or_none() -> None:
     not os.environ.get("DISPLAY") or os.environ.get("JARVIS_LIVE_DESKTOP") != "1",
     reason="live desktop test: set DISPLAY and JARVIS_LIVE_DESKTOP=1",
 )
-def test_should_take_input_over_the_card_only_while_it_shows() -> None:
+@pytest.mark.parametrize(
+    ("state", "text", "extra", "height"),
+    [
+        ("confirm", "Close window Firefox?", {"kind": "voice", "phrase": None}, (100, 400)),
+        ("controlling", "Jarvis is controlling your PC", {"stop": True}, (30, 100)),
+    ],
+)
+def test_should_take_input_over_the_card_only_while_it_shows(
+    state: str, text: str, extra: dict[str, object], height: tuple[int, int]
+) -> None:
     window = _load_window()
 
     async def scenario() -> tuple[list[Any], list[Any], list[Any]]:
@@ -248,10 +257,9 @@ def test_should_take_input_over_the_card_only_while_it_shows() -> None:
         try:
             await until(lambda: server.client_count == 1)
             before = await asyncio.to_thread(_input_rectangles)
-            extra: dict[str, object] = {"kind": "voice", "phrase": None}
-            await server.publish(HudEvent("confirm", "Close window Firefox?", extra))
+            await server.publish(HudEvent(state, text, extra))  # type: ignore[arg-type]
             during = await _settled(lambda r: len(r) == 1)
-            await server.publish(HudEvent("confirm", "", {"closed": True}))
+            await server.publish(HudEvent(state, "", {"closed": True}))  # type: ignore[arg-type]
             after = await _settled(lambda r: r == [])
             process.terminate()
             assert await asyncio.wait_for(process.wait(), 5) == 0
@@ -265,7 +273,7 @@ def test_should_take_input_over_the_card_only_while_it_shows() -> None:
     before, during, after = asyncio.run(scenario())
     assert before == [] and after == []
     card = during[0]
-    assert 200 < card.width <= window.WINDOW_WIDTH * 2 and 100 < card.height < 400
+    assert 200 < card.width <= window.WINDOW_WIDTH * 2 and height[0] < card.height < height[1]
 
 
 async def _settled(done: Callable[[list[Any]], bool]) -> list[Any]:

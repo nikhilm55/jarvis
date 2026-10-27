@@ -71,6 +71,7 @@ class ToolSpec:
     target_key: str | None = None  # the argument that names what the call acts on (YOLO phrase)
     # Arguments that must come from the user's words (R83); none given: just `target_key`.
     provenance_keys: tuple[str, ...] = ()
+    drives_input: bool = False  # moves the mouse or types: the HUD says so (FR-SAFE-06)
 
     def __post_init__(self) -> None:
         """Validate and normalise fields on construction."""

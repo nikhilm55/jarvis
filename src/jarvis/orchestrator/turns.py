@@ -17,6 +17,7 @@ from jarvis.contract import FinalResponse
 from jarvis.desktop.client import DesktopClient
 from jarvis.fastpath import FastPathDeclined, Intent, execute
 from jarvis.log import get_logger
+from jarvis.orchestrator.controlling import ControlIndicator
 from jarvis.orchestrator.envelope import build_envelope, new_turn_id
 from jarvis.orchestrator.hud import HudEvent, HudSink
 from jarvis.orchestrator.ports import BrainPort
@@ -81,6 +82,7 @@ class TurnRunner:
         self._thinking: SpeechHandle | None = None
         self._root: str | None = None  # the first turn of the command being run
         self._heard: list[str] = []  # the running turn's words from the user (R83)
+        self._indicator = ControlIndicator(services.hud)
 
     async def run(self, command: Command) -> None:
         """Run a command, then every follow-up answer its final response asks for (R60)."""
@@ -127,6 +129,7 @@ class TurnRunner:
             self._s.mode,
             confirmer=self._confirmer(),
             consent=self._s.consent,
+            controlling=self._indicator.driving,
         )
         record.policy_decisions = ctx.policy_decisions  # the gate appends as it decides
         ctx.heard.extend(dict.fromkeys((command.raw, command.text)))  # R83: the user's own words
