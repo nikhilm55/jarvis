@@ -369,10 +369,33 @@ def test_should_grant_a_valid_always_in_a_read_only_directory(
 # --- F9: consent_folders keys ------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("key", ["", ".", "/", " "])
+_POSIX_ROOTS = pytest.mark.skipif(
+    sys.platform == "win32", reason="'//', '/.' and '/..' are POSIX spellings of the root"
+)
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "",
+        ".",
+        "/",
+        " ",
+        "./",
+        "~",
+        "~/",
+        "$HOME",
+        "~/Documents/..",
+        pytest.param("//", marks=_POSIX_ROOTS),
+        pytest.param("/.", marks=_POSIX_ROOTS),
+        pytest.param("/..", marks=_POSIX_ROOTS),
+    ],
+)
 def test_should_reject_a_consent_folder_key_that_matches_every_path(
-    tmp_path: Path, key: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, key: str
 ) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     config = tmp_path / "config.toml"
     config.write_text(f'[policy.consent_folders]\n"{key}" = "files.docs"\n', encoding="utf-8")
     with pytest.raises(ConfigError) as caught:

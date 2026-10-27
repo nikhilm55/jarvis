@@ -1,5 +1,6 @@
 """User settings from `config_dir()/config.toml`. Unknown keys are errors, never ignored."""
 
+import os
 import re
 import tomllib
 from pathlib import Path
@@ -113,12 +114,17 @@ class PolicySettings(_Section):
             Scope,
             ScopeError,
         )
+        from jarvis.policy.lists import real_path  # noqa: PLC0415 - imports this module too
 
+        home = real_path("~")
         for folder, source in folders.items():
-            if folder.strip() in ("", ".", "/"):
+            # judged after the same resolution the matcher uses, so "//", "/..", "./" and "~"
+            # are caught as the root or the home folder they really are
+            resolved = real_path(folder.strip()) if folder.strip() else ""
+            if not resolved or os.path.dirname(resolved) == resolved or resolved == home:
                 raise ValueError(
-                    f"consent_folders[{folder!r}] is not a folder: it would match every path; "
-                    "use a real folder such as '~/Documents'"
+                    f"consent_folders[{folder!r}] is not a folder: it would match every path "
+                    "or your whole home folder; use a real folder such as '~/Documents'"
                 )
             try:
                 Scope(source, "read")  # the same source rules as every scope
