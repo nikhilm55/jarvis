@@ -1,11 +1,15 @@
 """Tests for how the TurnRunner drives the brain: envelope, on_say, on_ask, tool calls."""
 
 import asyncio
+import dataclasses
+from collections.abc import Mapping
 from pathlib import Path
 
 from jarvis.brain.dispatch import OnAsk, OnSay
 from jarvis.contract import FinalResponse
 from jarvis.orchestrator.timing import Timing
+from jarvis.policy.decision import ToolCall
+from jarvis.policy.gated import gated_dispatch
 from tests.orchestrator_rig import FakeBrain, command, make_rig, until
 
 
@@ -174,3 +178,31 @@ def test_should_pass_a_spoken_timeout_to_the_brain_as_the_users_answer(tmp_path:
         assert rig.speaker.said[-1] == "Got timeout."
 
     asyncio.run(scenario())
+
+
+def test_should_judge_the_brains_tool_calls_in_the_turn_and_list_them_in_the_record(
+    tmp_path: Path,
+) -> None:
+    async def script(on_say: OnSay, on_ask: OnAsk) -> FinalResponse:
+        ctx = rig.trace.turn_context()  # what the MCP server asks for on each tool call
+        impls = {"desktop.mute": _Mute()}
+        turn = dataclasses.replace(ctx, impls=impls)
+        await gated_dispatch(ToolCall("desktop.mute", {"on": True}, "brain"), turn)
+        await gated_dispatch(ToolCall("nope", {}, "brain"), turn)
+        return FinalResponse(status="success", spoken="Done.")
+
+    rig = make_rig(tmp_path, brain=FakeBrain(script=script))
+
+    asyncio.run(rig.runner.run(command("mute it", None)))
+
+    [record] = rig.records()
+    assert [(d["tool"], d["allowed"]) for d in record["policy_decisions"]] == [
+        ("desktop.mute", True),
+        ("nope", False),
+    ]
+    assert rig.trace.turn_context().turn_id == "no-turn"  # the turn's context is gone after it
+
+
+class _Mute:
+    async def __call__(self, args: Mapping[str, object]) -> object:
+        return {}

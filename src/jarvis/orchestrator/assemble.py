@@ -70,7 +70,7 @@ async def build_components(
                 raise RuntimeError("the brain is not running")
             return await brain.dispatch(name, args)
 
-        mcp = JarvisMcpServer(trace.wrap(dispatch), lambda: mode)
+        mcp = JarvisMcpServer(trace.wrap(dispatch), lambda: mode, turn=trace.turn_context)
         brain = ClaudeCodeBrain(settings, mcp, desktop)
         services.append(mcp)
     return Components(
