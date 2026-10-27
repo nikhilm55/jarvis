@@ -422,7 +422,7 @@ On failure:
 | ID | Requirement | Pri |
 |---|---|---|
 | FR-TALK-01 | **Never silent.** Every turn ends with speech or an earcon plus HUD text. A failed turn always says what failed, why, and what to do (FR-IO-03). | M |
-| FR-TALK-02 | **Acknowledge fast:** if the brain hasn't spoken within 1.2 s of end of speech, Jarvis plays a short "thinking" earcon or a quick ack ("On it."). | M |
+| FR-TALK-02 | **Acknowledge fast:** at end of speech + 1.2 s, if no reply speech has started, Jarvis plays a short "thinking" earcon or a quick ack ("On it."). A reply (or progress line, or question) that is ready first is spoken at once with no earcon, and an earcon still playing is cut the moment one is ready, so speech never queues behind it. A turn whose reply is ready before the earcon is due has no ack sound. Because the turn starts only after speech-to-text, the earcon is often already due when even a fast-path turn begins; it is then cut as soon as the reply is ready. | M |
 | FR-TALK-03 | **Ask, don't guess, when it matters:** ambiguous people, files or destructive targets → `jarvis.ask`. Ambiguity about harmless things (which Chrome window) → pick the most likely and say so. | M |
 | FR-TALK-04 | **Reading long content** (messages, emails, articles): chunked. Read the first 3 items, then "That's 3 of 9 — say 'next' or 'stop'." The follow-up window covers "next", "reply", "skip", "stop". | M |
 | FR-TALK-05 | Style: brief, polite, slightly dry — "Jarvis", not "chatbot". Addresses the user by their chosen name occasionally, not every turn. The name comes only from Settings (`[user] name`, set in setup); Jarvis never derives it from the OS account; with none set it uses no name. Personality can be tuned: concise / friendly / butler. | S |

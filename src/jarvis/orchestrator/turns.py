@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -24,6 +25,7 @@ from jarvis.orchestrator.windows import Windows
 from jarvis.policy import Mode
 from jarvis.policy.decision import TurnContext
 from jarvis.stt import Transcript
+from jarvis.tts import SpeechHandle
 
 logger = get_logger("turns")
 
@@ -57,6 +59,8 @@ class TurnServices:
     timing: Timing
     windows: Windows
     trace: ToolTrace
+    clock: Callable[[], float] = time.monotonic  # injected by tests (FR-TALK-02 timing)
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
 
 
 class TurnRunner:
@@ -67,6 +71,7 @@ class TurnRunner:
         self._s = services
         self._hud = services.hud
         self._spoken = False
+        self._thinking: SpeechHandle | None = None
 
     async def run(self, command: Command) -> None:
         """Run a command, then every follow-up answer its final response asks for (R60)."""
@@ -102,6 +107,7 @@ class TurnRunner:
         ctx = TurnContext(turn_id, self._s.settings.policy, self._s.mode)
         record.policy_decisions = ctx.policy_decisions  # the gate appends as it decides
         self._spoken = False
+        self._thinking = None
         started = time.monotonic()
         timer = asyncio.create_task(self._thinking_earcon(command.speech_ended_at))
         try:
@@ -177,12 +183,14 @@ class TurnRunner:
     async def _on_say(self, text: str) -> None:
         """Speak a brain utterance and mirror it to the HUD."""
         self._spoken = True
+        self._cut_thinking()
         await self._hud(HudEvent("speaking", text))
         self._s.voice.say(text)
 
     async def _on_ask(self, question: str, options: list[str]) -> str:
         """Ask the user a question and wait for their reply."""
         self._spoken = True
+        self._cut_thinking()
         await self._hud(HudEvent("reply", question, {"options": options}))
         handle = self._s.voice.say(question)
         await self._s.voice.wait(handle)
@@ -194,6 +202,7 @@ class TurnRunner:
     async def _finish(self, final: FinalResponse) -> None:
         """Speak the final answer, update the HUD and wait for the audio."""
         self._spoken = True
+        self._cut_thinking()
         if final.status == "failed" and final.error is not None:
             await self._hud(HudEvent("error", final.error.what))
         display = final.display.model_dump(mode="json") if final.display is not None else None
@@ -210,9 +219,15 @@ class TurnRunner:
         await self._hud(HudEvent("idle"))
 
     async def _thinking_earcon(self, speech_ended_at: float) -> None:
-        """Play the thinking earcon if the user has not been spoken to yet."""
-        delay = max(0.0, speech_ended_at + self._s.timing.thinking_after_s - time.monotonic())
-        await asyncio.sleep(delay)
+        """FR-TALK-02: at end of speech + 1.2 s, play the earcon if nothing was spoken yet."""
+        due = speech_ended_at + self._s.timing.thinking_after_s - self._s.clock()
+        await self._s.sleep(max(0.0, due))
         if not self._spoken:
             self._spoken = True
-            self._s.voice.earcon("thinking")
+            self._thinking = self._s.voice.earcon("thinking")
+
+    def _cut_thinking(self) -> None:
+        """Stop the thinking earcon: a reply must never queue behind it (latency, task 13)."""
+        handle, self._thinking = self._thinking, None
+        if handle is not None:
+            handle.cancel()
