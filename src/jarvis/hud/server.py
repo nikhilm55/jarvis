@@ -5,7 +5,7 @@ import json
 import secrets
 import socket
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -52,9 +52,14 @@ class HudServer:
         queue_size: int = 64,
         keepalive_s: float = 15.0,
         answers: HudAnswers | None = None,
+        on_stop: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
-        """Create the server; `answers` takes the card's answers (none: POST /answer refuses)."""
+        """Create the server; `answers` takes the card's answers, `on_stop` its Stop button.
+
+        Without them POST /answer and POST /stop refuse (409).
+        """
         self._answers = answers
+        self._on_stop = on_stop
         self._card: bytes | None = None  # the open confirmation card, replayed on (re)connect
         self._queue_size = queue_size
         self._keepalive_s = keepalive_s
@@ -99,6 +104,7 @@ class HudServer:
                 Route("/hud", self._page),
                 Route("/events", self._events),
                 Route("/answer", self._answer, methods=["POST"]),
+                Route("/stop", self._stop, methods=["POST"]),
                 Route(FONT_ROUTE, self._font),
             ]
         )
@@ -253,6 +259,13 @@ class HudServer:
             return JSONResponse({"error": "method must be button, key or typed"}, status_code=400)
         if self._answers is None or not self._answers.post(HudAnswer(answer.strip(), method)):
             return JSONResponse({"error": "no question is waiting"}, status_code=409)
+        return Response(status_code=204)
+
+    async def _stop(self, request: Request) -> Response:
+        """The Stop button (FR-SAFE-04/06): the kill switch, from the HUD. 204, or 409 unwired."""
+        if self._on_stop is None:
+            return JSONResponse({"error": "nothing to stop"}, status_code=409)
+        await self._on_stop()
         return Response(status_code=204)
 
     async def _events(self, request: Request) -> StreamingResponse:

@@ -21,9 +21,10 @@ from jarvis.audio import (
     WavFileSource,
 )
 from jarvis.config import ConfigError, Settings, load_settings
+from jarvis.hotkey import Hotkey
 from jarvis.hud.runtime import running_hud
 from jarvis.orchestrator.assemble import build_components
-from jarvis.orchestrator.core import Orchestrator
+from jarvis.orchestrator.core import HotkeyFactory, Orchestrator
 from jarvis.orchestrator.hud import HudEvent, HudSink
 from jarvis.paths import config_dir
 from jarvis.policy import Mode
@@ -50,13 +51,31 @@ def _tee(first: HudSink, second: HudSink | None) -> HudSink:
     return both
 
 
-async def _run_loop(
-    settings: Settings, source: AudioSource, mode: Mode, with_brain: bool, hud: bool
+async def _run_loop(  # noqa: PLR0913 - the run command's switches
+    settings: Settings,
+    source: AudioSource,
+    mode: Mode,
+    with_brain: bool,
+    hud: bool,
+    *,
+    hotkey: HotkeyFactory | None = None,
 ) -> None:
     # `build_components` is looked up in this module's globals, so tests can replace it.
     parts = await build_components(settings, source, mode=mode, with_brain=with_brain)
-    async with running_hud(settings.hud, enabled=hud, answers=parts.answers) as sink:
-        await Orchestrator(settings, parts, mode=mode, hud=_tee(_print_hud, sink)).run()
+    stops: list[Orchestrator] = []  # the HUD starts first, so its Stop button binds late
+
+    async def hud_stop() -> None:
+        for orchestrator in stops:
+            await orchestrator.killswitch.trigger("hud")
+
+    async with running_hud(
+        settings.hud, enabled=hud, answers=parts.answers, on_stop=hud_stop
+    ) as sink:
+        orchestrator = Orchestrator(
+            settings, parts, mode=mode, hud=_tee(_print_hud, sink), hotkey=hotkey
+        )
+        stops.append(orchestrator)
+        await orchestrator.run()
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -70,7 +89,13 @@ def _cmd_run(args: argparse.Namespace) -> int:
             if args.source
             else MicSource(settings.audio.device)
         )
-        asyncio.run(_run_loop(settings, source, args.mode, not args.no_brain, not args.no_hud))
+        # The Ctrl+Alt+Esc grab is for a live session; a file run (tests, demos) leaves it free.
+        hotkey = None if args.source else Hotkey
+        asyncio.run(
+            _run_loop(
+                settings, source, args.mode, not args.no_brain, not args.no_hud, hotkey=hotkey
+            )
+        )
     except (
         ConfigError,
         AudioDeviceError,

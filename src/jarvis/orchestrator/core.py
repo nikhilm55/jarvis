@@ -2,9 +2,12 @@
 
 import asyncio
 import signal
+from collections.abc import Callable, Coroutine
+from typing import Protocol
 
 from jarvis.activity import ActivityLog
 from jarvis.config import Settings
+from jarvis.killswitch import KillSwitch
 from jarvis.log import get_logger
 from jarvis.orchestrator.capture import Capture, CaptureItem, SourceEnded, SourceFailed
 from jarvis.orchestrator.components import Components, close_components, start_components
@@ -23,6 +26,17 @@ logger = get_logger(__name__)
 _DRAIN_S = 5.0  # longest shutdown waits for an in-flight transcription
 
 
+class HotkeyPort(Protocol):
+    """The kill-switch hotkey (`jarvis.hotkey.Hotkey`); its callback runs on its own thread."""
+
+    def start(self) -> bool: ...
+
+    def stop(self) -> None: ...
+
+
+HotkeyFactory = Callable[[Callable[[], None]], HotkeyPort]
+
+
 class Orchestrator:
     """Runs the capture loop, the listener and the serial turn worker."""
 
@@ -35,6 +49,7 @@ class Orchestrator:
         hud: HudSink = null_sink,
         activity: ActivityLog | None = None,
         timing: Timing | None = None,
+        hotkey: HotkeyFactory | None = None,
     ) -> None:
         """Wire the components and prepare the shared state."""
         self._settings = settings
@@ -50,6 +65,9 @@ class Orchestrator:
         self._touched = asyncio.Event()
         self._current: asyncio.Task[None] | None = None
         self._capture: Capture | None = None
+        self._hotkey_factory = hotkey
+        self._background: set[asyncio.Task[None]] = set()
+        self.killswitch = KillSwitch(self._stop_turn)  # FR-SAFE-04: voice, hotkey and HUD Stop
         turn_services = TurnServices(
             settings=settings,
             mode=mode,
@@ -75,7 +93,7 @@ class Orchestrator:
             activity=self._activity,
             timing=self._timing,
             submit=self._submit,
-            stop=self._stop_turn,
+            stop=lambda: self.killswitch.trigger("voice"),
         )
         self._listener = Listener(listener_services)
 
@@ -84,6 +102,7 @@ class Orchestrator:
         loop = asyncio.get_running_loop()
         installed = self._install_signals(loop)
         tasks: list[asyncio.Task[None]] = []
+        hotkey = self._start_hotkey(loop)
         try:
             await self._start()
             capture = Capture(
@@ -102,7 +121,26 @@ class Orchestrator:
         finally:
             for sig in installed:
                 loop.remove_signal_handler(sig)
+            if hotkey is not None:
+                await asyncio.to_thread(hotkey.stop)
             await self._shutdown(tasks)
+
+    def _start_hotkey(self, loop: asyncio.AbstractEventLoop) -> HotkeyPort | None:
+        """Grab Ctrl+Alt+Esc (R89/R103); a press triggers the kill switch on the loop."""
+        if self._hotkey_factory is None:
+            return None
+
+        def pressed() -> None:  # on the hotkey's thread
+            loop.call_soon_threadsafe(self._spawn, self.killswitch.trigger("hotkey"))
+
+        hotkey = self._hotkey_factory(pressed)
+        return hotkey if hotkey.start() else None
+
+    def _spawn(self, work: Coroutine[object, object, None]) -> None:
+        """Run `work` in the background, keeping a reference until it ends."""
+        task = asyncio.get_running_loop().create_task(work)
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
 
     def request_stop(self) -> None:
         """Ask the loop to stop after the current work settles."""
@@ -207,8 +245,20 @@ class Orchestrator:
         task = self._current
         if task is not None and not task.done():
             task.cancel()
+            self._spawn(self._rewarm(task))
         self._parts.voice.earcon("done")
         await self._hud(HudEvent("idle"))
+
+    async def _rewarm(self, cancelled: asyncio.Task[None]) -> None:
+        """A cancelled brain turn kills claude; start the next one now, not on the next turn."""
+        brain = self._parts.brain
+        if brain is None:
+            return
+        await asyncio.gather(cancelled, return_exceptions=True)
+        try:
+            await brain.start()
+        except Exception:
+            logger.warning("re-warming the brain after a stop failed", exc_info=True)
 
     async def _watch_idle(self) -> None:
         """Reset the brain after an inactivity period with no new turn."""

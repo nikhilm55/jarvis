@@ -1,7 +1,7 @@
 """HUD runtime: single place that starts/stops the HUD for `jarvis run`."""
 
 import contextlib
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 
 from jarvis.config import HudSettings
 from jarvis.confirm import HudAnswers
@@ -22,13 +22,14 @@ async def running_hud(
     enabled: bool = True,
     spawner: SpawnerFactory = window_spawner,
     answers: HudAnswers | None = None,
+    on_stop: Callable[[], Awaitable[None]] | None = None,
 ) -> AsyncIterator[HudSink | None]:
     """Yield a HUD sink (or None) for the lifetime of the HUD; its card answers go to `answers`."""
     if not enabled or not hud.enabled:
         yield None
         return
 
-    server = HudServer(answers=answers)
+    server = HudServer(answers=answers, on_stop=on_stop)
     try:
         await server.start()
     except (OSError, RuntimeError, TimeoutError) as error:
