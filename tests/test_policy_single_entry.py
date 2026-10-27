@@ -410,6 +410,11 @@ def test_should_derive_the_tool_operations_from_the_impls_not_from_a_list() -> N
     assert product_operations() == {
         "open_app",
         "close_app",
+        "is_running",
+        "list_apps",
+        "list_windows",
+        "focus_window",
+        "window_op",
         "volume_get",
         "volume_set",
         "volume_step",
