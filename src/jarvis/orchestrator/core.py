@@ -61,6 +61,8 @@ class Orchestrator:
             timing=self._timing,
             windows=self._windows,
             trace=parts.trace,
+            consent=parts.consent,
+            grants=parts.grants,
         )
         self._runner = TurnRunner(turn_services)
         listener_services = ListenerServices(
@@ -227,6 +229,8 @@ class Orchestrator:
                 continue  # a turn is running or queued: its context must not be wiped (R52)
             try:
                 await brain.reset()
+                if self._parts.grants is not None:
+                    self._parts.grants.end("brain_reset")  # session grants die with the session
             except Exception:
                 logger.exception("brain reset failed")
 

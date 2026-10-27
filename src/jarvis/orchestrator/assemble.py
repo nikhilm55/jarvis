@@ -11,6 +11,7 @@ from jarvis import models
 from jarvis.audio import AudioSource, Endpointer, SileroVad
 from jarvis.brain import ClaudeCodeBrain
 from jarvis.config import Settings
+from jarvis.consent.broker import build_consent
 from jarvis.desktop.client import DesktopClient
 from jarvis.mcp import JarvisMcpServer
 from jarvis.orchestrator.components import Components
@@ -59,7 +60,8 @@ async def build_components(
     voice = Voice(speaker, timing)
     segmenter = await asyncio.to_thread(_segmenter, settings, voice)
     desktop = DesktopClient()
-    trace = ToolTrace(settings.policy, mode)
+    consent = build_consent(settings.consent)  # no asker until task 4: nothing ungranted runs
+    trace = ToolTrace(settings.policy, mode, consent.broker)
     brain: ClaudeCodeBrain | None = None
     services: list[ServicePort] = []
     if with_brain:
@@ -83,6 +85,8 @@ async def build_components(
         brain=brain,
         services=services,
         trace=trace,
+        consent=consent.broker,
+        grants=consent.session,
     )
 
 

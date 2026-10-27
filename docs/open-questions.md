@@ -57,3 +57,10 @@ Unresolved decisions, tracked instead of guessed. Agents: check this file at ses
 **Context:** FRS FR-BRN-02 says the user's `~/.claude.json` is never modified. Jarvis's own code never writes there, and the brain runs isolated (`--setting-sources ""`, own settings, allowlisted env). But Claude Code itself updates `~/.claude.json`, `~/.claude/sessions/` and `~/.claude/backups/` on every run (seen with strace in M1 task 10).
 **Question:** Accept that (and soften FR-BRN-02's wording to "Jarvis never writes the user's Claude Code config"), or give Jarvis its own `CLAUDE_CONFIG_DIR`, which needs a separate Claude Code login just for Jarvis?
 **Impact:** Setup flow (an extra sign-in in the wizard) vs a small footprint in the user's Claude Code state.
+
+## OQ-009 — What is the access of `meetings:record` (FRS 5.11.1)?
+**Status:** open
+**Owner:** @nikhilm55
+**Context:** FRS 5.11.1 lists `meetings:read` and `meetings:record`, but a scope's access is `read` or `write` (M2 task 3). `Scope.parse("meetings:record")` is a `ScopeError`, and a tool that declared it would be refused, which fails closed.
+**Question:** Is recording `meetings:write`, or does the FRS table change to `meetings:read` / `meetings:write`?
+**Impact:** The scope declared by the beyondMeetings tools (M3); the Permissions page's wording.

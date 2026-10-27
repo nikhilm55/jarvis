@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 from jarvis.audio import AudioSource
 from jarvis.brain import BrainUnavailable
+from jarvis.consent.session import SessionGrants
 from jarvis.desktop.client import DesktopClient
 from jarvis.log import get_logger
 from jarvis.orchestrator.ports import (
@@ -18,6 +19,7 @@ from jarvis.orchestrator.ports import (
 )
 from jarvis.orchestrator.trace import ToolTrace
 from jarvis.orchestrator.voice import Voice
+from jarvis.policy.ports import ConsentBroker, NoConsent
 
 __all__ = ["Components", "close_components", "start_components"]
 
@@ -37,6 +39,8 @@ class Components:
     brain: BrainPort | None = None
     services: Sequence[ServicePort] = ()  # e.g. the MCP server: up before the brain, down last
     trace: ToolTrace = field(default_factory=ToolTrace)
+    consent: ConsentBroker = field(default_factory=NoConsent)  # what a turn asks for scopes
+    grants: SessionGrants | None = None  # the once and session grants `consent` consults
 
 
 async def start_components(parts: Components) -> BrainUnavailable | None:
