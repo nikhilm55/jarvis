@@ -80,6 +80,7 @@ class TurnRunner:
         self._spoken = False
         self._thinking: SpeechHandle | None = None
         self._root: str | None = None  # the first turn of the command being run
+        self._heard: list[str] = []  # the running turn's words from the user (R83)
 
     async def run(self, command: Command) -> None:
         """Run a command, then every follow-up answer its final response asks for (R60)."""
@@ -128,6 +129,8 @@ class TurnRunner:
             consent=self._s.consent,
         )
         record.policy_decisions = ctx.policy_decisions  # the gate appends as it decides
+        ctx.heard.extend(dict.fromkeys((command.raw, command.text)))  # R83: the user's own words
+        self._heard = ctx.heard
         self._spoken = False
         self._thinking = None
         started = time.monotonic()
@@ -235,7 +238,10 @@ class TurnRunner:
         await self._hud(HudEvent("listening", "Reply...", {"window": "reply"}))
         seconds = self._s.timing.reply_window_s
         reply = await self._s.windows.ask(seconds)
-        return f"(no reply from the user within {seconds:g} seconds)" if reply is None else reply
+        if reply is None:
+            return f"(no reply from the user within {seconds:g} seconds)"
+        self._heard.append(reply)  # the user's own words count for R83
+        return reply
 
     async def _finish(self, final: FinalResponse) -> None:
         """Speak the final answer, update the HUD and wait for the audio."""
