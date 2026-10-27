@@ -66,11 +66,16 @@ body{font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;font-featur
 .btn-primary{background:var(--primary);color:var(--on-primary);border:0}
 .btn-primary:active{background:var(--primary-pressed)}
 .btn-ghost{background:transparent;border:1px solid var(--hairline)}
+.btn-secondary{background:var(--elevated);border:1px solid var(--hairline)}
+.btn-secondary:hover{border-color:var(--hairline-strong)}
 .btn-sm{height:28px;padding:0 12px;font-size:12px;border-radius:var(--r-sm)}
 .control{pointer-events:auto}
 .control[hidden]{display:none}
 .quote{padding:10px 14px;border-radius:var(--r-md);background:var(--card);border:1px solid var(--hairline);color:var(--ink);font-size:15px}
 .quote[hidden]{display:none}
+.card-body{margin:0;font-size:15px;color:var(--body)}
+.card-cloud{font-size:13px;color:var(--mute)}
+.card-body[hidden],.card-cloud[hidden]{display:none}
 .input{height:36px;padding:0 12px;border-radius:var(--r-md);background:var(--elevated);border:1px solid var(--hairline);font-size:14px;outline:none;color:var(--ink);font-family:inherit}
 .input:focus{border-color:var(--hairline-strong)}
 .input::placeholder{color:var(--mute)}
@@ -86,11 +91,10 @@ kbd{display:inline-flex;align-items:center;justify-content:center;min-width:22px
       <div class="title"><div class="orb confirm" aria-hidden="true"></div><span id="card-title"></span></div>
       <span class="badge b-yellow" id="card-badge"></span>
     </div>
+    <p class="card-body" id="card-body" hidden></p>
+    <div class="card-cloud" id="card-cloud" hidden></div>
     <div class="quote" id="card-phrase" hidden></div>
-    <div class="actions">
-      <button class="btn btn-primary" id="card-yes" type="button">Confirm</button>
-      <button class="btn btn-ghost" id="card-no" type="button">Cancel</button>
-    </div>
+    <div class="actions" id="card-actions"></div>
     <div style="display:flex;align-items:center;gap:10px">
       <label class="sr" for="card-typed">Type your answer</label>
       <input class="input" id="card-typed" style="flex:1;min-width:0" autocomplete="off" maxlength="200">
@@ -124,27 +128,53 @@ const LOOKS = {
   error:      { orb: 'error',   wave: false, label: 'Something went wrong', hide: true },
   reply:      { orb: 'confirm', wave: false, label: 'Reply…', pulse: true, hide: true },
   confirm:    { orb: 'confirm', wave: false, label: 'Confirm?', pulse: true },
+  consent:    { orb: 'confirm', wave: false, label: 'Reply · Y S A N', pulse: true },
   controlling:{ orb: 'think',   wave: false, label: 'Working…' }
 };
 /* END LOOKS */
 /* CARD LOGIC: no DOM here, so tests run it under node */
+function str(v) { return typeof v === 'string' ? v : ''; }
 function cardModel(extra) {
   const kind = extra.kind;
-  const phrase = typeof extra.phrase === 'string' && extra.phrase ? extra.phrase : 'confirm';
+  const phrase = str(extra.phrase) || 'confirm';
+  const confirmButtons = function (yes) {
+    const cancel = { label: 'Cancel', answer: 'no', primary: false };
+    return yes ? [{ label: 'Confirm', answer: 'yes', primary: true }, cancel] : [cancel];
+  };
+  if (kind === 'consent') {  // FR-CON-06 and the §5.11.4 card; Safe mode offers no "always"
+    const always = extra.offer_always !== false;
+    const buttons = [{ label: 'Allow once', answer: 'once', primary: true },
+                     { label: 'This session', answer: 'session', primary: false }];
+    if (always) buttons.push({ label: 'Always allow', answer: 'always', primary: false });
+    buttons.push({ label: 'Deny', answer: 'no', primary: false });
+    return { badge: str(extra.badge), yes: true, phrase: '', body: str(extra.body),
+             cloud: str(extra.cloud) ? 'Data goes to: ' + str(extra.cloud) : '',
+             buttons: buttons, keys: always ? ['Y', 'S', 'A', 'N'] : ['Y', 'S', 'N'],
+             placeholder: always ? 'Or type: yes, session, always, no' : 'Or type: yes, session, no',
+             say: always ? 'Or just say “yes”, “always” or “no”' : 'Or just say “yes” or “no”' };
+  }
   if (kind === 'click') {
-    return { badge: 'Needs a click', yes: true, phrase: '', keys: ['N'],
+    return { badge: 'Needs a click', yes: true, phrase: '', body: '', cloud: '',
+             buttons: confirmButtons(true), keys: ['N'],
              placeholder: 'Or type: no', say: 'Click Confirm to go ahead · or say “no”' };
   }
   if (kind === 'guardrail') {
-    return { badge: 'Say it to confirm', yes: false, phrase: phrase, keys: ['N'],
+    return { badge: 'Say it to confirm', yes: false, phrase: phrase, body: '', cloud: '',
+             buttons: confirmButtons(false), keys: ['N'],
              placeholder: 'Or type: ' + phrase, say: 'Say “' + phrase + '” or “no”' };
   }
-  return { badge: 'Confirm', yes: true, phrase: '', keys: ['Y', 'N'],
+  return { badge: 'Confirm', yes: true, phrase: '', body: '', cloud: '',
+           buttons: confirmButtons(true), keys: ['Y', 'N'],
            placeholder: 'Or type: yes or no', say: 'Or just say “yes” or “no”' };
 }
-function keyAnswer(key, kind) {
-  if (key === 'n' || key === 'N' || key === 'Escape') return 'no';
-  if ((key === 'y' || key === 'Y') && kind !== 'click' && kind !== 'guardrail') return 'yes';
+function keyAnswer(key, kind, offerAlways) {
+  const k = key.length === 1 ? key.toLowerCase() : key;
+  if (k === 'n' || k === 'Escape') return kind === 'consent' ? 'n' : 'no';
+  if (kind === 'consent') {  // FR-CON-06: Y once, S session, A always, N deny
+    if (k === 'y' || k === 's') return k;
+    return k === 'a' && offerAlways !== false ? 'a' : null;
+  }
+  if (k === 'y' && kind !== 'click' && kind !== 'guardrail') return 'yes';
   return null;
 }
 /* END CARD LOGIC */
@@ -157,6 +187,7 @@ const label = document.getElementById('pill-label');
 const card = document.getElementById('card');
 const typed = document.getElementById('card-typed');
 let cardKind = null;
+let cardOfferAlways = true;
 const control = document.getElementById('control');
 function windowMode() {
   // R82: the window takes clicks only over the card or the Stop bar while one shows, and keys
@@ -186,14 +217,29 @@ document.getElementById('control-stop').addEventListener('click', function () {
   fetch('/stop', { method: 'POST', headers: { Authorization: 'Bearer ' + token } }).catch(function () {});
 });
 function openCard(ev) {
-  const model = cardModel(ev.extra || {});
-  cardKind = (ev.extra || {}).kind || 'voice';
+  const extra = ev.extra || {};
+  const model = cardModel(extra);
+  cardKind = extra.kind || 'voice';
+  cardOfferAlways = extra.offer_always !== false;
   document.getElementById('card-title').textContent = ev.text || '';
   document.getElementById('card-badge').textContent = model.badge;
   const quote = document.getElementById('card-phrase');
   quote.textContent = model.phrase;
   quote.hidden = !model.phrase;
-  document.getElementById('card-yes').hidden = !model.yes;
+  const body = document.getElementById('card-body');
+  body.textContent = model.body;
+  body.hidden = !model.body;
+  const cloud = document.getElementById('card-cloud');
+  cloud.textContent = model.cloud;
+  cloud.hidden = !model.cloud;
+  document.getElementById('card-actions').replaceChildren(...model.buttons.map(function (b) {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.className = 'btn ' + (b.primary ? 'btn-primary' : (b.answer === 'no' ? 'btn-ghost' : 'btn-secondary'));
+    el.textContent = b.label;
+    el.addEventListener('click', function () { answer(b.answer, 'button'); });
+    return el;
+  }));
   document.getElementById('card-say').textContent = model.say;
   const keys = document.getElementById('card-keys');
   keys.replaceChildren(...model.keys.map(function (k) {
@@ -223,16 +269,14 @@ async function answer(text, method) {
     // the question may have closed; the voice path still works
   }
 }
-document.getElementById('card-yes').addEventListener('click', function () { answer('yes', 'button'); });
-document.getElementById('card-no').addEventListener('click', function () { answer('no', 'button'); });
 typed.addEventListener('keydown', function (e) {
   if (e.key === 'Enter' && typed.value.trim()) { answer(typed.value.trim(), 'typed'); e.preventDefault(); }
-  else if (e.key === 'Escape') { answer('no', 'key'); e.preventDefault(); }
+  else if (e.key === 'Escape') { answer(cardKind === 'consent' ? 'n' : 'no', 'key'); e.preventDefault(); }
   e.stopPropagation();
 });
 document.addEventListener('keydown', function (e) {
   if (card.hidden) return;
-  const a = keyAnswer(e.key, cardKind);
+  const a = keyAnswer(e.key, cardKind, cardOfferAlways);
   if (a) { answer(a, 'key'); e.preventDefault(); }
 });
 let timer = 0;
@@ -241,7 +285,7 @@ function hide() {
 }
 function render(ev) {
   if (!Object.hasOwn(LOOKS, ev.state)) return;
-  if (ev.state === 'confirm') {
+  if (ev.state === 'confirm' || ev.state === 'consent') {
     if ((ev.extra || {}).closed) { closeCard(); return; }
     openCard(ev);
   }

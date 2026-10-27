@@ -61,7 +61,7 @@ async def build_components(
     voice = Voice(speaker, timing)
     segmenter = await asyncio.to_thread(_segmenter, settings, voice)
     desktop = DesktopClient()
-    consent = build_consent(settings.consent)  # no asker until task 4: nothing ungranted runs
+    consent = build_consent(settings.consent)  # asks through each turn's ConsentQuestion
     trace = ToolTrace(settings.policy, mode, consent.broker)
     brain: ClaudeCodeBrain | None = None
     services: list[ServicePort] = []

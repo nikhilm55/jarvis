@@ -176,7 +176,7 @@ class HudServer:
                 logger.warning("HUD event is not JSON-serialisable; dropped")
             return
         message = b"data: " + payload.encode("utf-8") + b"\n\n"
-        if event.state == "confirm":
+        if event.state in ("confirm", "consent"):
             # A page that (re)connects while a question is open must still show its card.
             self._card = None if event.extra.get("closed") else message
         for subscriber in list(self._subscribers):

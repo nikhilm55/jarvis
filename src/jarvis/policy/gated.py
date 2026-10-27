@@ -183,7 +183,7 @@ async def _judge(call: ToolCall, ctx: TurnContext) -> _Verdict:
     checked = bool(decision.scopes)
     if (
         checked
-        and await ctx.consent.require(decision.scopes, decision.prompt or "", ctx) != "granted"
+        and await ctx.consent.require(decision.scopes, "", ctx) != "granted"  # "To do that…"
     ):
         return _Verdict(False, decision, "consent denied", code="CONSENT_DENIED")
     return replace(await _after_consent(call, ctx, decision, note), consent_checked=checked)

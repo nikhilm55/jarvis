@@ -12,18 +12,18 @@ A no is a no from any channel. An unclear answer is asked again once, then count
 answer before the deadline is a no, said once (FR-SAFE-07, plan 2a-c).
 """
 
-import asyncio
 import time
 from collections.abc import Callable
 from typing import Literal
 
 from jarvis.confirm.answers import HudAnswer, HudAnswers
+from jarvis.confirm.exchange import Again, Exchange, Judged, Question
 from jarvis.confirm.words import meaning, says_phrase
-from jarvis.orchestrator.hud import HudEvent, HudSink
+from jarvis.orchestrator.hud import HudSink
 from jarvis.orchestrator.voice import Voice
 from jarvis.orchestrator.windows import Windows
 from jarvis.policy.decision import Kind
-from jarvis.policy.ports import Answer, Method
+from jarvis.policy.ports import Answer
 
 __all__ = ["NO_ANSWER", "Confirmer"]
 
@@ -84,76 +84,37 @@ class Confirmer:
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         """Bind the voice, the reply window, the HUD and its answer channel."""
-        self._voice = voice
-        self._windows = windows
-        self._hud = hud
-        self._answers = answers
-        self._before_speaking = before_speaking
-        self._clock = clock
+        self._exchange = Exchange(
+            voice, windows, hud, answers, before_speaking=before_speaking, clock=clock
+        )
 
     async def ask(
         self, prompt: str, kind: Kind, target_phrase: str | None = None, timeout_s: float = 15
     ) -> Answer:
         """Ask `prompt`; the answer, or a no by "timeout" when none came in `timeout_s`."""
         how = instruction(kind, target_phrase)
-        extra: dict[str, object] = {"kind": kind, "phrase": target_phrase, "instruction": how}
-        await self._hud(HudEvent("confirm", prompt, extra))
-        from_hud = self._answers.open()
-        try:
-            await self._say(f"{prompt} {how}")
-            return await self._wait(from_hud, kind, target_phrase, timeout_s)
-        finally:
-            self._answers.close(from_hud)
-            await self._hud(HudEvent("confirm", "", {"closed": True}))
 
-    async def _wait(
-        self,
-        from_hud: asyncio.Future[HudAnswer],
-        kind: Kind,
-        phrase: str | None,
-        timeout_s: float,
-    ) -> Answer:
-        deadline = self._clock() + timeout_s
-        asked_again = False
-        method: Method = "timeout"
-        while (remaining := deadline - self._clock()) > 0:
-            if from_hud.done():
-                answer = None if from_hud.cancelled() else from_hud.result()
-                if answer is None:
-                    break
-                verdict = _judge_hud(answer, kind, phrase)
-                method = answer.method
-                if verdict == "unclear":
-                    from_hud = self._answers.open()  # not an answer this question takes
-                    continue
-            else:
-                heard = await self._listen(from_hud, remaining)
-                if heard is None:
-                    continue  # the HUD answered, or the window ran out: the loop decides
-                verdict, method = judge(heard, kind, phrase), "voice"
-            if verdict in ("yes", "no"):
-                return Answer(verdict == "yes", method)
-            if verdict == "click":
-                await self._say(instruction("click", None))
-            elif not asked_again:
-                asked_again = True
-                await self._say(_reask(kind, phrase))
-            else:
-                return Answer(False, method)  # unclear twice is a no
-        await self._say(NO_ANSWER)
-        return Answer(False, "timeout")
+        def by_voice(text: str) -> Judged:
+            verdict = judge(text, kind, target_phrase)
+            return Again(instruction("click", None)) if verdict == "click" else _result(verdict)
 
-    async def _listen(self, from_hud: asyncio.Future[HudAnswer], seconds: float) -> str | None:
-        """A spoken answer in the reply window; None when the HUD answered or time ran out."""
-        await self._hud(HudEvent("listening", "Reply...", {"window": "reply"}))
-        spoken = asyncio.ensure_future(self._windows.ask(seconds))
-        pending: set[asyncio.Future[object]] = {spoken, from_hud}  # type: ignore[arg-type]
-        await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-        if not spoken.done():
-            self._windows.close()  # resolves the window with no answer
-        return await spoken
+        def by_hud(answer: HudAnswer) -> Judged:
+            return _result(_judge_hud(answer, kind, target_phrase))
 
-    async def _say(self, text: str) -> None:
-        self._before_speaking()
-        await self._hud(HudEvent("speaking", text))
-        await self._voice.wait(self._voice.say(text))
+        question = Question(
+            state="confirm",
+            title=prompt,
+            extra={"kind": kind, "phrase": target_phrase, "instruction": how},
+            spoken=f"{prompt} {how}",
+            voice=by_voice,
+            hud=by_hud,
+            reask=_reask(kind, target_phrase),
+            no_answer=NO_ANSWER,
+            timeout_s=timeout_s,
+        )
+        outcome = await self._exchange.run(question)
+        return Answer(outcome.result == "yes", outcome.method)
+
+
+def _result(verdict: _Verdict) -> Judged:
+    return verdict if verdict in ("yes", "no") else None
