@@ -8,7 +8,13 @@ from typing import Any
 import pytest
 
 from jarvis.desktop.apps import AppEntry
-from jarvis.desktop.backend import DesktopBackend, Hooks, WorkerError, launch_app
+from jarvis.desktop.backend import (
+    DesktopBackend,
+    Hooks,
+    WorkerError,
+    configured_aliases,
+    launch_app,
+)
 from jarvis.desktop.x11 import WindowInfo, X11Error
 
 
@@ -219,3 +225,75 @@ def test_should_return_none_when_gio_times_out(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr("jarvis.desktop.backend.subprocess.Popen", _SlowPopen)
     launch_app(_app("Calculator", "ExampleCalc"))
+
+
+def test_should_resolve_a_spoken_alias_before_fuzzy_matching() -> None:
+    entries = [_app("Calculator", "ExampleCalc"), _app("Maths", "Maths")]
+    backend = DesktopBackend(
+        _hooks(entries=lambda: entries, aliases=lambda: {"sums": "org.example.Maths.desktop"})
+    )
+    assert backend.open_app("sums")["app"] == "Maths"
+
+
+def test_should_list_installed_apps_by_name_with_their_source() -> None:
+    backend = DesktopBackend(_hooks(entries=lambda: [_app("Zed", "z"), _app("alpha", "a")]))
+    assert backend.list_apps() == {
+        "apps": [
+            {"name": "alpha", "id": "org.example.alpha.desktop", "source": "desktop"},
+            {"name": "Zed", "id": "org.example.Zed.desktop", "source": "desktop"},
+        ]
+    }
+
+
+def test_should_report_whether_an_app_has_a_window_open() -> None:
+    windows = [_win(1, "ExampleCalc"), _win(2, "ExampleCalc"), _win(3, "Other")]
+    backend = DesktopBackend(_hooks(windows=lambda: windows))
+    assert backend.is_running("calculator") == {
+        "app": "Calculator",
+        "running": True,
+        "windows": 2,
+        "installed": True,
+    }
+    none_open = DesktopBackend(_hooks(windows=lambda: [_win(3, "Other")]))
+    assert none_open.is_running("calculator")["running"] is False
+
+
+def test_should_judge_an_app_that_is_not_installed_by_its_window_class() -> None:
+    backend = DesktopBackend(_hooks(windows=lambda: [_win(7, "Zoom")]))
+    assert backend.is_running("zoom") == {
+        "app": "zoom",
+        "running": True,
+        "windows": 1,
+        "installed": False,
+    }
+    assert backend.is_running("skype")["running"] is False
+
+
+def test_should_not_hide_an_ambiguous_name_when_asked_if_it_is_running() -> None:
+    entries = [_app("Terminal One", "T1"), _app("Terminal Two", "T2")]
+    with pytest.raises(WorkerError) as info:
+        DesktopBackend(_hooks(entries=lambda: entries)).is_running("terminal")
+    assert info.value.code == "AMBIGUOUS"
+
+
+def test_should_read_aliases_from_the_settings_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / "config.toml").write_text("[apps.aliases]\nteams = 'x.desktop'\n", encoding="utf-8")
+    monkeypatch.setattr("jarvis.config.config_dir", lambda: config)
+    assert configured_aliases() == {"teams": "x.desktop"}
+
+
+def test_should_ignore_aliases_when_the_settings_file_is_broken(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / "config.toml").write_text("not = [valid", encoding="utf-8")
+    monkeypatch.setattr("jarvis.config.config_dir", lambda: config)
+    assert configured_aliases() == {}
+    assert "ignoring app aliases" in capsys.readouterr().err

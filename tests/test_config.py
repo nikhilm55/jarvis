@@ -176,3 +176,15 @@ def test_should_reject_a_deny_command_that_is_not_a_regex(tmp_path: Path) -> Non
     path = write_toml(tmp_path / "c.toml", "[policy]\ndeny_commands = ['(unclosed']\n")
     with pytest.raises(ConfigError, match=r"policy\.deny_commands"):
         load_settings(path)
+
+
+def test_should_default_to_no_app_aliases_and_read_them_from_the_file(tmp_path: Path) -> None:
+    assert Settings().apps.aliases == {}
+    path = write_toml(tmp_path / "c.toml", "[apps.aliases]\nteams = 'ms.teams.desktop'\n")
+    assert load_settings(path).apps.aliases == {"teams": "ms.teams.desktop"}
+
+
+def test_should_reject_a_blank_app_alias(tmp_path: Path) -> None:
+    path = write_toml(tmp_path / "c.toml", "[apps.aliases]\nteams = ' '\n")
+    with pytest.raises(ConfigError, match="alias"):
+        load_settings(path)
