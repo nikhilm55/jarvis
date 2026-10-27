@@ -6,7 +6,7 @@ and an unwritable audit log included, is a no.
 """
 
 import asyncio
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Literal, Protocol, cast
@@ -87,7 +87,7 @@ def _denied(reason: str, method: str = "none") -> _Outcome:
     return _Outcome("denied", reason, method)
 
 
-def _nothing() -> None:
+async def _nothing() -> None:
     """The step of an answer that changes no grant."""
 
 
@@ -202,6 +202,7 @@ class Broker:
             return _denied(f"malformed scope: {exc}")
         if not scopes:
             return _granted("no scopes asked for", "none")
+        await asyncio.to_thread(self._store.refresh)  # a "never" or revoke written elsewhere (F1)
         refused = await self._refused(scopes, ctx, args)  # 1. in every mode
         if refused is not None:
             return refused
@@ -214,8 +215,7 @@ class Broker:
             return _granted("auto-allowed: YOLO", "yolo")
         missing = tuple(s for s in scopes if not self._allowed(s, ctx.turn_id, safe))  # 3.
         if not missing:
-            for scope in scopes:
-                self._store.touch(scope)
+            await asyncio.to_thread(self._touch, scopes)  # file IO and a lock: not on the loop
             return _granted("existing grant", "grant")
         return await self._ask(missing, reason, ctx, safe)  # 4. one question for what is left
 
@@ -231,8 +231,21 @@ class Broker:
         except Exception:
             logger.exception("consent answer audit failed")
             return _denied("error: audit unavailable")  # nothing was granted: commit never ran
-        commit()  # a grant changes only once its answer is on the record (I1)
+        try:
+            await commit()  # a grant changes only once its answer is on the record (I1)
+        except Exception as error:
+            logger.exception("consent answer not stored")
+            failed = _denied(f"error: {type(error).__name__}")
+            try:
+                self._audit(ctx, names, "consent answer not stored", failed)
+            except Exception:
+                logger.exception("consent audit unavailable")
+            return failed
         return outcome
+
+    def _touch(self, scopes: tuple[Scope, ...]) -> None:
+        for scope in scopes:
+            self._store.touch(scope)
 
     async def _answer(
         self, missing: tuple[Scope, ...], reason: str, ctx: "TurnContext", *, offer_always: bool
@@ -248,7 +261,7 @@ class Broker:
 
     def _apply(
         self, answer: AskAnswer, missing: tuple[Scope, ...], ctx: "TurnContext", safe: bool
-    ) -> tuple[_Outcome, Callable[[], None]]:
+    ) -> tuple[_Outcome, Callable[[], Awaitable[None]]]:
         """The outcome of an answer, and the step that makes it so; the caller audits in between."""
         choice, method = answer.choice, answer.method
         if choice in ("no", "timeout"):
@@ -267,13 +280,13 @@ class Broker:
         held: Literal["once", "session"] = "once" if choice == "once" else "session"
         return _granted(choice, method), lambda: self._hold(missing, held, ctx)
 
-    def _remember(
+    async def _remember(
         self, missing: tuple[Scope, ...], lifetime: Lifetime, method: GrantMethod
     ) -> None:
-        for scope in missing:
-            self._store.grant(scope, lifetime, method)
+        # one transaction: all scopes or none; off the loop, since it locks and writes a file
+        await asyncio.to_thread(self._store.grant_all, missing, lifetime, method)
 
-    def _hold(
+    async def _hold(
         self, missing: tuple[Scope, ...], lifetime: Literal["once", "session"], ctx: "TurnContext"
     ) -> None:
         for scope in missing:

@@ -2,16 +2,29 @@
 
 The file is private (0600), schema-versioned and replaced atomically. A file that is damaged,
 hostile or from the future is never read as data and never overwritten: it is set aside under
-`grants.json.bad-<timestamp>` and the store starts with no grants, so everything asks again.
+`grants.json.bad-<timestamp>` and the store starts with no grants, so everything asks again. If it
+cannot even be set aside (a read-only directory) the store still starts, empty, and refuses writes.
+
+R100: every change takes an exclusive lock, re-reads the file and applies only its own delta to what
+it finds, so two stores (or processes) on one file never lose each other's grants, "never" included.
+On POSIX the lock is `fcntl.flock` on `grants.json.lock` (0600, same directory, never a link). The
+wait is bounded: after `LOCK_DEADLINE_S` the write fails with `GrantsWriteError`, so a stuck holder
+cannot hang Jarvis. Elsewhere the lock is process-wide: it covers every store in this process, not
+other processes.
+
+Reads are fresh: a file signature (device, inode, mtime, size) is checked before every `get`/`all`,
+and a change made by another store or process is loaded under the lock before it is answered.
 """
 
 import contextlib
 import json
 import os
+import stat
 import sys
 import tempfile
 import threading
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,6 +33,9 @@ from typing import Literal, cast
 from jarvis.consent.scope import Scope
 from jarvis.log import audit, get_logger
 
+if sys.platform != "win32":
+    import fcntl
+
 Lifetime = Literal["once", "session", "always", "never"]
 GrantMethod = Literal["voice", "typed", "button", "key", "settings"]
 
@@ -27,8 +43,15 @@ SCHEMA_VERSION = 1
 _STORED = ("always", "never")
 _METHODS = ("voice", "typed", "button", "key", "settings")
 _GRANT_KEYS = {"scope", "lifetime", "method", "granted_at", "last_used"}
+LOCK_DEADLINE_S = 2.0  # how long a write waits for the lock before it gives up
+LOCK_POLL_S = 0.02
+
+_Signature = tuple[int, int, int, int] | None  # (dev, inode, mtime_ns, size); None: no file
+_UNKNOWN: _Signature = (-1, -1, -1, -1)  # could not stat: never equals a real signature
 
 logger = get_logger("consent")
+
+_PROCESS_LOCK = threading.RLock()  # the lock where there is no flock
 
 
 class GrantsFileError(RuntimeError):
@@ -65,6 +88,10 @@ def _unstamp(value: object) -> datetime:
     if parsed.tzinfo is None:
         raise ValueError("a timestamp must carry a time zone")
     return parsed.astimezone(UTC)
+
+
+def _signature(info: os.stat_result) -> _Signature:
+    return (info.st_dev, info.st_ino, info.st_mtime_ns, info.st_size)
 
 
 def _document(grants: dict[Scope, Grant]) -> dict[str, object]:
@@ -120,12 +147,23 @@ def _parse(data: object) -> dict[Scope, Grant]:
 class GrantStore:
     """The always/never grants. Every change is audited first, then written and verified."""
 
-    def __init__(self, path: Path, clock: Callable[[], datetime] = _now) -> None:
+    def __init__(
+        self,
+        path: Path,
+        clock: Callable[[], datetime] = _now,
+        *,
+        lock_deadline_s: float = LOCK_DEADLINE_S,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         self._path = path
         self._clock = clock
+        self._deadline_s = lock_deadline_s
+        self._sleep = sleep
         self._lock = threading.RLock()
         self._grants: dict[Scope, Grant] = {}
+        self._sig: _Signature = _UNKNOWN
         self._problem: str | None = None
+        self._stuck = False  # an unusable file that could not be set aside: nothing may be written
         self._load()
 
     @property
@@ -133,79 +171,223 @@ class GrantStore:
         """None, or what was wrong with the file that was set aside at start-up."""
         return self._problem
 
+    def refresh(self) -> None:
+        """Load what another store or process wrote since this one last looked (it may block)."""
+        if self._stuck:
+            return  # an unusable file that could not be set aside stays closed
+        if self._read_signature() != self._sig:
+            with self._exclusive():
+                self._load()
+
     def get(self, scope: Scope) -> Grant | None:
+        self.refresh()
         return self._grants.get(scope)
 
     def all(self) -> list[Grant]:
+        self.refresh()
         return sorted(self._grants.values(), key=lambda g: g.scope)
 
     def grant(self, scope: Scope, lifetime: Lifetime, method: GrantMethod) -> Grant:
         """Store `always` or `never` for `scope`, replacing any earlier grant of it."""
+        return self.grant_all((scope,), lifetime, method)[0]
+
+    def grant_all(
+        self, scopes: Sequence[Scope], lifetime: Lifetime, method: GrantMethod
+    ) -> list[Grant]:
+        """Store `always` or `never` for every scope in ONE transaction: all of them or none."""
         if lifetime not in _STORED:
             raise ValueError(f"only 'always' and 'never' are stored, not {lifetime!r}")
         if method not in _METHODS:
             raise ValueError(f"unknown grant method {method!r}")
-        grant = Grant(scope, lifetime, method, self._clock())
-        record = {"op": "grant", "scope": str(scope), "lifetime": lifetime, "method": method}
-        with self._lock:
-            self._change(record, 1, {**self._grants, scope: grant})
-        return grant
+        made = [Grant(scope, lifetime, method, self._clock()) for scope in scopes]
+
+        def plan(held: dict[Scope, Grant]) -> tuple[list[dict[str, str]], int, dict[Scope, Grant]]:
+            for g in made:  # a stale answer must never replace a "never" written meanwhile
+                kept = held.get(g.scope)
+                if lifetime == "always" and kept is not None and kept.lifetime == "never":
+                    raise GrantsWriteError(f"{g.scope} is set to never; revoke it before allowing")
+            records = [
+                {"op": "grant", "scope": str(g.scope), "lifetime": lifetime, "method": method}
+                for g in made
+            ]
+            return records, 1, held | {g.scope: g for g in made}
+
+        self._change(plan)
+        return made
 
     def revoke(self, scope: Scope) -> bool:
         """Remove the grant of `scope`; True when there was one."""
-        with self._lock:
-            held = self._grants.get(scope)
+        found = False
+
+        def plan(held: dict[Scope, Grant]) -> tuple[list[dict[str, str]], int, dict[Scope, Grant]]:
+            nonlocal found
+            old = held.get(scope)
+            found = old is not None
             record = {"op": "revoke", "scope": str(scope)}
-            if held is not None:
-                record |= {"lifetime": held.lifetime, "method": held.method}
-            self._change(
-                record, int(held is not None), {s: g for s, g in self._grants.items() if s != scope}
-            )
-        return held is not None
+            if old is not None:
+                record |= {"lifetime": old.lifetime, "method": old.method}
+            return [record], int(found), {s: g for s, g in held.items() if s != scope}
+
+        self._change(plan)
+        return found
 
     def revoke_all(self) -> int:
         """Remove every "always" grant (a "never" stays); returns how many."""
-        with self._lock:
-            rest = {s: g for s, g in self._grants.items() if g.lifetime != "always"}
-            removed = len(self._grants) - len(rest)
-            self._change({"op": "revoke_all", "scope": "*"}, removed, rest)
+        removed = 0
+
+        def plan(held: dict[Scope, Grant]) -> tuple[list[dict[str, str]], int, dict[Scope, Grant]]:
+            nonlocal removed
+            rest = {s: g for s, g in held.items() if g.lifetime != "always"}
+            removed = len(held) - len(rest)
+            return [{"op": "revoke_all", "scope": "*"}], removed, rest
+
+        self._change(plan)
         return removed
 
     def reset_all_to_ask(self) -> int:
         """Remove every grant, "never" included, so every scope asks again; returns how many."""
-        with self._lock:
-            removed = len(self._grants)
-            self._change({"op": "reset_all_to_ask", "scope": "*"}, removed, {})
+        removed = 0
+
+        def plan(held: dict[Scope, Grant]) -> tuple[list[dict[str, str]], int, dict[Scope, Grant]]:
+            nonlocal removed
+            removed = len(held)
+            return [{"op": "reset_all_to_ask", "scope": "*"}], removed, {}
+
+        self._change(plan)
         return removed
 
     def touch(self, scope: Scope) -> None:
-        """Record that `scope` was just used; an unknown scope is ignored."""
-        with self._lock:
-            held = self._grants.get(scope)
-            if held is not None:
-                self._commit({**self._grants, scope: replace(held, last_used=self._clock())})
+        """Record that `scope` was just used; best effort, since `last_used` is bookkeeping only."""
+        try:
+            with self._exclusive():
+                self._refresh()
+                held = self._grants.get(scope)
+                if held is not None:
+                    self._commit({**self._grants, scope: replace(held, last_used=self._clock())})
+        except GrantsWriteError as error:
+            logger.warning(f"could not record the use of {scope}: {error}")
 
-    def _change(self, record: dict[str, str], count: int, grants: dict[Scope, Grant]) -> None:
-        """Audit first (a failure changes nothing), then write if anything changes."""
-        audit("consent", "grant change", count=count, **record)
-        if grants != self._grants:
-            self._commit(grants)
+    def _change(
+        self,
+        plan: Callable[[dict[Scope, Grant]], tuple[list[dict[str, str]], int, dict[Scope, Grant]]],
+    ) -> None:
+        """Under the lock: re-read, audit every record first (a failure changes nothing), write."""
+        with self._exclusive():
+            self._refresh()
+            records, count, grants = plan(self._grants)
+            for record in records:
+                audit("consent", "grant change", count=count, **record)
+            if grants != self._grants:
+                self._commit(grants)
 
     def _commit(self, grants: dict[Scope, Grant]) -> None:
         """Write `grants`; they replace the ones in memory only once the file is verified."""
-        self._write(_document(grants))
+        try:
+            self._write(_document(grants))
+        except GrantsWriteError:
+            self._sig = self._read_signature()  # a write that did not verify is not trusted
+            raise
         self._grants = grants
+        self._sig = self._read_signature()
+
+    @contextlib.contextmanager
+    def _exclusive(self) -> Iterator[None]:
+        """One writer at a time across stores and processes (R100), waiting a bounded time."""
+        if not self._lock.acquire(timeout=self._deadline_s):
+            raise GrantsWriteError("grants busy: another writer in this process holds the lock")
+        try:
+            if self._stuck:
+                raise GrantsWriteError(
+                    "the unusable grants file could not be set aside (see problem)"
+                )
+            if sys.platform == "win32":
+                if not _PROCESS_LOCK.acquire(timeout=self._deadline_s):
+                    raise GrantsWriteError("grants locked by another writer")
+                try:
+                    yield
+                finally:
+                    _PROCESS_LOCK.release()
+                return
+            fd = self._acquire()
+            try:
+                yield
+            finally:
+                os.close(fd)  # closing the descriptor releases the lock
+        finally:
+            self._lock.release()
+
+    def _acquire(self) -> int:
+        """Open the lock file (a regular file of ours, never a link) and flock it, bounded."""
+        flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(f"{self._path}.lock", flags, 0o600)
+        except OSError as error:
+            raise GrantsWriteError(f"cannot lock the consent grants: {error}") from error
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
+                raise GrantsWriteError("the grants lock file is not a regular file of this user")
+            os.fchmod(fd, 0o600)
+            self._flock(fd)
+        except GrantsWriteError:
+            os.close(fd)
+            raise
+        except OSError as error:
+            os.close(fd)
+            raise GrantsWriteError(f"cannot lock the consent grants: {error}") from error
+        return fd
+
+    def _flock(self, fd: int) -> None:
+        """Take the exclusive lock, polling until the deadline (a held lock is not waited on)."""
+        end = time.monotonic() + self._deadline_s
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return
+            except BlockingIOError:
+                if time.monotonic() >= end:
+                    raise GrantsWriteError("grants locked by another process") from None
+                self._sleep(LOCK_POLL_S)
+
+    def _refresh(self) -> None:
+        """Re-read the file (under the lock): what is on disk now is the state to change."""
+        self._load()
+        if self._stuck:
+            raise GrantsWriteError("the unusable grants file could not be set aside (see problem)")
+
+    def _read_signature(self) -> _Signature:
+        """What the file looks like now: a link is not followed; no file is None."""
+        try:
+            return _signature(os.stat(self._path, follow_symlinks=False))
+        except FileNotFoundError:
+            return None
+        except OSError:
+            return _UNKNOWN
 
     def _load(self) -> None:
+        """Read the file; the constructor never raises, so every failure is handled in here."""
         path = self._path
-        if not path.is_symlink() and not path.exists():
-            return  # no file: no grants
         try:
-            if path.is_symlink():
+            info = os.stat(path, follow_symlinks=False)
+        except FileNotFoundError:
+            self._grants = {}  # no file: no grants
+            self._sig = None
+            return
+        except OSError as error:  # a directory that cannot be searched
+            self._grants = {}
+            self._set_aside(str(error))
+            return
+        self._sig = _signature(info)  # taken before the read: a change meanwhile reloads
+        try:
+            if stat.S_ISLNK(info.st_mode):
                 raise ValueError("the grants file is a symbolic link")
             self._grants = _parse(json.loads(path.read_bytes().decode("utf-8")))
         except (OSError, ValueError) as error:  # JSON and UTF-8 errors are ValueErrors
+            self._grants = {}
             self._set_aside(str(error) or type(error).__name__)
+            if not self._stuck:
+                self._sig = self._read_signature()  # the bad file is gone
 
     def _set_aside(self, why: str) -> None:
         """Keep the unusable file as `.bad-<timestamp>` (a link is renamed, never followed)."""
@@ -213,8 +395,13 @@ class GrantStore:
         moved = self._path.with_name(f"{self._path.name}.bad-{stamp}")
         try:
             os.replace(self._path, moved)
-        except OSError as error:
-            raise GrantsFileError(f"cannot set aside the unusable grants file: {error}") from error
+        except OSError as error:  # the file stays where it is, and nothing may overwrite it
+            self._stuck = True
+            self._problem = (
+                f"the grants file was unusable ({why}) and could not be set aside: {error}"
+            )
+            logger.warning(self._problem, extra={"path": str(self._path)})
+            return
         self._problem = f"the grants file was unusable ({why}) and is kept as {moved.name}"
         logger.warning(self._problem, extra={"path": str(moved)})
         try:

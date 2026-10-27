@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from jarvis.consent.scope import Scope
-from jarvis.consent.store import GrantsFileError, GrantStore
+from jarvis.consent.store import GrantStore
 from tests.store_files_rig import AuditRecords, collect_audit, entry, posix_only, write_doc
 from tests.store_rig import T0, TEAMS_R, make_store
 
@@ -146,7 +146,7 @@ def test_should_still_start_when_the_audit_of_a_bad_file_fails(
     assert make_store(tmp_path).problem is not None  # no grants, the file is kept: still closed
 
 
-def test_should_raise_when_the_unusable_file_cannot_be_set_aside(
+def test_should_start_closed_when_the_unusable_file_cannot_be_set_aside(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (tmp_path / "grants.json").write_bytes(b"{")
@@ -155,5 +155,6 @@ def test_should_raise_when_the_unusable_file_cannot_be_set_aside(
         raise OSError("read-only")
 
     monkeypatch.setattr("jarvis.consent.store.os.replace", broken)
-    with pytest.raises(GrantsFileError, match="read-only"):
-        make_store(tmp_path)
+    store = make_store(tmp_path)  # M3: Jarvis must still start
+    assert store.problem is not None and "read-only" in store.problem
+    assert store.all() == [] and (tmp_path / "grants.json").read_bytes() == b"{"

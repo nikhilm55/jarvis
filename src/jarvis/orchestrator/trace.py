@@ -2,6 +2,7 @@
 
 from jarvis.activity import ToolCallRecord
 from jarvis.config import PolicySettings
+from jarvis.consent.session import NO_TURN
 from jarvis.mcp import Dispatch
 from jarvis.policy.decision import TurnContext
 from jarvis.policy.model import Mode
@@ -41,7 +42,7 @@ class ToolTrace:
 
     def turn_context(self) -> TurnContext:
         """The running turn's context; between turns an anonymous one with the user's lists."""
-        return self.ctx or TurnContext("no-turn", self._policy, self._mode, consent=self._consent)
+        return self.ctx or TurnContext(NO_TURN, self._policy, self._mode, consent=self._consent)
 
     def take(self) -> list[ToolCallRecord]:
         """Return the recorded calls and reset the buffer and the turn context."""

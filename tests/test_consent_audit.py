@@ -126,7 +126,7 @@ def test_should_deny_when_an_always_answer_cannot_be_stored(
     def fail(*_args: object, **_kwargs: object) -> None:
         raise GrantsWriteError("read-only disk")
 
-    monkeypatch.setattr(rig.store, "grant", fail)
+    monkeypatch.setattr(rig.store, "grant_all", fail)  # the broker stores one answer in one call
     assert rig.require(TEAMS_R) == "denied"
     assert rig.checks()[-1]["reason"] == "error: GrantsWriteError"
 
