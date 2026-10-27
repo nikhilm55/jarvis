@@ -5,6 +5,7 @@ result on the window itself. It talks to X only through `XPort`, so the tests dr
 fake window manager and `xport.py` is the one place that touches python-xlib.
 """
 
+import difflib
 import re
 import time
 from collections.abc import Callable, Sequence
@@ -25,6 +26,10 @@ __all__ = [
 
 _REF = re.compile(r"x11:0x([0-9a-f]{1,8})")
 _HIDDEN_TYPES = frozenset({"DOCK", "DESKTOP", "SPLASH", "NOTIFICATION", "TOOLTIP", "MENU"})
+_SETTLE_S = 1.0  # how long a window manager gets to show the effect of a request
+_POLL_S = 0.05
+_SOURCE_PAGER = 2  # EWMH source indication: a pager or similar tool, which may take focus
+_NEAR_TITLES = 5
 
 
 def make_ref(wid: int) -> str:
@@ -139,6 +144,22 @@ class WindowView:
         return make_ref(self.wid)
 
 
+_NO_MATCH = 3
+
+
+def _rank(wanted: str, view: WindowView) -> int:
+    """0 if `wanted` is the whole title or class, 1 if it starts one, 2 if it is inside one."""
+    names = [n for n in (view.title, view.wm_instance, view.wm_class) if n]
+    folded = [n.casefold() for n in names]
+    if wanted in folded:
+        return 0
+    if any(n.startswith(wanted) for n in folded):
+        return 1
+    if any(wanted in n for n in folded):
+        return 2
+    return _NO_MATCH
+
+
 class WindowManager:
     """List, find, focus and rearrange windows through an `XPort`."""
 
@@ -152,6 +173,15 @@ class WindowManager:
         self._port = port
         self._sleep = sleep
         self._now = now
+
+    def _wait_for(self, done: Callable[[], bool]) -> bool:
+        """Poll `done` every 50 ms for up to a second; True as soon as it holds."""
+        deadline = self._now() + _SETTLE_S
+        while not done():
+            if self._now() >= deadline:
+                return False
+            self._sleep(_POLL_S)
+        return True
 
     def _view(self, wid: int, active: int | None, monitors: Sequence[Rect]) -> WindowView:
         states = self._port.states(wid)
@@ -192,3 +222,63 @@ class WindowManager:
             for wid in reversed(self._port.stacking())
             if not self._port.window_types(wid) & _HIDDEN_TYPES
         ]
+
+    def resolve(self, target: str) -> int:
+        """The id of the window `target` names: a ref from `list`, or words of a title or app.
+
+        A ref must belong to a listed window. Words match, case-insensitively, the window's
+        title or WM_CLASS: an exact match beats a prefix, which beats a substring. If the best
+        matches are all windows of one app, the frontmost wins; if they are of different apps
+        raise WindowError("AMBIGUOUS", ...). No match raises WindowError("NOT_FOUND", ...)
+        whose `alternatives` are up to five of the closest titles (difflib).
+        """
+        views = self.list()
+        wid = parse_ref(target)
+        if wid is not None and any(v.wid == wid for v in views):
+            return wid
+        wanted = target.strip().casefold()
+        if not wanted:
+            raise WindowError("INVALID_ARGUMENT", "name the window: a ref or words of its title")
+        ranked = [(_rank(wanted, v), v) for v in views]
+        best = min((rank for rank, _ in ranked), default=_NO_MATCH)
+        matches = [v for rank, v in ranked if rank == best and rank < _NO_MATCH]
+        if not matches:
+            near = difflib.get_close_matches(
+                target.strip(), [v.title for v in views], n=_NEAR_TITLES, cutoff=0.3
+            )
+            raise WindowError("NOT_FOUND", f"no window matches {target!r}", near)
+        if len({v.wm_class for v in matches}) > 1:
+            names = ", ".join(sorted({v.title for v in matches}))
+            raise WindowError("AMBIGUOUS", f"{target!r} matches several apps: {names}")
+        return matches[0].wid  # one app: the frontmost of its windows (the list is in order)
+
+    def _activate(self, wid: int) -> None:
+        """Ask the window manager to focus the window, as a pager would (source 2)."""
+        active = self._port.active_window() or 0
+        data = [_SOURCE_PAGER, self._port.server_time(), active, 0, 0]
+        self._port.send(wid, "_NET_ACTIVE_WINDOW", data)
+
+    def focus(self, target: str) -> WindowView:
+        """Bring the window to the front and focus it, and check that it is focused.
+
+        A minimised window is restored first. Sends `_NET_ACTIVE_WINDOW` (source 2, the
+        server time, the current active window), then polls up to 1 s for the active window
+        to be the target; otherwise WindowError("ACTION_FAILED", ...) naming what to try.
+        """
+        wid = self.resolve(target)
+        if "HIDDEN" in self._port.states(wid):  # EWMH restores a window by activating it
+            self._activate(wid)
+            if not self._wait_for(lambda: "HIDDEN" not in self._port.states(wid)):
+                raise WindowError(
+                    "ACTION_FAILED",
+                    "the window is still minimised after asking to restore it. "
+                    "Click its icon in the dock, then ask again.",
+                )
+        self._activate(wid)
+        if not self._wait_for(lambda: self._port.active_window() == wid):
+            raise WindowError(
+                "ACTION_FAILED",
+                "the window did not take focus; the desktop may be blocking focus changes. "
+                "Click the window yourself, then ask again.",
+            )
+        return self.view(wid)
