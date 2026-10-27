@@ -30,7 +30,8 @@ class TurnContext:
     """What the gate knows about the turn the call belongs to.
 
     The defaults fail closed: Safe mode, a confirmer and a consent broker that say no.
-    `policy_decisions` collects every decision of the turn, in order, for the activity log.
+    `policy_decisions` collects every decision of the turn, in order, for the activity log;
+    `heard` collects what the user said in it (the command, replies), for R83.
     """
 
     turn_id: str
@@ -40,6 +41,7 @@ class TurnContext:
     consent: ConsentBroker = field(default_factory=NoConsent)
     impls: Mapping[str, ToolImpl] = field(default_factory=dict)
     policy_decisions: list[PolicyRecord] = field(default_factory=list)
+    heard: list[str] = field(default_factory=list)  # the user's words this turn (R83)
 
 
 @dataclass(frozen=True)

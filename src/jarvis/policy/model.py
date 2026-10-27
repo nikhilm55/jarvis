@@ -69,6 +69,8 @@ class ToolSpec:
     undoable: bool = False
     classify: Classifier | None = None
     target_key: str | None = None  # the argument that names what the call acts on (YOLO phrase)
+    # Arguments that must come from the user's words (R83); none given: just `target_key`.
+    provenance_keys: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         """Validate and normalise fields on construction."""

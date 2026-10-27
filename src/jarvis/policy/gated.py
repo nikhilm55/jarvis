@@ -31,6 +31,7 @@ from jarvis.policy.ports import (
     NoConfirmer,
 )
 from jarvis.policy.prompts import describe
+from jarvis.policy.provenance import foreign_values
 
 __all__ = ["ToolResult", "gated_dispatch", "tool_impl"]
 
@@ -120,9 +121,35 @@ def _target_phrase(call: ToolCall) -> str:
     return speak_targets(verb, targets)
 
 
-async def _confirm(call: ToolCall, ctx: TurnContext, decision: Decision, kind: Kind) -> _Verdict:
+_MAX_QUOTE = 60
+
+
+def _provenance(call: ToolCall, ctx: TurnContext, decision: Decision) -> tuple[Decision, str]:
+    """R83: a brain's T2+ call whose target the user did not say is confirmed in every mode.
+
+    Returns the decision (a run becomes a voice confirmation) and the note the question starts
+    with, naming where the value came from; no note when the values are the user's own.
+    """
+    spec = registry.get(call.name)
+    if call.origin != "brain" or decision.tier not in (Tier.T2, Tier.T3) or spec is None:
+        return decision, ""
+    foreign = foreign_values(spec, call.args, ctx.heard)
+    if not foreign:
+        return decision, ""
+    shown = foreign[0] if len(foreign[0]) <= _MAX_QUOTE else foreign[0][: _MAX_QUOTE - 1] + "…"
+    note = f"You didn't say '{shown}': it came from something I read."
+    if decision.action == "run":  # YOLO; Safe and Balanced already confirm every T2+ call
+        reason = "content-derived target needs confirmation (R83)"
+        decision = replace(decision, action="confirm", kind="voice", reason=reason)
+    return decision, note
+
+
+async def _confirm(
+    call: ToolCall, ctx: TurnContext, decision: Decision, kind: Kind, note: str = ""
+) -> _Verdict:
     phrase = _target_phrase(call) if kind == "guardrail" else None
     prompt = describe(call.name, call.args, decision.tier)  # a consent's prompt asked for scopes
+    prompt = f"{note} {prompt}" if note else prompt
     answer = await ctx.confirmer.ask(prompt, kind, phrase)
     if answer.yes is True:  # anything else, a truthy string included, is not a yes
         return _Verdict(True, decision, "confirmed", confirmed_by=answer.method)
@@ -150,6 +177,7 @@ async def _judge(call: ToolCall, ctx: TurnContext) -> _Verdict:
     decision = await asyncio.to_thread(decide, call, ctx.mode, ctx)
     if decision.action == "deny":
         return _Verdict(False, decision, decision.reason)
+    decision, note = _provenance(call, ctx, decision)
     # Any verdict that names scopes must be checked against the broker first (FR-CON-10):
     # "never" beats every mode at every tier, including YOLO confirm/guardrail.
     checked = bool(decision.scopes)
@@ -158,19 +186,21 @@ async def _judge(call: ToolCall, ctx: TurnContext) -> _Verdict:
         and await ctx.consent.require(decision.scopes, decision.prompt or "", ctx) != "granted"
     ):
         return _Verdict(False, decision, "consent denied", code="CONSENT_DENIED")
-    return replace(await _after_consent(call, ctx, decision), consent_checked=checked)
+    return replace(await _after_consent(call, ctx, decision, note), consent_checked=checked)
 
 
-async def _after_consent(call: ToolCall, ctx: TurnContext, decision: Decision) -> _Verdict:
+async def _after_consent(
+    call: ToolCall, ctx: TurnContext, decision: Decision, note: str = ""
+) -> _Verdict:
     if decision.action == "run":
         return _Verdict(True, decision, decision.reason)
     if decision.action == "consent":
         if decision.then_confirm is None:
             return _Verdict(True, decision, "consent granted")
-        return await _confirm(call, ctx, decision, decision.then_confirm)
+        return await _confirm(call, ctx, decision, decision.then_confirm, note)
     if decision.kind is None:
         raise ValueError("a confirm decision needs a kind")
-    return await _confirm(call, ctx, decision, decision.kind)
+    return await _confirm(call, ctx, decision, decision.kind, note)
 
 
 def _write_audit(call: ToolCall, ctx: TurnContext, verdict: _Verdict) -> None:
