@@ -1,6 +1,6 @@
 import asyncio
 import contextlib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 
@@ -22,10 +22,16 @@ class FakeHud:
         self.calls: list[tuple[HudSettings, bool]] = []
 
     def __call__(
-        self, hud: HudSettings, *, enabled: bool = True, answers: object = None
+        self,
+        hud: HudSettings,
+        *,
+        enabled: bool = True,
+        answers: object = None,
+        on_stop: Callable[[], Awaitable[None]] | None = None,
     ) -> AbstractAsyncContextManager[HudSink | None]:
         self.calls.append((hud, enabled))
         self.answers = answers
+        self.on_stop = on_stop
         return self._cm(enabled)
 
     @contextlib.asynccontextmanager

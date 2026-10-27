@@ -115,7 +115,7 @@ def test_should_wire_the_answers_into_the_hud_server(monkeypatch: pytest.MonkeyP
             pass
 
     asyncio.run(scenario())
-    assert built == [{"answers": answers}]
+    assert built == [{"answers": answers, "on_stop": None}]
 
 
 # --- the card logic, run under node --------------------------------------------------------------
