@@ -11,6 +11,7 @@ from jarvis import models
 from jarvis.audio import AudioSource, Endpointer, SileroVad
 from jarvis.brain import ClaudeCodeBrain
 from jarvis.config import Settings
+from jarvis.confirm import HudAnswers
 from jarvis.consent.broker import build_consent
 from jarvis.desktop.client import DesktopClient
 from jarvis.mcp import JarvisMcpServer
@@ -87,6 +88,7 @@ async def build_components(
         trace=trace,
         consent=consent.broker,
         grants=consent.session,
+        answers=HudAnswers(),
     )
 
 

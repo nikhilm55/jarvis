@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 from jarvis.audio import AudioSource
 from jarvis.brain import BrainUnavailable
+from jarvis.confirm import HudAnswers
 from jarvis.consent.session import SessionGrants
 from jarvis.desktop.client import DesktopClient
 from jarvis.log import get_logger
@@ -41,6 +42,7 @@ class Components:
     trace: ToolTrace = field(default_factory=ToolTrace)
     consent: ConsentBroker = field(default_factory=NoConsent)  # what a turn asks for scopes
     grants: SessionGrants | None = None  # the once and session grants `consent` consults
+    answers: HudAnswers | None = None  # HUD answers to confirmations; None: nothing confirms
 
 
 async def start_components(parts: Components) -> BrainUnavailable | None:

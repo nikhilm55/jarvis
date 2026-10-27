@@ -28,7 +28,7 @@ def test_should_run_when_the_user_confirms_and_audit_who_confirmed() -> None:
     result, ctx, impl = dispatch("t.app", mode="balanced", confirmer=confirmer)
     assert result.error is None
     assert len(impl.calls) == 1
-    assert [(k, p) for p, k, _ in confirmer.asked] == [("voice", "Run t.app?")]
+    assert [(k, p) for p, k, _ in confirmer.asked] == [("voice", "App? This can't be undone.")]
     assert records()[0]["confirmed_by"] == "button"
     assert ctx.policy_decisions[0].confirmed_by == "button"
 
