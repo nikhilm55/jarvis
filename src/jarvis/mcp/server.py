@@ -35,10 +35,14 @@ def _render(result: object) -> str:
     return json.dumps(result, default=str)
 
 
-def _error(text: str) -> types.CallToolResult:
-    """Build a CallToolResult marking an error with a single text payload."""
+def _error(text: str, code: str | None = None) -> types.CallToolResult:
+    """Build a CallToolResult marking an error with a single text payload.
+
+    A policy refusal also carries its contract error code as structured content.
+    """
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=text)],
+        structured_content=None if code is None else {"code": code, "reason": text},
         is_error=True,
     )
 
@@ -186,14 +190,18 @@ class JarvisMcpServer:
         )
 
     def _context(self, name: str) -> TurnContext:
-        """The turn's policy context, in the current mode, with the tool's implementation."""
-        base = self._turn() if self._turn is not None else TurnContext("no-turn")
+        """The turn's policy context (its mode is the only mode) with the tool's implementation."""
+        base = (
+            self._turn()
+            if self._turn is not None
+            else TurnContext("no-turn", mode=self._get_mode())
+        )
 
         @tool_impl(name)
         async def run(args: Mapping[str, object]) -> object:
             return await self._dispatch(name, dict(args))
 
-        return dataclasses.replace(base, mode=self._get_mode(), impls={name: run})
+        return dataclasses.replace(base, impls={name: run})
 
     async def _call_tool(
         self,
@@ -220,6 +228,6 @@ class JarvisMcpServer:
         if tool is None:
             return _error("unknown tool")
         if result.error is not None:
-            return _error(result.error.why)
+            return _error(result.error.why, result.error.code)
         text = _render(result.output)
         return types.CallToolResult(content=[types.TextContent(type="text", text=text)])
