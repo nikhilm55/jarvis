@@ -75,7 +75,7 @@ def test_should_deny_a_command_that_matches_a_deny_command_regex() -> None:
     assert denied({"cmd": "git push origin main"}, settings) is not None
     assert denied({"command": "cd x && npm publish"}, settings) is not None
     assert denied({"cmd": "git status"}, settings) is None
-    assert denied({"path": "git push"}, settings) is None
+    assert denied({"path": "git push"}, settings) is not None  # a command line under any key
 
 
 def test_should_deny_nothing_when_the_lists_are_empty() -> None:
