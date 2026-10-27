@@ -5,6 +5,7 @@ import os
 import stat
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,7 @@ from jarvis.consent.scope import Scope
 from jarvis.consent.store import GrantStore, GrantsWriteError
 from tests import store_files_rig
 from tests.consent_rig import MAIL_R, TEAMS_R, TEAMS_W, make_rig, says
-from tests.store_files_rig import posix_only
+from tests.store_files_rig import hold_lock, needs_dir_permissions, posix_only
 
 TEAMS_WRITE = Scope.parse(TEAMS_W)
 MAIL_READ = Scope.parse(MAIL_R)
@@ -94,9 +95,7 @@ def test_should_not_lock_the_file_between_calls(tmp_path: Path) -> None:
 
 
 @posix_only
-@pytest.mark.skipif(
-    sys.platform == "win32" or os.geteuid() == 0, reason="root ignores directory permissions"
-)
+@needs_dir_permissions
 def test_should_start_empty_and_deny_writes_when_the_unusable_file_cannot_be_set_aside(
     tmp_path: Path,
 ) -> None:
@@ -205,3 +204,177 @@ def test_should_skip_posix_only_tests_exactly_where_the_reason_says(
     mark = probe.posix_only.mark
     assert mark.args == (skipped,)
     assert "Windows" in mark.kwargs["reason"] and "Linux" not in mark.kwargs["reason"]
+
+
+@pytest.mark.parametrize("platform", ["linux", "win32"])
+def test_should_name_both_conditions_in_the_directory_permission_skip_reason(
+    monkeypatch: pytest.MonkeyPatch, platform: str
+) -> None:
+    spec = importlib.util.spec_from_file_location("rig_probe", store_files_rig.__file__)
+    assert spec is not None and spec.loader is not None
+    probe = importlib.util.module_from_spec(spec)
+    monkeypatch.setattr(sys, "platform", platform)
+    spec.loader.exec_module(probe)
+    reason = probe.needs_dir_permissions.mark.kwargs["reason"]
+    assert "root" in reason and "Windows" in reason  # the condition tests both (F8)
+    assert probe.needs_dir_permissions.mark.args == (platform == "win32" or os.geteuid() == 0,)
+
+
+# --- F2: the lock wait is bounded ----------------------------------------------------------------
+
+
+@posix_only
+def test_should_fail_a_write_with_a_clear_error_when_another_process_holds_the_lock(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "grants.json"
+    store = GrantStore(path, lock_deadline_s=0.2)
+    with hold_lock(path):
+        started = time.monotonic()
+        with pytest.raises(GrantsWriteError, match="grants locked by another process"):
+            store.grant(TEAMS_READ, "always", "voice")
+        waited = time.monotonic() - started
+    assert 0.15 <= waited < 1.5  # it waited its deadline, not for ever
+    assert not path.exists()
+    store.grant(TEAMS_READ, "always", "voice")  # and works again once the lock is free
+    assert on_disk(path) == {TEAMS_R: "always"}
+
+
+@posix_only
+def test_should_poll_for_the_lock_in_twenty_millisecond_steps(tmp_path: Path) -> None:
+    path = tmp_path / "grants.json"
+    naps: list[float] = []
+    store = GrantStore(path, lock_deadline_s=0.05, sleep=naps.append)  # a fake sleep: a busy wait
+    with hold_lock(path), pytest.raises(GrantsWriteError):
+        store.grant(TEAMS_READ, "always", "voice")
+    assert naps and set(naps) == {0.02}
+
+
+@posix_only
+def test_should_fail_a_fresh_read_when_the_lock_is_held_and_the_file_changed(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "grants.json"
+    reader = GrantStore(path, lock_deadline_s=0.1)
+    GrantStore(path).grant(TEAMS_READ, "never", "voice")
+    with hold_lock(path), pytest.raises(GrantsWriteError, match="locked"):
+        reader.get(TEAMS_READ)  # a changed file is loaded under the lock, and that wait is bounded
+
+
+def test_should_fail_a_write_when_another_thread_of_the_process_holds_the_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = GrantStore(tmp_path / "grants.json", lock_deadline_s=0.2)
+    inside, release = threading.Event(), threading.Event()
+
+    def stuck_audit(source: str, message: str, **fields: object) -> None:
+        inside.set()
+        release.wait(5)
+
+    monkeypatch.setattr("jarvis.consent.store.audit", stuck_audit)
+    holder = threading.Thread(target=store.grant, args=(TEAMS_READ, "always", "voice"))
+    holder.start()
+    try:
+        assert inside.wait(5)
+        started = time.monotonic()
+        with pytest.raises(GrantsWriteError, match="busy"):
+            store.grant(MAIL_READ, "always", "voice")
+        assert time.monotonic() - started < 1.5
+    finally:
+        release.set()
+        holder.join()
+
+
+# --- F3: the lock file gets the same symlink rules as the grants file (R87) ----------------------
+
+
+@posix_only
+def test_should_refuse_a_symlinked_lock_file_and_leave_its_target_alone(tmp_path: Path) -> None:
+    target = tmp_path / "script.sh"
+    target.write_text("#!/bin/sh\n", encoding="utf-8")
+    target.chmod(0o755)
+    (tmp_path / "grants.json.lock").symlink_to(target)
+    with pytest.raises(GrantsWriteError):
+        GrantStore(tmp_path / "grants.json").grant(TEAMS_READ, "always", "voice")
+    assert stat.S_IMODE(target.stat().st_mode) == 0o755
+
+
+@posix_only
+def test_should_not_create_the_target_of_a_dangling_lock_symlink(tmp_path: Path) -> None:
+    victim = tmp_path / "elsewhere" / "created-by-us"
+    victim.parent.mkdir()
+    (tmp_path / "grants.json.lock").symlink_to(victim)
+    with pytest.raises(GrantsWriteError):
+        GrantStore(tmp_path / "grants.json").grant(TEAMS_READ, "always", "voice")
+    assert not victim.exists()
+
+
+@posix_only
+def test_should_refuse_a_lock_file_that_belongs_to_another_user(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = GrantStore(tmp_path / "grants.json")
+    monkeypatch.setattr("jarvis.consent.store.os.geteuid", lambda: os.stat(tmp_path).st_uid + 1)
+    with pytest.raises(GrantsWriteError, match="not a regular file of this user"):
+        store.grant(TEAMS_READ, "always", "voice")
+
+
+@posix_only
+def test_should_refuse_a_lock_file_that_is_a_directory(tmp_path: Path) -> None:
+    (tmp_path / "grants.json.lock").mkdir()
+    with pytest.raises(GrantsWriteError):
+        GrantStore(tmp_path / "grants.json").grant(TEAMS_READ, "always", "voice")
+
+
+# --- F4: the constructor never raises ------------------------------------------------------------
+
+
+@posix_only
+@needs_dir_permissions
+def test_should_start_closed_when_the_data_directory_cannot_be_searched(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    data.mkdir()
+    data.chmod(0o000)
+    try:
+        store = GrantStore(data / "grants.json")  # must not raise
+        assert store.problem is not None and "could not be set aside" in store.problem
+        assert store.all() == []
+        with pytest.raises(GrantsWriteError):
+            store.grant(TEAMS_READ, "always", "voice")
+    finally:
+        data.chmod(0o700)
+
+
+# --- F5: last_used is bookkeeping, a valid "always" is still granted -----------------------------
+
+
+@posix_only
+@needs_dir_permissions
+def test_should_grant_a_valid_always_in_a_read_only_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    GrantStore(tmp_path / "grants.json").grant(TEAMS_READ, "always", "voice")
+    (
+        tmp_path / "grants.json.lock"
+    ).unlink()  # nothing to open for the touch, and no room to make it
+    rig = make_rig(tmp_path, monkeypatch)
+    tmp_path.chmod(0o500)
+    try:
+        assert rig.require(TEAMS_R) == "granted"
+    finally:
+        tmp_path.chmod(0o700)
+    assert rig.asker.asked == []
+
+
+# --- F9: consent_folders keys ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("key", ["", ".", "/", " "])
+def test_should_reject_a_consent_folder_key_that_matches_every_path(
+    tmp_path: Path, key: str
+) -> None:
+    config = tmp_path / "config.toml"
+    config.write_text(f'[policy.consent_folders]\n"{key}" = "files.docs"\n', encoding="utf-8")
+    with pytest.raises(ConfigError) as caught:
+        load_settings(config)
+    assert repr(key) in str(caught.value) and "use a real folder" in str(caught.value)

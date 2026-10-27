@@ -18,6 +18,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from jarvis import policy
 from jarvis.brain.failures import ToolError
+from jarvis.consent.session import NO_TURN
 from jarvis.log import get_logger, redact
 from jarvis.mcp.config_file import write_private_json
 from jarvis.mcp.guard import GuardMiddleware
@@ -192,9 +193,7 @@ class JarvisMcpServer:
     def _context(self, name: str) -> TurnContext:
         """The turn's policy context (its mode is the only mode) with the tool's implementation."""
         base = (
-            self._turn()
-            if self._turn is not None
-            else TurnContext("no-turn", mode=self._get_mode())
+            self._turn() if self._turn is not None else TurnContext(NO_TURN, mode=self._get_mode())
         )
 
         @tool_impl(name)

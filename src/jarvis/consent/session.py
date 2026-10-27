@@ -105,7 +105,8 @@ class SessionGrants:
         if held is None:
             return False
         granted_at, granted_in = held
-        if self._clock() - granted_at >= SESSION_MAX_S:
+        elapsed = self._clock() - granted_at
+        if elapsed < 0 or elapsed >= SESSION_MAX_S:  # a clock set back is not a longer session
             del self._session[scope]
             return False
         return granted_in == root or not this_command_only

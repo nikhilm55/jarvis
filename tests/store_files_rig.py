@@ -1,13 +1,21 @@
 """More helpers for the GrantStore file tests: hand-made files and collected audit records."""
 
+import contextlib
 import json
+import os
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
 posix_only = pytest.mark.skipif(
     sys.platform == "win32", reason="POSIX file modes and symlinks are not available on Windows"
+)
+
+needs_dir_permissions = pytest.mark.skipif(
+    sys.platform == "win32" or os.geteuid() == 0,
+    reason="root ignores directory permissions, and Windows has no POSIX directory modes",
 )
 
 AuditRecords = list[tuple[str, dict[str, object]]]
@@ -41,3 +49,16 @@ def collect_audit(monkeypatch: pytest.MonkeyPatch) -> AuditRecords:
         "jarvis.consent.store.audit", lambda src, msg, **kw: records.append((msg, kw))
     )
     return records
+
+
+@contextlib.contextmanager
+def hold_lock(grants: Path) -> Iterator[None]:
+    """Hold the grants flock on a second descriptor, as another process would (POSIX only)."""
+    import fcntl  # noqa: PLC0415 - not available on Windows
+
+    fd = os.open(f"{grants}.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)

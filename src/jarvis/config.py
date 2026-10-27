@@ -115,6 +115,11 @@ class PolicySettings(_Section):
         )
 
         for folder, source in folders.items():
+            if folder.strip() in ("", ".", "/"):
+                raise ValueError(
+                    f"consent_folders[{folder!r}] is not a folder: it would match every path; "
+                    "use a real folder such as '~/Documents'"
+                )
             try:
                 Scope(source, "read")  # the same source rules as every scope
             except ScopeError as error:
