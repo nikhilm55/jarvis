@@ -3,6 +3,7 @@
 Nothing here is written to disk, so a crash or a restart forgets every one of them.
 """
 
+import sys
 import time
 from collections.abc import Callable
 from typing import Literal
@@ -13,7 +14,18 @@ from jarvis.log import audit, get_logger
 logger = get_logger("consent")
 
 SESSION_MAX_S = 8 * 3600
+NO_TURN = "no-turn"  # the turn id of a call made outside any turn
 EndReason = Literal["brain_reset", "pc_lock", "sign_out", "revoked"]
+
+
+if sys.platform == "linux":
+
+    def _default_clock() -> float:
+        """CLOCK_BOOTTIME keeps counting through suspend, unlike time.monotonic (R101)."""
+        return time.clock_gettime(time.CLOCK_BOOTTIME)
+
+else:
+    _default_clock = time.time  # R101: the wall clock also advances through suspend
 
 
 class SessionGrants:
@@ -24,7 +36,7 @@ class SessionGrants:
     `session` lasts until `end(reason)` or `SESSION_MAX_S`, by the injected clock.
     """
 
-    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(self, clock: Callable[[], float] = _default_clock) -> None:
         self._clock = clock
         self._roots: dict[str, str] = {}  # turn id -> the root turn of its command
         self._once: dict[Scope, set[str]] = {}  # scope -> the roots it was allowed for
@@ -64,9 +76,14 @@ class SessionGrants:
             logger.exception("consent audit unavailable", extra={"reason": reason})
 
     def grant(self, scope: Scope, lifetime: Literal["once", "session"], turn_id: str) -> None:
-        """Hold a grant for `scope`, made during `turn_id`."""
+        """Hold a grant for `scope`, made during `turn_id`.
+
+        A once grant outside a turn would never end, so it is not held (M1).
+        """
         root = self.root_of(turn_id)
         if lifetime == "once":
+            if turn_id == NO_TURN:
+                return
             self._once.setdefault(scope, set()).add(root)
         else:
             self._session[scope] = (self._clock(), root)
