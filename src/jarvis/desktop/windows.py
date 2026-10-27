@@ -302,7 +302,7 @@ class WindowManager:
             )
         return self.view(wid)
 
-    def window_op(
+    def apply_op(
         self,
         target: str,
         op: str,
@@ -330,10 +330,12 @@ class WindowManager:
             self._move_to_monitor(wid, monitor)
         elif op in ("snap_left", "snap_right"):
             self._snap(wid, op)
+        elif op == "minimize":
+            self._minimize(wid)
+        elif op == "maximize":
+            self._maximize(wid)
         else:
-            {"minimize": self._minimize, "maximize": self._maximize, "restore": self._restore}[op](
-                wid
-            )
+            self._restore(wid)
         return [self.view(wid)]
 
     def _failed(self, op: str, what: str, remedy: str) -> WindowError:

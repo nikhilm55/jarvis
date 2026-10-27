@@ -1,5 +1,6 @@
 """Tests for the desktop backend (open/close apps, volume, launch)."""
 
+import contextlib
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path
@@ -16,6 +17,7 @@ from jarvis.desktop.backend import (
     launch_app,
 )
 from jarvis.desktop.x11 import WindowInfo, X11Error
+from tests.x_fake import FakeX
 
 
 def _app(name: str, wm_class: str) -> AppEntry:
@@ -55,6 +57,7 @@ def _hooks(**kw: Any) -> Hooks:
         "launcher": lambda _a: None,
         "runner": lambda _argv: "Volume: 0.40\n",
         "sleep": lambda _s: None,
+        "port": lambda: contextlib.nullcontext(FakeX()),  # never the real display
     }
     defaults.update(kw)
     return Hooks(**defaults)

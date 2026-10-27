@@ -8,7 +8,7 @@ import io
 import json
 import sys
 import traceback
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import TextIO
 
 from jarvis.desktop.backend import DesktopBackend, WorkerError
@@ -37,11 +37,45 @@ def _bool_arg(args: dict[str, object], name: str) -> bool:
     return value
 
 
-def _dispatch(backend: DesktopBackend, op: str, args: dict[str, object]) -> dict[str, object]:
+def _opt_int_arg(args: dict[str, object], name: str) -> int | None:
+    return None if args.get(name) is None else _int_arg(args, name)
+
+
+def _str_list_arg(args: dict[str, object], name: str) -> list[str]:
+    value = args.get(name)
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise WorkerError("INTERNAL", f"bad argument {name!r}")
+    return [str(v) for v in value]
+
+
+def _window_op(backend: DesktopBackend, args: dict[str, object]) -> dict[str, object]:
+    return backend.window_op(  # gate-ok: worker runs the op
+        _str_arg(args, "ref"),
+        _str_arg(args, "op"),
+        _opt_int_arg(args, "monitor"),
+        _str_list_arg(args, "with_refs"),
+    )
+
+
+def _dispatch(  # noqa: PLR0911  (a flat table of ops, one return each)
+    backend: DesktopBackend, op: str, args: dict[str, object]
+) -> dict[str, object]:
     if op == "open_app":
         return backend.open_app(_str_arg(args, "query"))  # gate-ok: worker runs the op
     if op == "close_app":
         return backend.close_app(_str_arg(args, "query"))  # gate-ok: worker runs the op
+    if op == "list_windows":
+        return backend.list_windows()  # gate-ok: worker runs the op
+    if op == "focus_window":
+        return backend.focus_window(_str_arg(args, "ref"))  # gate-ok: worker runs the op
+    if op == "window_op":
+        return _window_op(backend, args)
+    if op == "list_apps":
+        return backend.list_apps()  # gate-ok: worker runs the op
+    if op == "is_running":
+        return backend.is_running(_str_arg(args, "query"))  # gate-ok: worker runs the op
     if op == "volume_get":
         return backend.volume_get()  # gate-ok: worker runs the op
     if op == "volume_set":
@@ -53,8 +87,13 @@ def _dispatch(backend: DesktopBackend, op: str, args: dict[str, object]) -> dict
     raise WorkerError("INTERNAL", f"unknown op {op!r}")
 
 
-def _error(req_id: int | None, code: str, message: str) -> dict[str, object]:
-    return {"id": req_id, "ok": False, "error": {"code": code, "message": message}}
+def _error(
+    req_id: int | None, code: str, message: str, alternatives: Sequence[str] = ()
+) -> dict[str, object]:
+    error: dict[str, object] = {"code": code, "message": message}
+    if alternatives:
+        error["alternatives"] = list(alternatives)
+    return {"id": req_id, "ok": False, "error": error}
 
 
 def _validate(request: object) -> tuple[int, str, dict[str, object]]:
@@ -87,7 +126,7 @@ def handle_line(backend: DesktopBackend, line: str) -> dict[str, object]:
         _, op, args = _validate(request)
         result = _dispatch(backend, op, args)
     except (WorkerError, VolumeError, X11Error) as exc:
-        return _error(req_id, exc.code, exc.message)
+        return _error(req_id, exc.code, exc.message, getattr(exc, "alternatives", ()))
     except Exception:
         traceback.print_exc()
         return _error(req_id, "INTERNAL", "unexpected error")

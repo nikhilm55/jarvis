@@ -64,3 +64,10 @@ Unresolved decisions, tracked instead of guessed. Agents: check this file at ses
 **Context:** FRS 5.11.1 lists `meetings:read` and `meetings:record`, but a scope's access is `read` or `write` (M2 task 3). `Scope.parse("meetings:record")` is a `ScopeError`, and a tool that declared it would be refused, which fails closed.
 **Question:** Is recording `meetings:write`, or does the FRS table change to `meetings:read` / `meetings:write`?
 **Impact:** The scope declared by the beyondMeetings tools (M3); the Permissions page's wording.
+
+## OQ-010 — Add ACTION_FAILED and INVALID_ARGUMENT to the error codes (Appendix B)?
+**Status:** open
+**Owner:** @nikhilm55
+**Context:** M2 task 6 (window tools). The brief asks for `ACTION_FAILED` (a window operation whose postcondition did not hold) and `INVALID_ARGUMENT` (an unknown window op, a bad monitor). Neither is in FRS Appendix B or the contract's `ErrorCode`, so the fast path reports them as `INTERNAL` (R93 precedent) and the brain sees the worker's code and message in the tool error.
+**Question:** Add both to Appendix B and `ErrorCode` (with spoken templates), or map them to existing codes (`INTERNAL` / `TIMEOUT`)?
+**Impact:** The contract schema, the brain rules' error-code list (3000-character cap), and the spoken line for a window that would not obey.

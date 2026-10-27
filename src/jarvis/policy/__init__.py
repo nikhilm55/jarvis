@@ -26,6 +26,12 @@ __all__ = [
 _DESKTOP_TOOLS = (
     ToolSpec("desktop.open_app", Tier.T1),
     ToolSpec("desktop.close_app", Tier.T1),
+    ToolSpec("desktop.list_apps", Tier.T0),
+    ToolSpec("desktop.is_running", Tier.T0),
+    ToolSpec("desktop.list_windows", Tier.T0),
+    ToolSpec("desktop.focus_window", Tier.T1),
+    # Closing is undoable by reopening the app (R90); the undo itself is task 9's.
+    ToolSpec("desktop.window_op", Tier.T1, undoable=True),
     ToolSpec("desktop.volume_get", Tier.T0),
     # FRS 5.10 lists volume under T1; reading it is T0 (R95).
     ToolSpec("desktop.volume_set", Tier.T1),

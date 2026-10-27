@@ -50,6 +50,11 @@ def test_should_register_desktop_tools_with_exact_tiers() -> None:
     expected = {
         "desktop.open_app": Tier.T1,
         "desktop.close_app": Tier.T1,
+        "desktop.list_apps": Tier.T0,
+        "desktop.is_running": Tier.T0,
+        "desktop.list_windows": Tier.T0,
+        "desktop.focus_window": Tier.T1,
+        "desktop.window_op": Tier.T1,
         "desktop.volume_get": Tier.T0,
         "desktop.volume_set": Tier.T1,  # R95: FRS 5.10 lists volume under T1
         "desktop.volume_step": Tier.T1,
@@ -165,3 +170,23 @@ def test_should_keep_valid_spec_equal_and_hashable() -> None:
     b = ToolSpec("n", "T0")  # type: ignore[arg-type]
     assert a == b
     assert hash(a) == hash(b)
+
+
+def test_should_declare_closing_a_window_undoable_and_reading_windows_not() -> None:
+    window_op, list_windows = get("desktop.window_op"), get("desktop.list_windows")
+    assert window_op is not None
+    assert list_windows is not None
+    assert window_op.undoable is True  # closing is undone by reopening the app (R90)
+    assert list_windows.undoable is False
+
+
+@pytest.mark.parametrize(
+    "name", ["desktop.list_windows", "desktop.list_apps", "desktop.is_running"]
+)
+def test_should_run_reading_windows_and_apps_in_every_mode(name: str) -> None:
+    assert [verdict(name, mode)[0] for mode in MODES] == ["run", "run", "run"]
+
+
+@pytest.mark.parametrize("name", ["desktop.focus_window", "desktop.window_op"])
+def test_should_treat_changing_windows_as_t1_confirm_in_safe_run_otherwise(name: str) -> None:
+    assert [verdict(name, mode)[0] for mode in MODES] == ["confirm", "run", "run"]

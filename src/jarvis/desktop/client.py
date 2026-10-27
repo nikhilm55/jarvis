@@ -15,10 +15,11 @@ from collections.abc import Sequence
 class DesktopError(Exception):
     """Raised when the desktop worker reports an error or the client is unusable."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, alternatives: Sequence[str] = ()) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
+        self.alternatives = tuple(alternatives)
 
     def __str__(self) -> str:
         return self.message
@@ -48,6 +49,7 @@ class DesktopClient:
         command: Sequence[str] | None = None,
         timeout_s: float = 5.0,
         open_timeout_s: float = 10.0,
+        window_op_timeout_s: float = 10.0,
     ) -> None:
         self._command = (
             list(command)
@@ -60,6 +62,7 @@ class DesktopClient:
         )
         self._timeout_s = timeout_s
         self._open_timeout_s = open_timeout_s
+        self._window_op_timeout_s = window_op_timeout_s
         self._proc: asyncio.subprocess.Process | None = None
         self._stdin: asyncio.StreamWriter | None = None
         self._stdout: asyncio.StreamReader | None = None
@@ -74,6 +77,37 @@ class DesktopClient:
     async def close_app(self, query: str) -> dict[str, object]:
         """Close an application by query (idempotent)."""
         return await self._call("close_app", {"query": query}, self._timeout_s, True)
+
+    async def list_windows(self) -> dict[str, object]:
+        """List the user's windows, frontmost first (idempotent)."""
+        return await self._call("list_windows", {}, self._timeout_s, True)
+
+    async def focus_window(self, ref: str) -> dict[str, object]:
+        """Bring a window to the front and focus it (idempotent)."""
+        return await self._call("focus_window", {"ref": ref}, self._timeout_s, True)
+
+    async def window_op(
+        self,
+        ref: str,
+        op: str,
+        monitor: int | None = None,
+        with_refs: Sequence[str] = (),
+    ) -> dict[str, object]:
+        """Minimise, maximise, restore, close, snap, move or tile windows (not idempotent)."""
+        args: dict[str, object] = {"ref": ref, "op": op}
+        if monitor is not None:
+            args["monitor"] = monitor
+        if with_refs:
+            args["with_refs"] = list(with_refs)
+        return await self._call("window_op", args, self._window_op_timeout_s, False)
+
+    async def list_apps(self) -> dict[str, object]:
+        """List the installed apps (idempotent)."""
+        return await self._call("list_apps", {}, self._timeout_s, True)
+
+    async def is_running(self, query: str) -> dict[str, object]:
+        """Whether an app has a window open (idempotent)."""
+        return await self._call("is_running", {"query": query}, self._timeout_s, True)
 
     async def volume_get(self) -> dict[str, object]:
         """Get the current volume (idempotent)."""
@@ -187,7 +221,9 @@ class DesktopClient:
             error = response.get("error", {})
             code = error.get("code", "UNKNOWN") if isinstance(error, dict) else "UNKNOWN"
             message = error.get("message", "") if isinstance(error, dict) else ""
-            raise DesktopError(str(code), str(message))
+            raw = error.get("alternatives") if isinstance(error, dict) else None
+            names = [str(a) for a in raw] if isinstance(raw, list) else []
+            raise DesktopError(str(code), str(message), names)
 
     async def _spawn(self) -> tuple[asyncio.StreamWriter, asyncio.StreamReader]:
         if self._closed:

@@ -37,6 +37,17 @@ def _requests(tmp_path: Path) -> list[str]:
 CASES = [
     ("open_app", ("x",), "open_app", {"query": "x"}),
     ("close_app", ("x",), "close_app", {"query": "x"}),
+    ("list_windows", (), "list_windows", {}),
+    ("focus_window", ("x11:0x1",), "focus_window", {"ref": "x11:0x1"}),
+    ("window_op", ("x11:0x1", "close"), "window_op", {"ref": "x11:0x1", "op": "close"}),
+    (
+        "window_op",
+        ("a", "move_to_monitor", 1, ["b"]),
+        "window_op",
+        {"ref": "a", "op": "move_to_monitor", "monitor": 1, "with_refs": ["b"]},
+    ),
+    ("list_apps", (), "list_apps", {}),
+    ("is_running", ("x",), "is_running", {"query": "x"}),
     ("volume_get", (), "volume_get", {}),
     ("volume_set", (30,), "volume_set", {"pct": 30}),
     ("volume_step", (5,), "volume_step", {"delta": 5}),

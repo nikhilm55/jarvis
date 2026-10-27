@@ -35,7 +35,7 @@ _MARKER = re.compile(r"#\s*gate-ok:\s*(\S.*?)\s*$")
 # Every `# gate-ok` in the product, with how many lines carry it. Edit with a reviewer's eye.
 EXPECTED_MARKERS: Counter[tuple[str, str]] = Counter(
     {
-        ("desktop/worker.py", "worker runs the op"): 6,
+        ("desktop/worker.py", "worker runs the op"): 11,
         ("brain/desktop_tools.py", "via MCP impl"): 6,
         ("brain/dispatch.py", "via MCP impl"): 2,
         ("brain/session.py", "via MCP impl"): 2,
@@ -410,6 +410,11 @@ def test_should_derive_the_tool_operations_from_the_impls_not_from_a_list() -> N
     assert product_operations() == {
         "open_app",
         "close_app",
+        "is_running",
+        "list_apps",
+        "list_windows",
+        "focus_window",
+        "window_op",
         "volume_get",
         "volume_set",
         "volume_step",
