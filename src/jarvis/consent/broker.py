@@ -46,6 +46,30 @@ class Asker(Protocol):
     ) -> AskAnswer: ...
 
 
+# The prompt is spoken before the answer clock starts (FR-CON-07 counts from the question).
+SPEAKING_ALLOWANCE_S = 30.0
+
+
+class TurnAsker:
+    """Asks through the turn's own consent question; a call outside any turn has none (no)."""
+
+    speaking_allowance_s = SPEAKING_ALLOWANCE_S
+
+    def __init__(self, settings: ConsentSettings) -> None:
+        """`settings.ask_timeout_s` is how long the user has to answer once asked."""
+        self._timeout_s = settings.ask_timeout_s
+
+    async def ask(
+        self, scopes: tuple[Scope, ...], reason: str, ctx: "TurnContext", offer_always: bool
+    ) -> AskAnswer:
+        question = ctx.consent_question
+        if question is None:
+            return AskAnswer("timeout", "timeout")
+        names = tuple(str(scope) for scope in scopes)
+        choice, method = await question.ask(names, reason, offer_always, self._timeout_s)
+        return AskAnswer(choice, method)  # type: ignore[arg-type]  # the broker validates both
+
+
 class NoAsker:
     """Nobody to ask: every question times out, which is a no."""
 
@@ -64,10 +88,10 @@ class Consent:
 
 
 def build_consent(settings: ConsentSettings, asker: Asker | None = None) -> Consent:
-    """The real broker over `data_dir()/grants.json`; with no asker nothing ungranted is allowed."""
+    """The real broker over `data_dir()/grants.json`; by default it asks through the turn."""
     session = SessionGrants()
     store = GrantStore(data_dir() / "grants.json")
-    return Consent(Broker(store, session, asker or NoAsker(), settings), session)
+    return Consent(Broker(store, session, asker or TurnAsker(settings), settings), session)
 
 
 @dataclass(frozen=True)
@@ -250,7 +274,8 @@ class Broker:
     async def _answer(
         self, missing: tuple[Scope, ...], reason: str, ctx: "TurnContext", *, offer_always: bool
     ) -> AskAnswer:
-        timeout = self._settings.ask_timeout_s
+        # a speaking asker's own clock starts after the question is said; this is the backstop
+        timeout = self._settings.ask_timeout_s + getattr(self._asker, "speaking_allowance_s", 0)
         try:
             async with asyncio.timeout(timeout):
                 answer = await self._asker.ask(missing, reason, ctx, offer_always)

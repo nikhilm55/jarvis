@@ -41,6 +41,14 @@ class ConsentBroker(Protocol):
     ) -> Literal["granted", "denied"]: ...
 
 
+class ConsentQuestion(Protocol):
+    """Asks the user one consent question (FR-CON-04..07); the turn's own, like its Confirmer."""
+
+    async def ask(
+        self, scopes: tuple[str, ...], reason: str, offer_always: bool, timeout_s: float = 15
+    ) -> tuple[str, str]: ...
+
+
 class NoConfirmer:
     """Answers no to everything: nothing that needs a confirmation runs."""
 

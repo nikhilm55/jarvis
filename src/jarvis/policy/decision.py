@@ -9,7 +9,7 @@ from typing import Literal
 from jarvis.activity import PolicyRecord
 from jarvis.config import PolicySettings
 from jarvis.policy.model import Mode, Tier
-from jarvis.policy.ports import Confirmer, ConsentBroker, NoConfirmer, NoConsent
+from jarvis.policy.ports import Confirmer, ConsentBroker, ConsentQuestion, NoConfirmer, NoConsent
 
 Action = Literal["run", "confirm", "consent", "deny"]
 Kind = Literal["voice", "click", "guardrail"]
@@ -52,6 +52,7 @@ class TurnContext:
     policy_decisions: list[PolicyRecord] = field(default_factory=list)
     heard: list[str] = field(default_factory=list)  # the user's words this turn (R83)
     controlling: Controlling = not_shown  # entered around tools that drive the input
+    consent_question: ConsentQuestion | None = None  # who asks for consent; None: nobody can
 
 
 @dataclass(frozen=True)

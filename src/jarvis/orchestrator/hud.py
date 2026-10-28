@@ -16,6 +16,7 @@ HudState = Literal[
     "error",
     "reply",
     "confirm",  # a confirmation card; extra["closed"] takes it down (FR-SAFE-07)
+    "consent",  # the consent card (FR-CON-06, §5.11.4); extra["closed"] takes it down
     "controlling",  # "Jarvis is controlling your PC" + Stop; extra["closed"] ends it (FR-SAFE-06)
 ]
 

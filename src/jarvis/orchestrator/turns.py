@@ -12,6 +12,7 @@ from jarvis.brain import BrainUnavailable
 from jarvis.brain.failures import internal_response
 from jarvis.config import Settings
 from jarvis.confirm import Confirmer, HudAnswers
+from jarvis.confirm.consent_question import ConsentQuestion
 from jarvis.consent.session import SessionGrants
 from jarvis.contract import FinalResponse
 from jarvis.desktop.client import DesktopClient
@@ -83,6 +84,7 @@ class TurnRunner:
         self._root: str | None = None  # the first turn of the command being run
         self._heard: list[str] = []  # the running turn's words from the user (R83)
         self._indicator = ControlIndicator(services.hud)
+        self._told_cloud: set[str] = set()  # sources already told their data goes to Claude
 
     async def run(self, command: Command) -> None:
         """Run a command, then every follow-up answer its final response asks for (R60)."""
@@ -130,6 +132,7 @@ class TurnRunner:
             confirmer=self._confirmer(),
             consent=self._s.consent,
             controlling=self._indicator.driving,
+            consent_question=self._consent_question(),
         )
         record.policy_decisions = ctx.policy_decisions  # the gate appends as it decides
         ctx.heard.extend(dict.fromkeys((command.raw, command.text)))  # R83: the user's own words
@@ -217,6 +220,19 @@ class TurnRunner:
             self._s.windows,
             self._hud,
             self._s.answers,
+            before_speaking=self._mark_spoken,
+        )
+
+    def _consent_question(self) -> ConsentQuestion | None:
+        """The turn's consent question (FR-CON-04..07); without HUD answers wired, none."""
+        if self._s.answers is None:
+            return None
+        return ConsentQuestion(
+            self._s.voice,
+            self._s.windows,
+            self._hud,
+            self._s.answers,
+            told_cloud=self._told_cloud,
             before_speaking=self._mark_spoken,
         )
 
