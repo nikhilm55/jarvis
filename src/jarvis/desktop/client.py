@@ -63,6 +63,7 @@ class DesktopClient:
         self._timeout_s = timeout_s
         self._open_timeout_s = open_timeout_s
         self._window_op_timeout_s = window_op_timeout_s
+        self._input_timeout_s = max(timeout_s, 20.0)  # typing 200 characters key by key
         self._proc: asyncio.subprocess.Process | None = None
         self._stdin: asyncio.StreamWriter | None = None
         self._stdout: asyncio.StreamReader | None = None
@@ -108,6 +109,25 @@ class DesktopClient:
     async def is_running(self, query: str) -> dict[str, object]:
         """Whether an app has a window open (idempotent)."""
         return await self._call("is_running", {"query": query}, self._timeout_s, True)
+
+    async def type_text(self, text: str) -> dict[str, object]:
+        """Type text into the focused field (not idempotent: never retried)."""
+        return await self._call("type_text", {"text": text}, self._input_timeout_s, False)
+
+    async def press_keys(self, combo: str) -> dict[str, object]:
+        """Press a key combination (not idempotent)."""
+        return await self._call("press_keys", {"combo": combo}, self._timeout_s, False)
+
+    async def click(
+        self, x: int, y: int, button: str = "left", count: int = 1
+    ) -> dict[str, object]:
+        """Click at screen coordinates (not idempotent)."""
+        args: dict[str, object] = {"x": x, "y": y, "button": button, "count": count}
+        return await self._call("click", args, self._timeout_s, False)
+
+    async def scroll(self, dx: int, dy: int) -> dict[str, object]:
+        """Scroll by notches (not idempotent)."""
+        return await self._call("scroll", {"dx": dx, "dy": dy}, self._timeout_s, False)
 
     async def volume_get(self) -> dict[str, object]:
         """Get the current volume (idempotent)."""

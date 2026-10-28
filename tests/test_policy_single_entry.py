@@ -35,8 +35,8 @@ _MARKER = re.compile(r"#\s*gate-ok:\s*(\S.*?)\s*$")
 # Every `# gate-ok` in the product, with how many lines carry it. Edit with a reviewer's eye.
 EXPECTED_MARKERS: Counter[tuple[str, str]] = Counter(
     {
-        ("desktop/worker.py", "worker runs the op"): 11,
-        ("brain/desktop_tools.py", "via MCP impl"): 11,
+        ("desktop/worker.py", "worker runs the op"): 15,
+        ("brain/desktop_tools.py", "via MCP impl"): 15,
         ("brain/dispatch.py", "via MCP impl"): 2,
         ("brain/session.py", "via MCP impl"): 2,
         ("orchestrator/assemble.py", "late-bound brain hook"): 1,
@@ -420,6 +420,10 @@ def test_should_derive_the_tool_operations_from_the_impls_not_from_a_list() -> N
         "volume_set",
         "volume_step",
         "mute",
+        "type_text",  # FR-PC-03 input
+        "press_keys",
+        "click",
+        "scroll",
         "access_overview",  # the consent voice commands (FR-CON-13)
         "voice_allow",
         "voice_revoke",

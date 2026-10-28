@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager
 
 from jarvis.config import ConfigError, load_settings
+from jarvis.desktop import input as keyboard
 from jarvis.desktop.apps import (
     Ambiguous,
     AppEntry,
@@ -32,6 +33,7 @@ from jarvis.desktop.x11 import (
     list_windows,
     new_windows,
 )
+from jarvis.desktop.x11 import _session as x11_session
 from jarvis.desktop.xport import open_port
 
 _OPEN_POLLS = 40
@@ -246,6 +248,29 @@ class DesktopBackend:
             return {"app": query, "running": count > 0, "windows": count, "installed": False}
         count = sum(app_matches(app, w) for w in windows)
         return {"app": app.name, "running": count > 0, "windows": count, "installed": True}
+
+    # FR-PC-03 input: each opens its own X connection, like the window helpers
+    def type_text(self, text: str) -> dict[str, object]:
+        """Type `text` into the focused field (pasted when long or not on the keymap)."""
+        with x11_session(None) as disp:
+            return keyboard.type_into(disp, text)
+
+    def press_keys(self, combo: str) -> dict[str, object]:
+        """Press a key combination such as "ctrl+shift+m"."""
+        with x11_session(None) as disp:
+            return keyboard.press_combo(disp, combo)
+
+    def click(self, x: int, y: int, button: str, count: int) -> dict[str, object]:
+        """Click at (x, y) on the screen."""
+        if button not in ("left", "middle", "right"):
+            raise WorkerError("INTERNAL", "button must be left, middle or right")
+        with x11_session(None) as disp:
+            return keyboard.click_at(disp, x, y, button, count)  # type: ignore[arg-type]
+
+    def scroll(self, dx: int, dy: int) -> dict[str, object]:
+        """Scroll by whole notches."""
+        with x11_session(None) as disp:
+            return keyboard.scroll_by(disp, dx, dy)
 
     def volume_get(self) -> dict[str, object]:
         state = volume_get(self._hooks.runner)

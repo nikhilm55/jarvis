@@ -24,6 +24,10 @@ EXPECTED_NAMES = (
     "volume_set",
     "volume_step",
     "mute",
+    "type_text",
+    "press_keys",
+    "click",
+    "scroll",
 )
 
 POLICY_MAP = {
@@ -42,6 +46,10 @@ POLICY_MAP = {
     "volume_set": "desktop.volume_set",
     "volume_step": "desktop.volume_step",
     "mute": "desktop.mute",
+    "type_text": "desktop.type_text",
+    "press_keys": "desktop.press_keys",
+    "click": "desktop.click",
+    "scroll": "desktop.scroll",
 }
 
 

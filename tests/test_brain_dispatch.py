@@ -63,6 +63,24 @@ class FakeDesktop:
         self.calls.append(("mute", str(on)))
         return {"ok": True}
 
+    async def type_text(self, text: str) -> dict[str, object]:
+        self.calls.append(("type_text", text))
+        return {"ok": True}
+
+    async def press_keys(self, combo: str) -> dict[str, object]:
+        self.calls.append(("press_keys", combo))
+        return {"ok": True}
+
+    async def click(
+        self, x: int, y: int, button: str = "left", count: int = 1
+    ) -> dict[str, object]:
+        self.calls.append(("click", f"{x},{y}"))
+        return {"ok": True}
+
+    async def scroll(self, dx: int, dy: int) -> dict[str, object]:
+        self.calls.append(("scroll", f"{dx},{dy}"))
+        return {"ok": True}
+
 
 class Recorder:
     def __init__(self, events: list[str]) -> None:
