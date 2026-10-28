@@ -12,6 +12,7 @@ EXPECTED_NAMES = (
     "say",
     "ask",
     "respond",
+    "request_access",
     "open_app",
     "close_app",
     "list_apps",
@@ -29,6 +30,7 @@ POLICY_MAP = {
     "say": "jarvis.say",
     "ask": "jarvis.ask",
     "respond": "jarvis.respond",
+    "request_access": "jarvis.request_access",
     "open_app": "desktop.open_app",
     "close_app": "desktop.close_app",
     "list_apps": "desktop.list_apps",
@@ -43,7 +45,7 @@ POLICY_MAP = {
 }
 
 
-def test_should_expose_the_fourteen_tools_in_order_when_module_loaded() -> None:
+def test_should_expose_the_tools_in_order_when_module_loaded() -> None:
     assert [t.name for t in TOOLS] == list(EXPECTED_NAMES)
 
 
