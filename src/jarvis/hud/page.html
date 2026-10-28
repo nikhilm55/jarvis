@@ -71,6 +71,9 @@ body{font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;font-featur
 .btn-sm{height:28px;padding:0 12px;font-size:12px;border-radius:var(--r-sm)}
 .control{pointer-events:auto}
 .control[hidden]{display:none}
+.b-blue{background:var(--blue-soft);color:var(--blue)}
+.access{width:auto!important;align-self:center}
+.access[hidden]{display:none}
 .quote{padding:10px 14px;border-radius:var(--r-md);background:var(--card);border:1px solid var(--hairline);color:var(--ink);font-size:15px}
 .quote[hidden]{display:none}
 .card-body{margin:0;font-size:15px;color:var(--body)}
@@ -107,6 +110,7 @@ kbd{display:inline-flex;align-items:center;justify-content:center;min-width:22px
     <span class="text" id="control-text"></span>
     <button class="btn btn-sm btn-ghost" id="control-stop" type="button">Stop</button>
   </div>
+  <span class="badge b-blue access" id="access" role="status" hidden></span>
   <div class="pill compact" id="pill" role="status" aria-live="polite">
     <div class="orb idle" id="pill-orb" aria-hidden="true"></div>
     <div class="wave" id="pill-wave" aria-hidden="true" style="display:none"><i></i><i></i><i></i><i></i><i></i><i></i></div>
@@ -129,6 +133,7 @@ const LOOKS = {
   reply:      { orb: 'confirm', wave: false, label: 'Reply…', pulse: true, hide: true },
   confirm:    { orb: 'confirm', wave: false, label: 'Confirm?', pulse: true },
   consent:    { orb: 'confirm', wave: false, label: 'Reply · Y S A N', pulse: true },
+  access_badge: { orb: 'think', wave: false, label: '' },
   controlling:{ orb: 'think',   wave: false, label: 'Working…' }
 };
 /* END LOOKS */
@@ -202,6 +207,12 @@ function windowMode() {
     rect: [r.left, r.top, r.width, r.height],
     scale: window.devicePixelRatio || 1
   }));
+}
+function showAccess(ev) {  // FR-CON-14: a small source badge, beside the pill, not over it
+  const el = document.getElementById('access');
+  const closed = (ev.extra || {}).closed;
+  el.textContent = closed ? '' : (ev.text || '');
+  el.hidden = !!closed || !ev.text;
 }
 function showControl(ev) {
   if ((ev.extra || {}).closed) {
@@ -290,6 +301,7 @@ function render(ev) {
     openCard(ev);
   }
   if (ev.state === 'controlling') { showControl(ev); return; }
+  if (ev.state === 'access_badge') { showAccess(ev); return; }
   const look = LOOKS[ev.state];
   const extra = ev.extra || {};
   orb.className = 'orb ' + look.orb;

@@ -312,8 +312,9 @@ async def gated_dispatch(call: ToolCall, ctx: TurnContext) -> ToolResult:
         return ToolResult(error=error, decision=verdict.decision)
     spec = registry.get(call.name)
     indicator = ctx.controlling() if spec is not None and spec.drives_input else not_shown()
+    badge = ctx.touching(verdict.decision.scopes) if verdict.decision.scopes else not_shown()
     try:
-        async with indicator:
+        async with indicator, badge:
             output = await impl(call.args)
     except Exception as exc:
         await _outcome(call, ctx, f"error: {type(exc).__name__}")
