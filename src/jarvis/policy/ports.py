@@ -44,8 +44,15 @@ class ConsentBroker(Protocol):
 class ConsentQuestion(Protocol):
     """Asks the user one consent question (FR-CON-04..07); the turn's own, like its Confirmer."""
 
-    async def ask(
-        self, scopes: tuple[str, ...], reason: str, offer_always: bool, timeout_s: float = 15
+    async def ask(  # noqa: PLR0913 - the question, plus the FR-CON-19 action
+        self,
+        scopes: tuple[str, ...],
+        reason: str,
+        offer_always: bool,
+        timeout_s: float = 15,
+        *,
+        action: str = "",
+        action_kind: "Kind | None" = None,
     ) -> tuple[str, str]: ...
 
 

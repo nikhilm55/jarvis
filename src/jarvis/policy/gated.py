@@ -189,9 +189,35 @@ async def _judge(call: ToolCall, ctx: TurnContext) -> _Verdict:
     # Any verdict that names scopes must be checked against the broker first (FR-CON-10):
     # "never" beats every mode at every tier, including YOLO confirm/guardrail.
     checked = bool(decision.scopes)
-    if checked and await ctx.consent.require(decision.scopes, _reason(call), ctx) != "granted":
-        return _Verdict(False, decision, "consent denied", code="CONSENT_DENIED")
+    if checked:
+        granted, answered_by = await _consent(call, ctx, decision, note)
+        if not granted:
+            return _Verdict(False, decision, "consent denied", code="CONSENT_DENIED")
+        if answered_by is not None:  # one prompt asked for both (FR-CON-19)
+            reason = "confirmed with the consent answer"
+            return _Verdict(True, decision, reason, confirmed_by=answered_by, consent_checked=True)
     return replace(await _after_consent(call, ctx, decision, note), consent_checked=checked)
+
+
+async def _consent(
+    call: ToolCall, ctx: TurnContext, decision: Decision, note: str
+) -> tuple[bool, str | None]:
+    """Ask the broker; when a confirmation is due too, the question carries it (FR-CON-19).
+
+    Returns whether consent was granted, and how the action was confirmed when the user
+    answered one combined question (None: nothing was asked, so the confirmation still is).
+    """
+    kind = decision.then_confirm if decision.action == "consent" else None
+    combo = ctx.combined
+    combo.confirmed_by = None
+    if kind in ("voice", "click"):
+        prompt = describe(call.name, call.args, decision.tier)
+        combo.action, combo.kind = (f"{note} {prompt}" if note else prompt), kind
+    try:
+        granted = await ctx.consent.require(decision.scopes, _reason(call), ctx) == "granted"
+        return granted, combo.confirmed_by
+    finally:
+        combo.action, combo.kind, combo.confirmed_by = "", None, None
 
 
 async def _after_consent(

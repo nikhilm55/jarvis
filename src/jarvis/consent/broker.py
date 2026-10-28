@@ -66,7 +66,17 @@ class TurnAsker:
         if question is None:
             return AskAnswer("timeout", "timeout")
         names = tuple(str(scope) for scope in scopes)
-        choice, method = await question.ask(names, reason, offer_always, self._timeout_s)
+        combo = ctx.combined
+        choice, method = await question.ask(
+            names,
+            reason,
+            offer_always,
+            self._timeout_s,
+            action=combo.action,
+            action_kind=combo.kind,
+        )
+        if combo.action and choice in ("once", "session", "always"):
+            combo.confirmed_by = method  # the same answer confirmed the action (FR-CON-19)
         return AskAnswer(choice, method)  # type: ignore[arg-type]  # the broker validates both
 
 

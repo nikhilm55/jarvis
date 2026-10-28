@@ -34,6 +34,19 @@ class ToolCall:
     origin: Origin
 
 
+@dataclass
+class CombinedAsk:
+    """FR-CON-19: the action whose confirmation rides on the consent question being asked.
+
+    The gate sets `action` and `kind` around its consent check; the question that grants the
+    consent records how it was answered in `confirmed_by`, and the gate then asks no more.
+    """
+
+    action: str = ""
+    kind: "Kind | None" = None
+    confirmed_by: str | None = None
+
+
 @dataclass(frozen=True)
 class TurnContext:
     """What the gate knows about the turn the call belongs to.
@@ -53,6 +66,7 @@ class TurnContext:
     heard: list[str] = field(default_factory=list)  # the user's words this turn (R83)
     controlling: Controlling = not_shown  # entered around tools that drive the input
     consent_question: ConsentQuestion | None = None  # who asks for consent; None: nobody can
+    combined: CombinedAsk = field(default_factory=CombinedAsk)  # FR-CON-19, set by the gate
 
 
 @dataclass(frozen=True)
