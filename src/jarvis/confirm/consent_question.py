@@ -10,16 +10,18 @@ import time
 from collections.abc import Callable
 
 from jarvis.confirm.answers import HudAnswer, HudAnswers
-from jarvis.confirm.exchange import Exchange, Judged, Question
+from jarvis.confirm.exchange import Again, Exchange, Judged, Question
 from jarvis.confirm.words import words
 from jarvis.consent.wording import badge, describe
 from jarvis.orchestrator.hud import HudSink
 from jarvis.orchestrator.voice import Voice
 from jarvis.orchestrator.windows import Windows
+from jarvis.policy.decision import Kind
 
-__all__ = ["LEAVE_IT", "ConsentQuestion", "choice_of"]
+__all__ = ["CLICK_TO_ALLOW", "LEAVE_IT", "ConsentQuestion", "choice_of"]
 
 LEAVE_IT = "I'll leave that for now."  # FR-CON-07: no answer is a no, said once
+CLICK_TO_ALLOW = "Click Allow once or Always allow on the screen to go ahead, or say no."
 CLOUD = "Claude (cloud)"
 
 # FR-CON-05's answers; buttons send the first word of each, keys send y / s / a / n.
@@ -39,6 +41,13 @@ _CHOICES: dict[str, tuple[str, ...]] = {
     "no": ("n", "no", "deny", "not now", "cancel", "no thanks"),
     "never": ("never", "never allow", "don t ever ask", "do not ever ask", "dont ever ask"),
 }
+
+
+def _click_only(choice: str | None, action_kind: Kind | None) -> Judged:
+    """A grant for an action that needs a click is not taken by voice, typing or a key."""
+    if action_kind == "click" and choice in ("once", "session", "always"):
+        return Again(CLICK_TO_ALLOW)
+    return choice
 
 
 def choice_of(text: str) -> str | None:
@@ -67,33 +76,53 @@ class ConsentQuestion:
         )
         self._told_cloud = told_cloud if told_cloud is not None else set()
 
-    async def ask(
-        self, scopes: tuple[str, ...], reason: str, offer_always: bool, timeout_s: float = 15
+    async def ask(  # noqa: PLR0913 - the question, plus the FR-CON-19 action
+        self,
+        scopes: tuple[str, ...],
+        reason: str,
+        offer_always: bool,
+        timeout_s: float = 15,
+        *,
+        action: str = "",
+        action_kind: Kind | None = None,
     ) -> tuple[str, str]:
-        """(choice, method): once / session / always / no / never, or ("timeout", "timeout")."""
+        """(choice, method): once / session / always / no / never, or ("timeout", "timeout").
+
+        With an `action` the question also confirms it (FR-CON-19): "Send … to Rahul? This lets
+        me send Teams messages. Just this once, or always?" For a `click` action only a card
+        button grants it; a spoken or typed yes is told to click.
+        """
         what = describe(scopes)
-        lead = (
-            f"To {reason.strip().rstrip('.')}, I need to {what}."
-            if reason.strip()
-            else (f"To do that I need to {what}.")
-        )
+        if action:
+            lead = f"{action} This lets me {what}."
+        elif reason.strip():
+            lead = f"To {reason.strip().rstrip('.')}, I need to {what}."
+        else:
+            lead = f"To do that I need to {what}."
         sources = {scope.partition(":")[0] for scope in scopes}
         cloud = "" if sources <= self._told_cloud else " This sends it to Claude, in the cloud."
         self._told_cloud |= sources
         options = "You can say yes, yes always, or no." if offer_always else "Say yes or no."
-        spoken = f"{lead} Do I have your permission?{cloud} {options}"
+        if action_kind == "click":
+            options = CLICK_TO_ALLOW
+        if action:
+            question_line = "Just this once, or always?" if offer_always else "Go ahead?"
+            spoken = f"{lead}{cloud} {question_line} {options}"
+        else:
+            spoken = f"{lead} Do I have your permission?{cloud} {options}"
 
         def by_voice(text: str) -> Judged:
             if len(" ".join(words(text))) <= 1:
                 return None  # a lone letter is a key, never speech (noise can sound like "a")
-            return choice_of(text)
+            return _click_only(choice_of(text), action_kind)
 
         def by_hud(answer: HudAnswer) -> Judged:
-            return choice_of(answer.text)
+            choice = choice_of(answer.text)
+            return choice if answer.method == "button" else _click_only(choice, action_kind)
 
         question = Question(
             state="consent",
-            title="Permission needed",
+            title=action or "Permission needed",
             extra={
                 "kind": "consent",
                 "badge": badge(scopes),
