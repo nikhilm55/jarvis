@@ -52,9 +52,12 @@ def test_should_distinguish_send_and_write_when_rules_built() -> None:
     assert "compose" in text.lower()
 
 
+RULES_CAP = 4000  # R104: M1's 3000 grew with the M2 tools, each of which the rules must name
+
+
 def test_should_stay_short_when_rules_built() -> None:
-    """The prompt stays short: len(build_rules()) <= 3000."""
-    assert len(build_rules()) <= 3000
+    """The prompt stays short: len(build_rules()) <= RULES_CAP."""
+    assert len(build_rules()) <= RULES_CAP
 
 
 def test_should_have_no_long_lines_or_tabs_or_whitespace_when_rules_built() -> None:
@@ -126,7 +129,7 @@ def test_should_keep_policy_consent_and_cancel_blocks_failed_with_their_code() -
 
 
 def test_should_fit_the_size_cap_with_both_status_rules_present() -> None:
-    assert len(build_rules()) <= 3000
+    assert len(build_rules()) <= RULES_CAP
     text = " ".join(build_rules().split())
     assert "is status success" in text
     assert "block is status failed" in text

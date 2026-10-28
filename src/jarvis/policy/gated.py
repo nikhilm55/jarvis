@@ -122,6 +122,14 @@ def _target_phrase(call: ToolCall) -> str:
 
 
 _MAX_QUOTE = 60
+_MAX_REASON = 120
+
+
+def _reason(call: ToolCall) -> str:
+    """Why the consent is asked: the tool's own reason argument, else "" ("To do that…")."""
+    spec = registry.get(call.name)
+    value = call.args.get(spec.reason_key) if spec is not None and spec.reason_key else None
+    return value.strip()[:_MAX_REASON] if isinstance(value, str) else ""
 
 
 def _provenance(call: ToolCall, ctx: TurnContext, decision: Decision) -> tuple[Decision, str]:
@@ -181,10 +189,7 @@ async def _judge(call: ToolCall, ctx: TurnContext) -> _Verdict:
     # Any verdict that names scopes must be checked against the broker first (FR-CON-10):
     # "never" beats every mode at every tier, including YOLO confirm/guardrail.
     checked = bool(decision.scopes)
-    if (
-        checked
-        and await ctx.consent.require(decision.scopes, "", ctx) != "granted"  # "To do that…"
-    ):
+    if checked and await ctx.consent.require(decision.scopes, _reason(call), ctx) != "granted":
         return _Verdict(False, decision, "consent denied", code="CONSENT_DENIED")
     return replace(await _after_consent(call, ctx, decision, note), consent_checked=checked)
 

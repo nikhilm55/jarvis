@@ -23,6 +23,7 @@ RULES: str = textwrap.dedent(
     say(text) speaks one short progress sentence;
     ask(question, options?) asks out loud and returns the user's answer;
     respond(...) ends the turn;
+    request_access(scopes, reason) asks up front for personal data;
     open_app(name), close_app(name), is_running(name), list_apps(),
     list_windows(), focus_window(ref), window_op(ref, op); ref: a
     list_windows ref or title/app words;
@@ -51,17 +52,16 @@ RULES: str = textwrap.dedent(
     UNSUPPORTED_ON_PLATFORM, ELEVATED_WINDOW, CONSENT_DENIED,
     BLOCKED_BY_POLICY, CANCELLED, TIMEOUT, NETWORK, INTERNAL.
 
-    `spoken` style: plain words for the ear, at most two
+    `spoken`: plain words for the ear, at most two
     sentences plus an optional closing question.
     No markdown, URLs, paths or code in it; long content goes in
     display.body_md. On failure, say what went wrong and what the user
     can do.
 
-    say: only for short progress on slow, multi-step work, never for
-    the final answer. ask: only when people, files or destructive
-    targets are ambiguous; otherwise just act. When a tool returns an
-    error or a policy block, do not retry blindly; explain it through
-    respond.
+    say: only short progress on slow multi-step work, never the answer.
+    ask: only when people, files or destructive targets are ambiguous;
+    otherwise just act. On a tool error or policy block, do not retry
+    blindly; explain it through respond.
 
     Write versus send: "write" or "draft" means compose only; deliver
     something only when the user said "send".

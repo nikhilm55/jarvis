@@ -6,6 +6,7 @@ from typing import Any
 
 from jarvis import policy
 from jarvis.brain.desktop_tools import WINDOW_OPS
+from jarvis.consent.request import MAX_SCOPES, REQUEST_ACCESS
 from jarvis.contract import FinalResponse
 
 SERVER_NAME = "jarvis"
@@ -82,6 +83,31 @@ TOOLS: tuple[McpTool, ...] = (
             "You MUST call this exactly once to end every turn."
         ),
         input_schema=_FINAL_RESPONSE_SCHEMA,
+    ),
+    McpTool(
+        name="request_access",
+        policy_name=REQUEST_ACCESS,
+        description=(
+            "Ask the user once, up front, for the personal data a task needs (FR-CON-03). "
+            "Returns at once when already allowed; an error with CONSENT_DENIED when refused."
+        ),
+        input_schema=_object_schema(
+            {
+                "scopes": {
+                    "type": "array",
+                    "items": {"type": "string", "pattern": "^[a-z0-9_.-]+:(read|write|\\*)$"},
+                    "minItems": 1,
+                    "maxItems": MAX_SCOPES,
+                    "description": "e.g. messages.teams:read, calendar.google:write",
+                },
+                "reason": {
+                    "type": "string",
+                    "maxLength": 120,
+                    "description": "What it is for, e.g. 'read your unread messages'.",
+                },
+            },
+            ["scopes", "reason"],
+        ),
     ),
     McpTool(
         name="open_app",
