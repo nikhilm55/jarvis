@@ -13,6 +13,9 @@ from jarvis.brain.failures import internal_response
 from jarvis.config import Settings
 from jarvis.confirm import Confirmer, HudAnswers
 from jarvis.confirm.consent_question import ConsentQuestion
+from jarvis.consent.manage import ConsentAdmin
+from jarvis.consent.manage import parse as parse_manage
+from jarvis.consent.manage import run as run_manage
 from jarvis.consent.session import SessionGrants
 from jarvis.contract import FinalResponse
 from jarvis.desktop.client import DesktopClient
@@ -70,6 +73,7 @@ class TurnServices:
     consent: ConsentBroker = field(default_factory=NoConsent)
     grants: SessionGrants | None = None  # once grants end with the command (FR-CON-09)
     answers: HudAnswers | None = None  # HUD answers to confirmations; None: nothing confirms
+    consent_admin: ConsentAdmin | None = None  # "Jarvis, allow Teams" and friends (FR-CON-13)
 
 
 class TurnRunner:
@@ -168,6 +172,10 @@ class TurnRunner:
 
     async def _route(self, command: Command, record: TurnRecord, ctx: TurnContext) -> FinalResponse:
         """Send the command to the fast path when possible, otherwise to the brain."""
+        manage = parse_manage(command.text) if self._s.consent_admin is not None else None
+        if manage is not None and self._s.consent_admin is not None:
+            await self._hud(HudEvent("acting", command.text))
+            return await run_manage(manage, self._s.consent_admin, ctx)
         if command.intent is not None:
             await self._hud(HudEvent("acting", command.text))
             try:

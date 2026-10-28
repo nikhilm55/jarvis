@@ -176,6 +176,53 @@ class Broker:
         self._store.revoke_all()
         self._session.end("revoked")
 
+    def access_overview(self) -> list[tuple[str, str]]:
+        """(scope, state) for everything decided: always, never, or session (FR-CON-13)."""
+        return self._overview()
+
+    def known_sources(self) -> list[str]:
+        """The sources with any decision held, for resolving a spoken name."""
+        return sorted({scope.partition(":")[0] for scope, _ in self._overview()})
+
+    def _overview(self) -> list[tuple[str, str]]:
+        stored = [
+            (str(grant.scope), grant.lifetime)
+            for grant in self._store.all()
+            if grant.lifetime == "never" or not self._expired(grant)
+        ]
+        held = [(str(scope), "session") for scope in self._session.session_scopes()]
+        return sorted(set(stored) | set(held))
+
+    async def voice_allow(
+        self, scopes: tuple[Scope, ...], lifetime: Literal["session", "always"], ctx: "TurnContext"
+    ) -> None:
+        """Grant by the user's own words ("Jarvis, allow Teams"): their change of mind beats a
+        stored "never", which is cleared first (R102). Audited before it changes anything."""
+        names = tuple(str(scope) for scope in scopes)
+        self._audit(
+            ctx, names, "consent change", _granted(f"allowed by voice: {lifetime}", "voice")
+        )
+        for scope in scopes:
+            held = self._store.get(scope)
+            if held is not None and held.lifetime == "never":
+                await asyncio.to_thread(self._store.revoke, scope)
+        if lifetime == "always":
+            await self._remember(scopes, "always", "voice")
+        else:
+            await self._hold(scopes, "session", ctx)
+
+    def voice_revoke(self, sources: set[str], ctx: "TurnContext") -> list[str]:
+        """Revoke every grant of these sources, stored or held; the scopes that had one."""
+        known = {Scope.parse(scope) for scope, _ in self._overview()}
+        mine = sorted(scope for scope in known if scope.source in sources)
+        self._audit(ctx, tuple(map(str, mine)), "consent change", _denied("revoked by voice"))
+        return [str(scope) for scope in mine if self.revoke(scope)]
+
+    def voice_forget_all(self, ctx: "TurnContext") -> None:
+        """ "Forget all permissions": audited, then everything asks again ("never" too)."""
+        self._audit(ctx, (), "consent change", _denied("forget all, by voice"))
+        self.reset_all_to_ask()
+
     def reset_all_to_ask(self) -> None:
         """Forget every grant and every "never": all scopes ask again."""
         self._store.reset_all_to_ask()
