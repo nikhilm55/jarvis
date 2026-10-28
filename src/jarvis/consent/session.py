@@ -111,6 +111,15 @@ class SessionGrants:
             return False
         return granted_in == root or not this_command_only
 
+    def session_scopes(self) -> list[Scope]:
+        """The scopes held by an unexpired session grant (for "what can you access")."""
+        now = self._clock()
+        return sorted(
+            scope
+            for scope, (granted_at, _) in self._session.items()
+            if 0 <= now - granted_at < SESSION_MAX_S
+        )
+
     def seen(self, source: str) -> bool:
         """True when a YOLO run already asked about `source` (the first-touch switch)."""
         return source in self._seen

@@ -42,6 +42,7 @@ EXPECTED_MARKERS: Counter[tuple[str, str]] = Counter(
         ("orchestrator/assemble.py", "late-bound brain hook"): 1,
         ("fastpath/executor.py", "builds the impl table"): 1,
         ("mcp/server.py", "builds the impl table"): 1,
+        ("consent/manage.py", "builds the impl table"): 1,
     }
 )
 
@@ -419,6 +420,10 @@ def test_should_derive_the_tool_operations_from_the_impls_not_from_a_list() -> N
         "volume_set",
         "volume_step",
         "mute",
+        "access_overview",  # the consent voice commands (FR-CON-13)
+        "voice_allow",
+        "voice_revoke",
+        "voice_forget_all",
     }  # not `time`, `date` or `say`: those namespaces' impls call no client method
 
 

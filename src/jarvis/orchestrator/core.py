@@ -7,6 +7,7 @@ from typing import Protocol
 
 from jarvis.activity import ActivityLog
 from jarvis.config import Settings
+from jarvis.consent.broker import Broker
 from jarvis.killswitch import KillSwitch
 from jarvis.log import get_logger
 from jarvis.orchestrator.capture import Capture, CaptureItem, SourceEnded, SourceFailed
@@ -82,6 +83,7 @@ class Orchestrator:
             consent=parts.consent,
             grants=parts.grants,
             answers=parts.answers,
+            consent_admin=parts.consent if isinstance(parts.consent, Broker) else None,
         )
         self._runner = TurnRunner(turn_services)
         listener_services = ListenerServices(
