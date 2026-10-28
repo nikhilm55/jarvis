@@ -21,6 +21,7 @@ from jarvis.contract import FinalResponse
 from jarvis.desktop.client import DesktopClient
 from jarvis.fastpath import FastPathDeclined, Intent, execute
 from jarvis.log import get_logger
+from jarvis.orchestrator.access import AccessBadge
 from jarvis.orchestrator.controlling import ControlIndicator
 from jarvis.orchestrator.envelope import build_envelope, new_turn_id
 from jarvis.orchestrator.hud import HudEvent, HudSink
@@ -88,6 +89,7 @@ class TurnRunner:
         self._root: str | None = None  # the first turn of the command being run
         self._heard: list[str] = []  # the running turn's words from the user (R83)
         self._indicator = ControlIndicator(services.hud)
+        self._badge = AccessBadge(services.hud)
         self._told_cloud: set[str] = set()  # sources already told their data goes to Claude
 
     async def run(self, command: Command) -> None:
@@ -136,6 +138,7 @@ class TurnRunner:
             confirmer=self._confirmer(),
             consent=self._s.consent,
             controlling=self._indicator.driving,
+            touching=self._badge.touching,
             consent_question=self._consent_question(),
         )
         record.policy_decisions = ctx.policy_decisions  # the gate appends as it decides

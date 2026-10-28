@@ -20,8 +20,17 @@ ToolImpl = Callable[[Mapping[str, object]], Awaitable[object]]
 Controlling = Callable[[], AbstractAsyncContextManager[None]]
 
 
+# Shows which personal sources a tool is touching for as long as it is entered (FR-CON-14).
+Touching = Callable[[tuple[str, ...]], AbstractAsyncContextManager[None]]
+
+
 def not_shown() -> AbstractAsyncContextManager[None]:
     """No indicator to show (no HUD, or a test)."""
+    return contextlib.nullcontext()
+
+
+def no_badge(scopes: tuple[str, ...]) -> AbstractAsyncContextManager[None]:
+    """No access badge to show (no HUD, or a test)."""
     return contextlib.nullcontext()
 
 
@@ -65,6 +74,7 @@ class TurnContext:
     policy_decisions: list[PolicyRecord] = field(default_factory=list)
     heard: list[str] = field(default_factory=list)  # the user's words this turn (R83)
     controlling: Controlling = not_shown  # entered around tools that drive the input
+    touching: Touching = no_badge  # entered around tools that touch personal data
     consent_question: ConsentQuestion | None = None  # who asks for consent; None: nobody can
     combined: CombinedAsk = field(default_factory=CombinedAsk)  # FR-CON-19, set by the gate
 
