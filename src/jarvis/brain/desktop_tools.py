@@ -55,6 +55,16 @@ class DesktopLike(Protocol):
 
     async def mute(self, on: bool) -> dict[str, object]: ...
 
+    async def type_text(self, text: str) -> dict[str, object]: ...
+
+    async def press_keys(self, combo: str) -> dict[str, object]: ...
+
+    async def click(
+        self, x: int, y: int, button: str = "left", count: int = 1
+    ) -> dict[str, object]: ...
+
+    async def scroll(self, dx: int, dy: int) -> dict[str, object]: ...
+
 
 def _check_keys(policy_name: str, args: Mapping[str, object], expected: set[str]) -> None:
     """Raise ToolError when the argument key set does not match the expected set."""
@@ -181,6 +191,50 @@ def _mute(desktop: DesktopLike, args: Mapping[str, object]) -> _Call:
     return desktop.mute(args["on"])  # gate-ok: via MCP impl
 
 
+_MAX_TYPED = 5000
+
+
+def _type_text(desktop: DesktopLike, args: Mapping[str, object]) -> _Call:
+    """Validate and build the type_text coroutine; line breaks and tabs are allowed."""
+    _check_keys("desktop.type_text", args, {"text"})
+    text = args["text"]
+    if not isinstance(text, str) or not text or len(text) > _MAX_TYPED:
+        raise ToolError(f"text must be 1 to {_MAX_TYPED} characters")
+    if not all(ch.isprintable() or ch in "\n\t" for ch in text):
+        raise ToolError("text must not contain control characters other than newline and tab")
+    return desktop.type_text(text)  # gate-ok: via MCP impl
+
+
+def _press_keys(desktop: DesktopLike, args: Mapping[str, object]) -> _Call:
+    """Validate and build the press_keys coroutine."""
+    _check_keys("desktop.press_keys", args, {"combo"})
+    return desktop.press_keys(_text("combo", args["combo"], 40))  # gate-ok: via MCP impl
+
+
+def _click(desktop: DesktopLike, args: Mapping[str, object]) -> _Call:
+    """Validate and build the click coroutine."""
+    if not {"x", "y"} <= set(args) or set(args) - {"x", "y", "button", "count"}:
+        raise ToolError("desktop.click: expected x, y and optionally button, count")
+    button = args.get("button", "left")
+    if button not in ("left", "middle", "right"):
+        raise ToolError("button must be left, middle or right")
+    return desktop.click(  # gate-ok: via MCP impl
+        _int("x", args["x"], 0, 20000),
+        _int("y", args["y"], 0, 20000),
+        str(button),
+        _int("count", args.get("count", 1), 1, 3),
+    )
+
+
+def _scroll(desktop: DesktopLike, args: Mapping[str, object]) -> _Call:
+    """Validate and build the scroll coroutine."""
+    unknown = set(args) - {"dx", "dy"}
+    if unknown or not args:
+        raise ToolError("desktop.scroll: expected dx and/or dy")
+    dx = _int("dx", args.get("dx", 0), -50, 50)
+    return desktop.scroll(dx, _int("dy", args.get("dy", 0), -50, 50))  # gate-ok: via MCP impl
+
+
 _HANDLERS: dict[str, Callable[[DesktopLike, Mapping[str, object]], _Call]] = {
     "desktop.open_app": _open_app,
     "desktop.close_app": _close_app,
@@ -193,6 +247,10 @@ _HANDLERS: dict[str, Callable[[DesktopLike, Mapping[str, object]], _Call]] = {
     "desktop.volume_set": _volume_set,
     "desktop.volume_step": _volume_step,
     "desktop.mute": _mute,
+    "desktop.type_text": _type_text,
+    "desktop.press_keys": _press_keys,
+    "desktop.click": _click,
+    "desktop.scroll": _scroll,
 }
 
 

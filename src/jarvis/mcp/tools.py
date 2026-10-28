@@ -260,6 +260,51 @@ TOOLS: tuple[McpTool, ...] = (
             ["on"],
         ),
     ),
+    McpTool(
+        name="type_text",
+        policy_name="desktop.type_text",
+        description=(
+            "Type text into the focused field (long text is pasted). Type only what the user "
+            "asked for; a line break can run a command in a terminal."
+        ),
+        input_schema=_object_schema(
+            {"text": {"type": "string", "minLength": 1, "maxLength": 5000}}, ["text"]
+        ),
+    ),
+    McpTool(
+        name="press_keys",
+        policy_name="desktop.press_keys",
+        description="Press a key or combination, e.g. 'ctrl+s', 'alt+tab', 'enter', 'f5'.",
+        input_schema=_object_schema(
+            {"combo": {"type": "string", "minLength": 1, "maxLength": 40}}, ["combo"]
+        ),
+    ),
+    McpTool(
+        name="click",
+        policy_name="desktop.click",
+        description="Click at screen coordinates (prefer focus_window and keys when you can).",
+        input_schema=_object_schema(
+            {
+                "x": {"type": "integer", "minimum": 0},
+                "y": {"type": "integer", "minimum": 0},
+                "button": {"type": "string", "enum": ["left", "middle", "right"]},
+                "count": {"type": "integer", "minimum": 1, "maximum": 3},
+            },
+            ["x", "y"],
+        ),
+    ),
+    McpTool(
+        name="scroll",
+        policy_name="desktop.scroll",
+        description="Scroll by notches: dy > 0 down, dy < 0 up; dx > 0 right, dx < 0 left.",
+        input_schema=_object_schema(
+            {
+                "dx": {"type": "integer", "minimum": -50, "maximum": 50},
+                "dy": {"type": "integer", "minimum": -50, "maximum": 50},
+            },
+            [],
+        ),
+    ),
 )
 
 TOOLS_BY_NAME: Mapping[str, McpTool] = {tool.name: tool for tool in TOOLS}

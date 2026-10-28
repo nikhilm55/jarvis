@@ -91,6 +91,20 @@ class FakeDesktop:
             raise self._error
         return {"ok": True}
 
+    async def type_text(self, text: str) -> dict[str, object]:
+        return await self._answer("type_text", text)
+
+    async def press_keys(self, combo: str) -> dict[str, object]:
+        return await self._answer("press_keys", combo)
+
+    async def click(
+        self, x: int, y: int, button: str = "left", count: int = 1
+    ) -> dict[str, object]:
+        return await self._answer("click", x, y, button, count)
+
+    async def scroll(self, dx: int, dy: int) -> dict[str, object]:
+        return await self._answer("scroll", dx, dy)
+
 
 def test_should_strip_whitespace_when_open_app_called() -> None:
     """open_app maps MCP arg 'name' to client 'query' with whitespace stripped."""

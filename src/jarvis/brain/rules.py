@@ -27,7 +27,9 @@ RULES: str = textwrap.dedent(
     open_app(name), close_app(name), is_running(name), list_apps(),
     list_windows(), focus_window(ref), window_op(ref, op); ref: a
     list_windows ref or title/app words;
-    volume_get(), volume_set(percent 0-100), volume_step(delta), mute(on).
+    volume_get(), volume_set(percent 0-100), volume_step(delta), mute(on);
+    type_text(text), press_keys(combo), click(x, y), scroll(dx, dy): they
+    drive the user's keyboard and mouse, so focus the right window first.
     You have NO shell, no files, no browser and no other tools.
     If you cannot do something, say so through respond; never pretend.
     Declining an off-task or impossible request is status success. A

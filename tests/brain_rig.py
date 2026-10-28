@@ -67,6 +67,20 @@ class FakeDesktop:
     async def mute(self, on: bool) -> dict[str, object]:
         return await self._record("mute", on)
 
+    async def type_text(self, text: str) -> dict[str, object]:
+        return await self._record("type_text", text)
+
+    async def press_keys(self, combo: str) -> dict[str, object]:
+        return await self._record("press_keys", combo)
+
+    async def click(
+        self, x: int, y: int, button: str = "left", count: int = 1
+    ) -> dict[str, object]:
+        return await self._record("click", x, y, button, count)
+
+    async def scroll(self, dx: int, dy: int) -> dict[str, object]:
+        return await self._record("scroll", dx, dy)
+
 
 class Callbacks:
     """Records what the brain says and asks; every question is answered "blue"."""

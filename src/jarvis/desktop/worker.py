@@ -12,6 +12,7 @@ from collections.abc import Iterable, Sequence
 from typing import TextIO
 
 from jarvis.desktop.backend import DesktopBackend, WorkerError
+from jarvis.desktop.input import InputError
 from jarvis.desktop.volume import VolumeError
 from jarvis.desktop.x11 import X11Error
 
@@ -59,6 +60,22 @@ def _window_op(backend: DesktopBackend, args: dict[str, object]) -> dict[str, ob
     )
 
 
+_INPUT_OPS = ("type_text", "press_keys", "click", "scroll")
+
+
+def _input_op(backend: DesktopBackend, op: str, args: dict[str, object]) -> dict[str, object]:
+    """FR-PC-03 keyboard and mouse ops."""
+    if op == "type_text":
+        return backend.type_text(_str_arg(args, "text"))  # gate-ok: worker runs the op
+    if op == "press_keys":
+        return backend.press_keys(_str_arg(args, "combo"))  # gate-ok: worker runs the op
+    if op == "click":
+        x, y, button = _int_arg(args, "x"), _int_arg(args, "y"), _str_arg(args, "button")
+        return backend.click(x, y, button, _int_arg(args, "count"))  # gate-ok: worker runs the op
+    dx, dy = _int_arg(args, "dx"), _int_arg(args, "dy")
+    return backend.scroll(dx, dy)  # gate-ok: worker runs the op
+
+
 def _dispatch(  # noqa: PLR0911  (a flat table of ops, one return each)
     backend: DesktopBackend, op: str, args: dict[str, object]
 ) -> dict[str, object]:
@@ -76,6 +93,8 @@ def _dispatch(  # noqa: PLR0911  (a flat table of ops, one return each)
         return backend.list_apps()  # gate-ok: worker runs the op
     if op == "is_running":
         return backend.is_running(_str_arg(args, "query"))  # gate-ok: worker runs the op
+    if op in _INPUT_OPS:
+        return _input_op(backend, op, args)
     if op == "volume_get":
         return backend.volume_get()  # gate-ok: worker runs the op
     if op == "volume_set":
@@ -125,7 +144,7 @@ def handle_line(backend: DesktopBackend, line: str) -> dict[str, object]:
     try:
         _, op, args = _validate(request)
         result = _dispatch(backend, op, args)
-    except (WorkerError, VolumeError, X11Error) as exc:
+    except (WorkerError, VolumeError, X11Error, InputError) as exc:
         return _error(req_id, exc.code, exc.message, getattr(exc, "alternatives", ()))
     except Exception:
         traceback.print_exc()

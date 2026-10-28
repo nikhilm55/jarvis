@@ -133,13 +133,18 @@ def _reason(call: ToolCall) -> str:
 
 
 def _provenance(call: ToolCall, ctx: TurnContext, decision: Decision) -> tuple[Decision, str]:
-    """R83: a brain's T2+ call whose target the user did not say is confirmed in every mode.
+    """R83: a brain's T2+ call (or any input it drives) whose target or content the user did
+    not say is confirmed in every mode.
 
     Returns the decision (a run becomes a voice confirmation) and the note the question starts
     with, naming where the value came from; no note when the values are the user's own.
     """
     spec = registry.get(call.name)
-    if call.origin != "brain" or decision.tier not in (Tier.T2, Tier.T3) or spec is None:
+    if call.origin != "brain" or spec is None:
+        return decision, ""
+    # Typing is content at any tier: typed text plus an Enter would otherwise slip through
+    # as a T1 step and a T2 step that each look harmless.
+    if decision.tier not in (Tier.T2, Tier.T3) and not spec.drives_input:
         return decision, ""
     foreign = foreign_values(spec, call.args, ctx.heard)
     if not foreign:
