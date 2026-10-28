@@ -72,6 +72,7 @@ class ToolSpec:
     # Arguments that must come from the user's words (R83); none given: just `target_key`.
     provenance_keys: tuple[str, ...] = ()
     reason_key: str | None = None  # the argument that says why, for the consent question
+    walks_tree: bool = False  # acts on everything under its paths (scopes of folders below too)
     drives_input: bool = False  # moves the mouse or types: the HUD says so (FR-SAFE-06)
 
     def __post_init__(self) -> None:

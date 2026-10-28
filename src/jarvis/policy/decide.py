@@ -48,7 +48,7 @@ def _decide(call: ToolCall, mode: Mode, ctx: TurnContext) -> Decision:
         return Decision("deny", tier, tuple(sorted(scopes)), reason=deny_reason)
 
     access = "read" if tier == Tier.T0 else "write"
-    scopes.update(lists.path_scopes(call.args, access, ctx.settings))
+    scopes.update(lists.path_scopes(call.args, access, ctx.settings, below=spec.walks_tree))
     scopes_tuple = tuple(sorted(scopes))
 
     action, kind = _TABLE[mode][tier]
