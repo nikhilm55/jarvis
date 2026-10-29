@@ -213,9 +213,14 @@ def _holds_protected(texts: list[str], roots: list[str]) -> str | None:
 
 
 def path_scopes(
-    args: Mapping[str, object], access: str, settings: PolicySettings
+    args: Mapping[str, object], access: str, settings: PolicySettings, *, below: bool = False
 ) -> tuple[str, ...]:
-    """Consent scopes for the path-named arguments (a shell command maps its own, R84)."""
+    """Consent scopes for the path-named arguments (a shell command maps its own, R84).
+
+    With `below` (a tool that walks the whole tree: search, trash, zip of a folder), a path
+    that contains a consent folder needs that folder's scope too: trashing `~` touches
+    Documents.
+    """
     folders = [(real_path(f), src) for f, src in settings.consent_folders.items()]
     exempt = [real_path(p) for p in settings.allow_paths]
     paths = [p for k, v in args.items() if k in _PATH_KEYS for p in _strings(v)]
@@ -224,6 +229,6 @@ def path_scopes(
         for path in map(real_path, paths)
         if not any(is_under(path, e) for e in exempt)
         for root, src in folders
-        if is_under(path, root)
+        if is_under(path, root) or (below and is_under(root, path))
     }
     return tuple(sorted(scopes))
