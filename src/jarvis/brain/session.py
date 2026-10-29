@@ -18,6 +18,7 @@ from jarvis.brain.failures import (
     process_exit_response,
     timeout_response,
 )
+from jarvis.brain.file_tools import FilesLike
 from jarvis.brain.launch import McpConfigWriter, prepare_launch
 from jarvis.brain.process import ClaudeProcess
 from jarvis.config import Settings
@@ -43,12 +44,14 @@ class ClaudeCodeBrain:
         mcp_server: McpConfigWriter,
         desktop: DesktopLike,
         *,
+        files: FilesLike | None = None,
         extra_env: Mapping[str, str] | None = None,
     ) -> None:
-        """Initialise the brain with settings, an MCP writer and a desktop."""
+        """Initialise the brain with settings, an MCP writer, a desktop and the file tools."""
         self._brain = settings.brain
         self._mcp = mcp_server
         self._desktop = desktop
+        self._files = files
         self._extra_env = extra_env  # tests only: variables the fake claude needs
         self._proc: ClaudeProcess | None = None
         self._queue: asyncio.Queue[_Item] = asyncio.Queue()
@@ -95,6 +98,7 @@ class ClaudeCodeBrain:
                 TurnHooks(on_say, on_ask, queue.put_nowait, clock),
                 self._desktop,
                 self._brain.max_steps,
+                files=self._files,
             )
             self._tools = tools
             started = time.monotonic()

@@ -8,6 +8,8 @@ from jarvis import policy
 from jarvis.brain.desktop_tools import WINDOW_OPS
 from jarvis.consent.request import MAX_SCOPES, REQUEST_ACCESS
 from jarvis.contract import FinalResponse
+from jarvis.files import FILE_TOOLS  # noqa: F401 - registers the file tools' policy
+from jarvis.files.search import KINDS, WHENS
 
 SERVER_NAME = "jarvis"
 
@@ -303,6 +305,102 @@ TOOLS: tuple[McpTool, ...] = (
                 "dy": {"type": "integer", "minimum": -50, "maximum": 50},
             },
             [],
+        ),
+    ),
+    McpTool(
+        name="search_files",
+        policy_name="files.search",
+        description=(
+            "Find files by name (words in any order) under a folder, newest first; "
+            "optional when (today, yesterday, this week, last week, this month) and kind."
+        ),
+        input_schema=_object_schema(
+            {
+                "query": {"type": "string", "minLength": 1, "maxLength": 200},
+                "folder": {"type": "string", "description": "Default: the home folder."},
+                "when": {"type": "string", "enum": list(WHENS)},
+                "kind": {"type": "string", "enum": [*KINDS, "folder"]},
+            },
+            ["query"],
+        ),
+    ),
+    McpTool(
+        name="open_file",
+        policy_name="files.open",
+        description="Open a file or folder with its default app.",
+        input_schema=_object_schema({"path": {"type": "string"}}, ["path"]),
+    ),
+    McpTool(
+        name="reveal_file",
+        policy_name="files.reveal",
+        description="Show a file in the file manager.",
+        input_schema=_object_schema({"path": {"type": "string"}}, ["path"]),
+    ),
+    McpTool(
+        name="trash_files",
+        policy_name="files.trash",
+        description=(
+            "Delete = move to the trash (undoable). contents=true trashes everything inside "
+            "each folder. Say the result's summary."
+        ),
+        input_schema=_object_schema(
+            {
+                "paths": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                "contents": {"type": "boolean"},
+            },
+            ["paths"],
+        ),
+    ),
+    McpTool(
+        name="delete_files_permanently",
+        policy_name="files.delete_permanently",
+        description="Delete for good, only when the user said 'permanently'. Never undoable.",
+        input_schema=_object_schema(
+            {"paths": {"type": "array", "items": {"type": "string"}, "minItems": 1}}, ["paths"]
+        ),
+    ),
+    McpTool(
+        name="move_files",
+        policy_name="files.move",
+        description="Move files or folders into a folder (undoable). Nothing is overwritten.",
+        input_schema=_object_schema(
+            {
+                "paths": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                "dest": {"type": "string"},
+            },
+            ["paths", "dest"],
+        ),
+    ),
+    McpTool(
+        name="copy_files",
+        policy_name="files.copy",
+        description="Copy files or folders into a folder. Nothing is overwritten.",
+        input_schema=_object_schema(
+            {
+                "paths": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                "dest": {"type": "string"},
+            },
+            ["paths", "dest"],
+        ),
+    ),
+    McpTool(
+        name="rename_file",
+        policy_name="files.rename",
+        description="Rename a file or folder in place (undoable); name is a plain file name.",
+        input_schema=_object_schema(
+            {"path": {"type": "string"}, "name": {"type": "string"}}, ["path", "name"]
+        ),
+    ),
+    McpTool(
+        name="zip_files",
+        policy_name="files.zip",
+        description="Make a new .zip of files and folders at dest.",
+        input_schema=_object_schema(
+            {
+                "paths": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                "dest": {"type": "string"},
+            },
+            ["paths", "dest"],
         ),
     ),
 )

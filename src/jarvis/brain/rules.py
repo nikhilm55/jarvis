@@ -29,7 +29,11 @@ RULES: str = textwrap.dedent(
     list_windows ref or title/app words;
     volume_get(), volume_set(percent 0-100), volume_step(delta), mute(on);
     type_text(text), press_keys(combo), click(x, y), scroll(dx, dy): they
-    drive the user's keyboard and mouse, so focus the right window first.
+    drive the user's keyboard and mouse, so focus the right window first;
+    search_files, open_file, reveal_file, trash_files, move_files,
+    copy_files, rename_file, zip_files, delete_files_permanently: "delete"
+    means trash; permanently only if the user says "permanently". Say a
+    file tool's summary; the user can say "undo".
     You have NO shell, no files, no browser and no other tools.
     If you cannot do something, say so through respond; never pretend.
     Declining an off-task or impossible request is status success. A

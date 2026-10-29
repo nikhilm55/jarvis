@@ -36,6 +36,7 @@ from jarvis.policy.ports import Confirmer as PolicyConfirmer
 from jarvis.policy.ports import ConsentBroker, NoConfirmer, NoConsent
 from jarvis.stt import Transcript
 from jarvis.tts import SpeechHandle
+from jarvis.undo import UndoLog, is_undo, run_undo
 
 logger = get_logger("turns")
 
@@ -75,6 +76,7 @@ class TurnServices:
     grants: SessionGrants | None = None  # once grants end with the command (FR-CON-09)
     answers: HudAnswers | None = None  # HUD answers to confirmations; None: nothing confirms
     consent_admin: ConsentAdmin | None = None  # "Jarvis, allow Teams" and friends (FR-CON-13)
+    undo: UndoLog | None = None  # "Jarvis, undo that" (FR-SAFE-05, R90)
 
 
 class TurnRunner:
@@ -175,6 +177,9 @@ class TurnRunner:
 
     async def _route(self, command: Command, record: TurnRecord, ctx: TurnContext) -> FinalResponse:
         """Send the command to the fast path when possible, otherwise to the brain."""
+        if self._s.undo is not None and is_undo(command.text):
+            await self._hud(HudEvent("acting", command.text))
+            return await run_undo(self._s.undo, ctx)
         manage = parse_manage(command.text) if self._s.consent_admin is not None else None
         if manage is not None and self._s.consent_admin is not None:
             await self._hud(HudEvent("acting", command.text))
