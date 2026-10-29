@@ -8,6 +8,7 @@ from typing import Any, TypeVar
 from jarvis.brain.clock import TurnClock
 from jarvis.brain.desktop_tools import DesktopLike, call_desktop  # gate-ok: via MCP impl
 from jarvis.brain.failures import ToolError, step_limit_response
+from jarvis.brain.file_tools import FilesLike, call_files
 from jarvis.brain.respond import RespondGate
 from jarvis.contract import FinalResponse, sanitise_spoken
 
@@ -36,11 +37,18 @@ class TurnTools:
     """Per-turn tool handler that routes model tool calls and enforces limits."""
 
     def __init__(
-        self, turn_id: str, hooks: TurnHooks, desktop: DesktopLike, max_steps: int
+        self,
+        turn_id: str,
+        hooks: TurnHooks,
+        desktop: DesktopLike,
+        max_steps: int,
+        *,
+        files: FilesLike | None = None,
     ) -> None:
-        """Create a turn handler bound to a turn id, hooks, desktop, and step budget."""
+        """Create a turn handler bound to a turn id, hooks, desktop, files and step budget."""
         self._hooks = hooks
         self._desktop = desktop
+        self._files = files
         self._max_steps = max_steps
         self._steps = 0
         self._closed = False
@@ -102,6 +110,8 @@ class TurnTools:
             return await self._ask(args)
         if policy_name == "jarvis.request_access":
             return "granted"  # the gate asked for every scope before letting this run
+        if policy_name.startswith("files.") and self._files is not None:
+            return await call_files(self._files, policy_name, args)
         if policy_name.startswith("desktop."):
             return await call_desktop(self._desktop, policy_name, args)  # gate-ok: via MCP impl
         raise ToolError(f"unknown tool {policy_name}")

@@ -14,6 +14,7 @@ from jarvis.config import Settings
 from jarvis.confirm import HudAnswers
 from jarvis.consent.broker import build_consent
 from jarvis.desktop.client import DesktopClient
+from jarvis.files.service import FilesService
 from jarvis.mcp import JarvisMcpServer
 from jarvis.orchestrator.components import Components
 from jarvis.orchestrator.lifeline import parent_death_preexec
@@ -26,6 +27,7 @@ from jarvis.policy import Mode
 from jarvis.stt import WhisperServer, find_server_bin
 from jarvis.tts import Speaker
 from jarvis.tts.engines import AudioEngine, Engine, default_engine
+from jarvis.undo import UndoLog
 from jarvis.wake import WakeDetector
 
 __all__ = ["build_components"]
@@ -63,6 +65,8 @@ async def build_components(
     desktop = DesktopClient()
     consent = build_consent(settings.consent)  # asks through each turn's ConsentQuestion
     trace = ToolTrace(settings.policy, mode, consent.broker)
+    undo = UndoLog()
+    files = FilesService(undo)
     brain: ClaudeCodeBrain | None = None
     services: list[ServicePort] = []
     if with_brain:
@@ -74,7 +78,7 @@ async def build_components(
             return await brain.dispatch(name, args)  # gate-ok: late-bound brain hook
 
         mcp = JarvisMcpServer(trace.wrap(dispatch), lambda: mode, turn=trace.turn_context)
-        brain = ClaudeCodeBrain(settings, mcp, desktop)
+        brain = ClaudeCodeBrain(settings, mcp, desktop, files=files)
         services.append(mcp)
     return Components(
         source=source,
@@ -89,6 +93,7 @@ async def build_components(
         consent=consent.broker,
         grants=consent.session,
         answers=HudAnswers(),
+        undo=undo,
     )
 
 

@@ -50,7 +50,7 @@ def test_should_trash_everything_in_a_folder_and_say_how_to_undo(home: Path) -> 
     assert sorted(p.name for p in (trash.root / "files").iterdir()) == ["a.txt", "b.pdf", "c"]
     info = (trash.root / "info" / "a.txt.trashinfo").read_text(encoding="utf-8")
     assert f"Path={urllib.parse.quote(str(home / 'Downloads' / 'a.txt'))}" in info
-    assert asyncio.run(log.undo_last()) == "Put 3 items back in Downloads."
+    assert asyncio.run(log.revert_newest()) == "Put 3 items back in Downloads."
     assert sorted(p.name for p in (home / "Downloads").iterdir()) == ["a.txt", "b.pdf", "c"]
     assert list((trash.root / "info").iterdir()) == []
 
@@ -67,7 +67,7 @@ def test_should_never_overwrite_on_undo(home: Path) -> None:
     files, log, _ = service(home)
     asyncio.run(files.trash(["~/Downloads/a.txt"]))
     (home / "Downloads" / "a.txt").write_text("new", encoding="utf-8")
-    assert asyncio.run(log.undo_last()) == "Put 0 items back in Downloads."
+    assert asyncio.run(log.revert_newest()) == "Put 0 items back in Downloads."
     assert (home / "Downloads" / "a.txt").read_text(encoding="utf-8") == "new"
 
 
@@ -100,7 +100,7 @@ def test_should_move_and_undo_the_move(home: Path) -> None:
     result = asyncio.run(files.move(["~/Downloads/b.pdf"], "~/Documents"))
     assert result["summary"] == "Moved 1 item to Documents."
     assert (home / "Documents" / "b.pdf").exists()
-    assert asyncio.run(log.undo_last()) == "Put 1 item back where it was."
+    assert asyncio.run(log.revert_newest()) == "Put 1 item back where it was."
     assert (home / "Downloads" / "b.pdf").exists()
 
 
@@ -110,7 +110,7 @@ def test_should_rename_and_refuse_a_path_as_the_new_name(home: Path) -> None:
     assert (home / "Downloads" / "c.txt").exists()
     with pytest.raises(ops.FileError):
         asyncio.run(files.rename("~/Downloads/c.txt", "../escape"))
-    asyncio.run(log.undo_last())
+    asyncio.run(log.revert_newest())
     assert (home / "Downloads" / "c").exists()
 
 
@@ -208,9 +208,9 @@ def test_should_undo_the_newest_and_forget_after_an_hour() -> None:
 
     log.push("first", revert("undid first"))
     log.push("second", revert("undid second"))
-    assert asyncio.run(log.undo_last()) == "undid second"
+    assert asyncio.run(log.revert_newest()) == "undid second"
     now[0] = 3601.0
-    assert asyncio.run(log.undo_last()) == NOTHING_TO_UNDO
+    assert asyncio.run(log.revert_newest()) == NOTHING_TO_UNDO
 
 
 # --- scopes: a tree walk needs the folders below ------------------------------------------------

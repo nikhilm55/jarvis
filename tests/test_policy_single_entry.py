@@ -22,7 +22,8 @@ from typing import TypeGuard
 import pytest
 
 import jarvis.fastpath
-import jarvis.mcp.tools  # noqa: F401  (registers jarvis.*)
+import jarvis.mcp.tools
+import jarvis.undo  # noqa: F401  (registers undo.revert_last; keeps the registry import-order independent)
 from jarvis.policy import Tier, ToolSpec, registry
 
 SRC = Path(__file__).resolve().parent.parent / "src" / "jarvis"
@@ -43,6 +44,7 @@ EXPECTED_MARKERS: Counter[tuple[str, str]] = Counter(
         ("fastpath/executor.py", "builds the impl table"): 1,
         ("mcp/server.py", "builds the impl table"): 1,
         ("consent/manage.py", "builds the impl table"): 1,
+        ("undo.py", "builds the impl table"): 1,
     }
 )
 
@@ -424,6 +426,8 @@ def test_should_derive_the_tool_operations_from_the_impls_not_from_a_list() -> N
         "press_keys",
         "click",
         "scroll",
+        "revert_newest",  # "Jarvis, undo that" (R90): the UndoLog method the impl calls
+        "revert_last",  # the registered undo.* tool name (undo.py, imported above)
         "access_overview",  # the consent voice commands (FR-CON-13)
         "voice_allow",
         "voice_revoke",

@@ -28,6 +28,15 @@ EXPECTED_NAMES = (
     "press_keys",
     "click",
     "scroll",
+    "search_files",
+    "open_file",
+    "reveal_file",
+    "trash_files",
+    "delete_files_permanently",
+    "move_files",
+    "copy_files",
+    "rename_file",
+    "zip_files",
 )
 
 POLICY_MAP = {
@@ -50,6 +59,15 @@ POLICY_MAP = {
     "press_keys": "desktop.press_keys",
     "click": "desktop.click",
     "scroll": "desktop.scroll",
+    "search_files": "files.search",
+    "open_file": "files.open",
+    "reveal_file": "files.reveal",
+    "trash_files": "files.trash",
+    "delete_files_permanently": "files.delete_permanently",
+    "move_files": "files.move",
+    "copy_files": "files.copy",
+    "rename_file": "files.rename",
+    "zip_files": "files.zip",
 }
 
 
