@@ -58,6 +58,7 @@ SAID_PATH = ["Jarvis, delete everything in the folder jarvis demo / downloads in
         ("~", ["tidy up my home folder"], True),
         ("/home/u/invoice-october.txt", ["delete invoice october dot t x t"], True),
         ("/home/u/Work/payroll.xlsx", ["delete invoice october dot t x t"], False),
+        ("\\home\\u\\JarvisDemo\\Downloads", SAID_PATH, True),  # Windows separators
     ],
 )
 def test_should_not_count_the_home_folder_or_split_words_against_a_path(

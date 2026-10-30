@@ -28,8 +28,8 @@ def _words(text: str) -> list[str]:
 
 def _value_words(value: str, home: Path) -> list[str]:
     """The value's words, without the home folder it starts in; the home folder itself is "home"."""
-    text = value.strip()
-    for prefix in (str(home), "~", "$HOME"):
+    text = value.strip().replace("\\", "/")  # one separator, so Windows paths compare too
+    for prefix in (home.as_posix(), "~", "$HOME"):
         if text == prefix or text.startswith(prefix + "/"):
             return _words(text[len(prefix) :]) or ["home"]
     return _words(text)
