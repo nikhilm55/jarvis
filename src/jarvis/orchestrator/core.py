@@ -69,6 +69,9 @@ class Orchestrator:
         self._hotkey_factory = hotkey
         self._background: set[asyncio.Task[None]] = set()
         self.killswitch = KillSwitch(self._stop_turn)  # FR-SAFE-04: voice, hotkey and HUD Stop
+        if parts.shell is not None:
+            # The shell is built before this switch, so the binding happens here (R84).
+            parts.shell.bind(self.killswitch.register_process)
         turn_services = TurnServices(
             settings=settings,
             mode=mode,

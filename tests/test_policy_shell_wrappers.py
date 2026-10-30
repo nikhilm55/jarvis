@@ -28,7 +28,35 @@ _WRAPPER_PREFIXES: dict[str, list[str]] = {
     "setsid": [""],
     "unbuffer": [""],
     "busybox": [""],
+    "strace": [""],
+    "ltrace": [""],
+    "perf": [""],
+    "firejail": [""],
+    "bwrap": [""],
+    "systemd-run": [""],
+    "parallel": [""],
+    "entr": [""],
+    "sg": ["wheel -c"],
+    "script": ["-c"],
 }
+
+_UNKNOWN_WRAPPERS = ["fakewrap", "grc", "watchexec"]
+
+_FULL_PATH_PAYLOADS = [
+    "/bin/rm -rf ~",
+    "/usr/bin/sudo reboot",
+    "/usr/bin/bash -c 'rm -rf ~'",
+    "/bin/sh -c 'rm -rf ~'",
+]
+
+_READER_CASES = [
+    "cat /bin/rm",
+    "ls /usr/bin/sudo",
+    "head /bin/sh",
+    "echo /bin/rm",
+    "grep passwd /var/log/auth.log",
+    "cp /bin/rm ~/backup/",
+]
 
 _PAYLOADS = [
     "rm -rf ~",
@@ -113,5 +141,24 @@ def test_should_stay_below_t3_when_the_wrapper_runs_a_harmless_command(
     form: str, prefix: str, payload: str
 ) -> None:
     cmd = f"{form} {prefix} {payload}".strip()
+    tier = classify_shell(cmd)[0]
+    assert tier != Tier.T3, f"expected below T3 for {cmd!r}, got {tier}"
+
+
+@pytest.mark.parametrize(
+    ("unknown", "payload"),
+    [(u, p) for u in _UNKNOWN_WRAPPERS for p in _FULL_PATH_PAYLOADS],
+    ids=[f"{u}-{p}" for u in _UNKNOWN_WRAPPERS for p in _FULL_PATH_PAYLOADS],
+)
+def test_should_classify_t3_when_an_unknown_wrapper_runs_a_full_path_command(
+    unknown: str, payload: str
+) -> None:
+    cmd = f"{unknown} {payload}"
+    tier = classify_shell(cmd)[0]
+    assert tier == Tier.T3, f"expected T3 for {cmd!r}, got {tier}"
+
+
+@pytest.mark.parametrize("cmd", _READER_CASES, ids=[f"reader-{cmd}" for cmd in _READER_CASES])
+def test_should_stay_below_t3_when_a_reader_head_makes_the_path_data(cmd: str) -> None:
     tier = classify_shell(cmd)[0]
     assert tier != Tier.T3, f"expected below T3 for {cmd!r}, got {tier}"

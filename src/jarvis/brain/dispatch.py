@@ -10,6 +10,7 @@ from jarvis.brain.desktop_tools import DesktopLike, call_desktop  # gate-ok: via
 from jarvis.brain.failures import ToolError, step_limit_response
 from jarvis.brain.file_tools import FilesLike, call_files
 from jarvis.brain.respond import RespondGate
+from jarvis.brain.shell_tools import ShellLike, call_shell
 from jarvis.contract import FinalResponse, sanitise_spoken
 
 _T = TypeVar("_T")
@@ -36,7 +37,7 @@ class TurnHooks:
 class TurnTools:
     """Per-turn tool handler that routes model tool calls and enforces limits."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - the route's inputs, plus the files/shell seams
         self,
         turn_id: str,
         hooks: TurnHooks,
@@ -44,11 +45,13 @@ class TurnTools:
         max_steps: int,
         *,
         files: FilesLike | None = None,
+        shell: ShellLike | None = None,
     ) -> None:
-        """Create a turn handler bound to a turn id, hooks, desktop, files and step budget."""
+        """Create a turn handler bound to a turn id, hooks, desktop, files, shell and budget."""
         self._hooks = hooks
         self._desktop = desktop
         self._files = files
+        self._shell = shell
         self._max_steps = max_steps
         self._steps = 0
         self._closed = False
@@ -90,7 +93,7 @@ class TurnTools:
         finally:
             self._inflight.discard(task)
 
-    async def __call__(self, policy_name: str, args: dict[str, object]) -> object:
+    async def __call__(self, policy_name: str, args: dict[str, object]) -> object:  # noqa: PLR0911 - one branch per route
         """Route a single tool call for the current turn."""
         if self._closed:
             raise ToolError("no active turn: this turn has already ended")
@@ -112,6 +115,8 @@ class TurnTools:
             return "granted"  # the gate asked for every scope before letting this run
         if policy_name.startswith("files.") and self._files is not None:
             return await call_files(self._files, policy_name, args)
+        if policy_name.startswith("shell.") and self._shell is not None:
+            return await call_shell(self._shell, policy_name, args)
         if policy_name.startswith("desktop."):
             return await call_desktop(self._desktop, policy_name, args)  # gate-ok: via MCP impl
         raise ToolError(f"unknown tool {policy_name}")

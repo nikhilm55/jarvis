@@ -34,7 +34,9 @@ RULES: str = textwrap.dedent(
     copy_files, rename_file, zip_files, delete_files_permanently: "delete"
     means trash; permanently only if the user says "permanently". Say a
     file tool's summary; the user can say "undo".
-    You have NO shell, no files, no browser and no other tools.
+    run_shell(cmd, cwd?, timeout_s?) runs one shell command and returns
+    its output; use it for what the other tools don't cover, and keep
+    the dedicated tools first for files, windows, and typed input.
     If you cannot do something, say so through respond; never pretend.
     Declining an off-task or impossible request is status success. A
     policy, consent or cancel block is status failed with its error code

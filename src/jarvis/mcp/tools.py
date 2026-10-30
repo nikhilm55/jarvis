@@ -10,6 +10,7 @@ from jarvis.consent.request import MAX_SCOPES, REQUEST_ACCESS
 from jarvis.contract import FinalResponse
 from jarvis.files import FILE_TOOLS  # noqa: F401 - registers the file tools' policy
 from jarvis.files.search import KINDS, WHENS
+from jarvis.shell import SHELL_TOOLS  # noqa: F401 - registers the shell tool's policy
 
 SERVER_NAME = "jarvis"
 
@@ -305,6 +306,35 @@ TOOLS: tuple[McpTool, ...] = (
                 "dy": {"type": "integer", "minimum": -50, "maximum": 50},
             },
             [],
+        ),
+    ),
+    McpTool(
+        name="run_shell",
+        policy_name="shell.run",
+        description=(
+            "Run one shell command on this PC and get stdout, stderr and the exit code. "
+            "Prefer the dedicated tools for files, windows, and input."
+        ),
+        input_schema=_object_schema(
+            {
+                "cmd": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "description": "One command line.",
+                },
+                "cwd": {
+                    "type": "string",
+                    "description": "Folder to run in (default: the home folder).",
+                },
+                "timeout_s": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 300,
+                    "description": "Kill the command after this many seconds (default: 60).",
+                },
+            },
+            ["cmd"],
         ),
     ),
     McpTool(

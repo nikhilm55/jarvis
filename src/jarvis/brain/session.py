@@ -21,6 +21,7 @@ from jarvis.brain.failures import (
 from jarvis.brain.file_tools import FilesLike
 from jarvis.brain.launch import McpConfigWriter, prepare_launch
 from jarvis.brain.process import ClaudeProcess
+from jarvis.brain.shell_tools import ShellLike
 from jarvis.config import Settings
 from jarvis.contract import FinalResponse, TurnEnvelope
 from jarvis.log import get_logger
@@ -38,20 +39,22 @@ class ClaudeCodeBrain:
     (late-bound) because the server needs its dispatch before the brain exists.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - the brain's inputs, plus the files/shell seams
         self,
         settings: Settings,
         mcp_server: McpConfigWriter,
         desktop: DesktopLike,
         *,
         files: FilesLike | None = None,
+        shell: ShellLike | None = None,
         extra_env: Mapping[str, str] | None = None,
     ) -> None:
-        """Initialise the brain with settings, an MCP writer, a desktop and the file tools."""
+        """Initialise the brain with settings, an MCP writer, a desktop, files and the shell."""
         self._brain = settings.brain
         self._mcp = mcp_server
         self._desktop = desktop
         self._files = files
+        self._shell = shell
         self._extra_env = extra_env  # tests only: variables the fake claude needs
         self._proc: ClaudeProcess | None = None
         self._queue: asyncio.Queue[_Item] = asyncio.Queue()
@@ -99,6 +102,7 @@ class ClaudeCodeBrain:
                 self._desktop,
                 self._brain.max_steps,
                 files=self._files,
+                shell=self._shell,
             )
             self._tools = tools
             started = time.monotonic()
