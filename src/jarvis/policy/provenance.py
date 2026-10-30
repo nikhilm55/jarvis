@@ -4,28 +4,52 @@ A T2+ action's target and content count as the user's only when their words are 
 user said this turn (the command, or a reply to a question): at least 80 % of a value's words
 must be there. Anything else came from content the brain read, and needs the user to confirm
 it, in every mode.
+
+Two things the user never spells out don't count against a value: the home folder a path
+starts in ("in my home folder" becomes /home/<user>/…), and words that speech-to-text split
+("jarvis demo" for a folder named JarvisDemo, "t x t" for txt).
 """
 
 import re
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 
 from jarvis.policy.model import ToolSpec
 
 __all__ = ["OVERLAP", "foreign_values", "user_provided"]
 
 OVERLAP = 0.8
+_JOIN = 3  # spoken words joined to match one written word: "t x t" → "txt"
 
 
 def _words(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", text.lower())
 
 
-def user_provided(value: str, heard: Sequence[str]) -> bool:
+def _value_words(value: str, home: Path) -> list[str]:
+    """The value's words, without the home folder it starts in; the home folder itself is "home"."""
+    text = value.strip()
+    for prefix in (str(home), "~", "$HOME"):
+        if text == prefix or text.startswith(prefix + "/"):
+            return _words(text[len(prefix) :]) or ["home"]
+    return _words(text)
+
+
+def _said(heard: Sequence[str]) -> set[str]:
+    said: set[str] = set()
+    for text in heard:
+        words = _words(text)
+        for size in range(1, _JOIN + 1):
+            said.update("".join(words[i : i + size]) for i in range(len(words) - size + 1))
+    return said
+
+
+def user_provided(value: str, heard: Sequence[str], home: Path | None = None) -> bool:
     """True when at least 80 % of `value`'s words are in what the user said."""
-    wanted = _words(value)
+    wanted = _value_words(value, home or Path.home())
     if not wanted:
         return True  # nothing that could carry an instruction
-    said = {word for text in heard for word in _words(text)}
+    said = _said(heard)
     return sum(1 for word in wanted if word in said) / len(wanted) >= OVERLAP
 
 

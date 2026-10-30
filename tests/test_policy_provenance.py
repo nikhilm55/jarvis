@@ -1,6 +1,7 @@
 """R83 / FR-SAFE-03: a T2+ target the user did not say is confirmed, in every mode."""
 
 import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -38,6 +39,31 @@ def test_should_count_a_value_as_the_users_only_when_they_said_its_words(
     value: str, expected: bool
 ) -> None:
     assert user_provided(value, HEARD) is expected
+
+
+SAID_PATH = ["Jarvis, delete everything in the folder jarvis demo / downloads in my home folder"]
+
+
+@pytest.mark.parametrize(
+    ("value", "heard", "expected"),
+    [
+        ("/home/u/JarvisDemo/Downloads", SAID_PATH, True),  # home expanded, words split by STT
+        ("~/JarvisDemo/Downloads", SAID_PATH, True),
+        ("$HOME/JarvisDemo/Downloads", SAID_PATH, True),
+        ("/home/u/.ssh", SAID_PATH, False),  # the home prefix alone proves nothing
+        ("/etc/JarvisDemo/Downloads", SAID_PATH, False),  # only the home prefix is dropped
+        ("/home/u", ["delete everything in downloads"], False),  # the home folder itself
+        ("~", ["delete everything in downloads"], False),
+        ("/home/u/", ["delete everything in downloads"], False),
+        ("~", ["tidy up my home folder"], True),
+        ("/home/u/invoice-october.txt", ["delete invoice october dot t x t"], True),
+        ("/home/u/Work/payroll.xlsx", ["delete invoice october dot t x t"], False),
+    ],
+)
+def test_should_not_count_the_home_folder_or_split_words_against_a_path(
+    value: str, heard: list[str], expected: bool
+) -> None:
+    assert user_provided(value, heard, home=Path("/home/u")) is expected
 
 
 def test_should_check_the_declared_keys_or_else_the_target() -> None:
