@@ -24,6 +24,7 @@ from jarvis.orchestrator.timing import Timing
 from jarvis.orchestrator.trace import ToolTrace
 from jarvis.orchestrator.voice import Voice
 from jarvis.policy import Mode
+from jarvis.shell.runner import ShellRunner
 from jarvis.stt import WhisperServer, find_server_bin
 from jarvis.tts import Speaker
 from jarvis.tts.engines import AudioEngine, Engine, default_engine
@@ -67,6 +68,7 @@ async def build_components(
     trace = ToolTrace(settings.policy, mode, consent.broker)
     undo = UndoLog()
     files = FilesService(undo)
+    shell = ShellRunner()
     brain: ClaudeCodeBrain | None = None
     services: list[ServicePort] = []
     if with_brain:
@@ -78,7 +80,7 @@ async def build_components(
             return await brain.dispatch(name, args)  # gate-ok: late-bound brain hook
 
         mcp = JarvisMcpServer(trace.wrap(dispatch), lambda: mode, turn=trace.turn_context)
-        brain = ClaudeCodeBrain(settings, mcp, desktop, files=files)
+        brain = ClaudeCodeBrain(settings, mcp, desktop, files=files, shell=shell)
         services.append(mcp)
     return Components(
         source=source,
@@ -94,6 +96,7 @@ async def build_components(
         grants=consent.session,
         answers=HudAnswers(),
         undo=undo,
+        shell=shell,
     )
 
 

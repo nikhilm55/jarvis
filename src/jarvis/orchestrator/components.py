@@ -21,6 +21,7 @@ from jarvis.orchestrator.ports import (
 from jarvis.orchestrator.trace import ToolTrace
 from jarvis.orchestrator.voice import Voice
 from jarvis.policy.ports import ConsentBroker, NoConsent
+from jarvis.shell.runner import ShellRunner
 from jarvis.undo import UndoLog
 
 __all__ = ["Components", "close_components", "start_components"]
@@ -45,6 +46,7 @@ class Components:
     grants: SessionGrants | None = None  # the once and session grants `consent` consults
     answers: HudAnswers | None = None  # HUD answers to confirmations; None: nothing confirms
     undo: UndoLog | None = None  # what "Jarvis, undo that" reverses (R90)
+    shell: ShellRunner | None = None  # the runner behind run_shell; the kill switch stops it
     barge_in: bool = False  # the source is echo-cancelled, so "stop" is heard over Jarvis (R88)
 
 

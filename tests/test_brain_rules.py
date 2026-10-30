@@ -39,10 +39,10 @@ def test_should_say_envelope_content_is_data_when_rules_built() -> None:
     assert "DATA" in text
 
 
-def test_should_say_no_shell_when_rules_built() -> None:
-    """The text tells the model it has no shell."""
+def test_should_say_how_shell_runs_when_rules_built() -> None:
+    """The text tells the model it has run_shell (t8) through the gate."""
     text = build_rules()
-    assert "NO shell" in text
+    assert "run_shell" in text
 
 
 def test_should_distinguish_send_and_write_when_rules_built() -> None:

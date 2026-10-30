@@ -151,6 +151,14 @@ for _bare in [
     "setsid",
     "unbuffer",
     "busybox",
+    "strace",
+    "ltrace",
+    "perf",
+    "firejail",
+    "bwrap",
+    "systemd-run",
+    "parallel",
+    "entr",
     "if",
     "then",
     "do",
@@ -163,6 +171,8 @@ for _bare in [
     "}",
 ]:
     _WRAPPER_SPECS[_bare] = _wrap()
+_WRAPPER_SPECS["sg"] = _wrap("-c")
+_WRAPPER_SPECS["script"] = _wrap("-c")
 _FORK_BOMB = ":(){:|:&};:"
 _INTERPRETER = re.compile(r"python[0-9.]*|perl|ruby|nodejs|node|php|lua|osascript|pwsh|powershell")
 # Any program handed to an interpreter on its command line is T3 (R98): it cannot be classified
@@ -285,10 +295,22 @@ def _chmod(args: list[str]) -> bool:
 
 
 def _shell_c(args: list[str]) -> bool:
-    """`sh -c TEXT` whose text is T3 or missing. Text that cannot be read is T3 (R94)."""
-    for i, arg in enumerate(args):
-        if _SHELL_C.fullmatch(arg):
-            return i + 1 >= len(args) or _tier(args[i + 1], nested=True)[0] == Tier.T3
+    """`sh -c TEXT` whose text is T3 or missing. Text that cannot be read is T3 (R94).
+
+    Every `-c` in the argument list is looked at, not just the first: `sh -c date -c 'rm -rf ~'`
+    may be harmless as parsed (the shell takes one script), but a wrapper (`sg`, `script` G1)
+    gets its arguments re-split differently, so any unread `-c` value stays suspicious.
+    """
+    i = 0
+    while i < len(args):
+        if _SHELL_C.fullmatch(args[i]):
+            if i + 1 >= len(args):
+                return True
+            if _tier(args[i + 1], nested=True)[0] == Tier.T3:
+                return True
+            i += 2
+        else:
+            i += 1
     return False
 
 
@@ -434,7 +456,31 @@ _T3_CHECKS: dict[str, Callable[[list[str]], bool]] = {
 _NESTED_CHECKS: dict[str, Callable[[list[str]], bool]] = {
     "eval": _eval,
     **dict.fromkeys(_SHELLS, _shell_c),
+    "sg": _shell_c,  # `sg GROUP -c TEXT` runs TEXT through a login shell (G1)
+    "script": _shell_c,  # `script -c TEXT` runs TEXT through a shell (G1)
 }
+
+# Heads that never run their path arguments as programs: for them a full path is data even
+# when its file name is a dangerous command (G1). `find` is here only because its `-exec rm`
+# forms are caught by `_T3_CHECKS`; without a head, or with any other head, a full path whose
+# base name is dangerous is checked as a command (an unknown wrapper may be running it).
+_NON_EXECUTING_HEADS = _words(
+    "cat ls grep egrep fgrep head tail wc stat file cp mv echo printf which du df pwd whoami"
+    " date true false sleep readlink find cut sort uniq touch mkdir rmdir ln"
+)
+
+
+def _dangerous_basename(token: str) -> bool:
+    """Whether a full-path word could itself be a command (its file name is dangerous)."""
+    name = os.path.basename(token.rstrip("/").lower())
+    return (
+        name in _T3_CHECKS
+        or name in _DELETERS
+        or name in _ALWAYS_T3
+        or name in _NESTED_CHECKS
+        or name.startswith("mkfs")
+        or bool(_INTERPRETER.fullmatch(name))
+    )
 
 
 def _skip_wrapper_args(seg: list[str], at: int, spec: _Wrapper) -> int:
@@ -524,20 +570,24 @@ def _t3_at(seg: list[str], pos: int, name: str, skip_nested: bool) -> bool:
 def _is_t3(segments: list[list[str]], seps: list[str], docs: dict[int, str]) -> bool:
     for i, seg in enumerate(segments):
         starts = set(_command_starts(seg))
+        head = _head(seg)
+        reader_head = head is not None and os.path.basename(head).lower() in _NON_EXECUTING_HEADS
         evaled = False  # one `eval` reads everything after it, so a second one adds nothing
         for pos, token in enumerate(seg):
             name = os.path.basename(token).lower()
-            # A word with a `/` is data (`cat ~/notes/su`) unless a command starts there: first, or
-            # right after a wrapper's own arguments (`timeout 5s /bin/rm`). An unknown wrapper
-            # before a full path is not seen (N3).
-            if "/" in token and pos not in starts:
+            # A word with a `/` is data (`cat ~/notes/su`) unless a command starts there: first,
+            # or right after a wrapper's own arguments (`timeout 5s /bin/rm`). G1 (R105): past
+            # a non-executing head (cat, ls, cp ...) it stays data, but under any other head
+            # a full path whose file name is dangerous is checked as a command, so an unknown
+            # wrapper (`fakewrap /bin/rm -rf ~`) cannot hide behind the `"`/path excuse.
+            is_path = "/" in token
+            if is_path and pos not in starts and (reader_head or not _dangerous_basename(token)):
                 continue
             if _t3_at(seg, pos, name, skip_nested=evaled and name == "eval"):
                 return True
             evaled = evaled or name == "eval"
         if _redirects_into_sensitive(seg):
             return True
-        head = _head(seg)
         if head is not None:
             if _computed(head):
                 return True
