@@ -11,6 +11,7 @@ from jarvis.brain.failures import ToolError, step_limit_response
 from jarvis.brain.file_tools import FilesLike, call_files
 from jarvis.brain.respond import RespondGate
 from jarvis.brain.shell_tools import ShellLike, call_shell
+from jarvis.brain.system_tools import SystemLike, call_system
 from jarvis.contract import FinalResponse, sanitise_spoken
 
 _T = TypeVar("_T")
@@ -46,12 +47,14 @@ class TurnTools:
         *,
         files: FilesLike | None = None,
         shell: ShellLike | None = None,
+        system: SystemLike | None = None,
     ) -> None:
         """Create a turn handler bound to a turn id, hooks, desktop, files, shell and budget."""
         self._hooks = hooks
         self._desktop = desktop
         self._files = files
         self._shell = shell
+        self._system = system
         self._max_steps = max_steps
         self._steps = 0
         self._closed = False
@@ -117,6 +120,8 @@ class TurnTools:
             return await call_files(self._files, policy_name, args)
         if policy_name.startswith("shell.") and self._shell is not None:
             return await call_shell(self._shell, policy_name, args)
+        if policy_name.startswith("system.") and self._system is not None:
+            return await call_system(self._system, policy_name, args)
         if policy_name.startswith("desktop."):
             return await call_desktop(self._desktop, policy_name, args)  # gate-ok: via MCP impl
         raise ToolError(f"unknown tool {policy_name}")

@@ -11,6 +11,7 @@ from jarvis.contract import FinalResponse
 from jarvis.files import FILE_TOOLS  # noqa: F401 - registers the file tools' policy
 from jarvis.files.search import KINDS, WHENS
 from jarvis.shell import SHELL_TOOLS  # noqa: F401 - registers the shell tool's policy
+from jarvis.system import SYSTEM_TOOLS  # noqa: F401 - registers the system tools' policy
 
 SERVER_NAME = "jarvis"
 
@@ -432,6 +433,116 @@ TOOLS: tuple[McpTool, ...] = (
             },
             ["paths", "dest"],
         ),
+    ),
+    McpTool(
+        name="output_device",
+        policy_name="system.output_device",
+        description="Switch the sound output device (device 0 lists the sinks and the active one).",
+        input_schema=_object_schema(
+            {
+                "device": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "sink index; 0 lists them",
+                }
+            },
+            ["device"],
+        ),
+    ),
+    McpTool(
+        name="dnd",
+        policy_name="system.dnd",
+        description="Do not disturb for notifications: on stops the banners.",
+        input_schema=_object_schema({"on": {"type": "boolean"}}, ["on"]),
+    ),
+    McpTool(
+        name="dark_mode",
+        policy_name="system.dark_mode",
+        description="Dark or light desktop style.",
+        input_schema=_object_schema({"on": {"type": "boolean"}}, ["on"]),
+    ),
+    McpTool(
+        name="night_light",
+        policy_name="system.night_light",
+        description="Night light (the warm screen) on or off.",
+        input_schema=_object_schema({"on": {"type": "boolean"}}, ["on"]),
+    ),
+    McpTool(
+        name="brightness",
+        policy_name="system.brightness",
+        description="Screen brightness as a percentage (1-100).",
+        input_schema=_object_schema(
+            {"level": {"type": "integer", "minimum": 1, "maximum": 100}},
+            ["level"],
+        ),
+    ),
+    McpTool(
+        name="media",
+        policy_name="system.media",
+        description="Media keys: play, pause, toggle, next or previous.",
+        input_schema=_object_schema(
+            {
+                "action": {
+                    "type": "string",
+                    "enum": ["play", "pause", "toggle", "next", "previous"],
+                }
+            },
+            ["action"],
+        ),
+    ),
+    McpTool(
+        name="wifi",
+        policy_name="system.wifi",
+        description="Wi-Fi radio on or off.",
+        input_schema=_object_schema({"on": {"type": "boolean"}}, ["on"]),
+    ),
+    McpTool(
+        name="bluetooth",
+        policy_name="system.bluetooth",
+        description="Bluetooth radio on or off.",
+        input_schema=_object_schema({"on": {"type": "boolean"}}, ["on"]),
+    ),
+    McpTool(
+        name="lock_pc",
+        policy_name="system.lock",
+        description="Lock the PC (the owner's request; does not end Jarvis).",
+        input_schema=_object_schema({}, []),
+    ),
+    McpTool(
+        name="power",
+        policy_name="system.power",
+        description="Sleep, sign out, restart or shut down the PC — needs a confirmation.",
+        input_schema=_object_schema(
+            {
+                "action": {
+                    "type": "string",
+                    "enum": ["sleep", "signout", "restart", "shutdown"],
+                }
+            },
+            ["action"],
+        ),
+    ),
+    McpTool(
+        name="open_url",
+        policy_name="system.open_url",
+        description="Open a URL in the browser; use the URL the user said.",
+        input_schema=_object_schema(
+            {
+                "url": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 2048,
+                    "description": "http:// or https:// address.",
+                }
+            },
+            ["url"],
+        ),
+    ),
+    McpTool(
+        name="system_info",
+        policy_name="system.info",
+        description="Battery, memory, disk and uptime of this PC.",
+        input_schema=_object_schema({}, []),
     ),
 )
 
