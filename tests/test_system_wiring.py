@@ -4,6 +4,8 @@ import asyncio
 
 import pytest
 
+from jarvis.brain.clock import TurnClock
+from jarvis.brain.dispatch import TurnHooks, TurnTools
 from jarvis.brain.failures import ToolError
 from jarvis.brain.system_tools import call_system
 from jarvis.system import SYSTEM_TOOLS  # noqa: F401 - registers the system tools' policy
@@ -46,6 +48,31 @@ class FakeSystem:
         }
 
 
+async def say(_text: str) -> None:
+    return None
+
+
+async def ask(_question: str, _options: list[str]) -> str:
+    return ""
+
+
+def _tools(system: FakeSystem) -> TurnTools:
+    hooks = TurnHooks(say, ask, lambda _f: None, TurnClock())
+    return TurnTools("t1", hooks, object(), 5, system=system)  # type: ignore[arg-type]
+
+
+def test_should_route_dnd_calls_to_the_dnd_control() -> None:
+    system = FakeSystem()
+    asyncio.run(_tools(system)("system.dnd", {"on": True}))
+    assert system.calls == [("dnd", True)]
+
+
+def test_should_route_info_with_no_arguments() -> None:
+    system = FakeSystem()
+    asyncio.run(_tools(system)("system.info", {}))
+    assert system.calls == [("info", None)]
+
+
 def test_should_refuse_unknown_keys_and_actions() -> None:
     system = FakeSystem()
     with pytest.raises(ToolError, match=r"expected arguments on"):
@@ -64,3 +91,10 @@ def test_should_turn_a_control_error_into_a_tool_error() -> None:
 
     with pytest.raises(ToolError, match=r"UNSUPPORTED_ON_PLATFORM"):
         asyncio.run(call_system(Broken(), "system.dnd", {"on": True}))  # type: ignore[arg-type]
+
+
+def test_should_refuse_system_routing_without_the_controls() -> None:
+    hooks = TurnHooks(say, ask, lambda _f: None, TurnClock())
+    tools = TurnTools("t1", hooks, object(), 5)  # type: ignore[arg-type]
+    with pytest.raises(ToolError, match=r"unknown tool system\.dnd"):
+        asyncio.run(tools("system.dnd", {"on": True}))

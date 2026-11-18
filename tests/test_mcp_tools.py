@@ -38,6 +38,18 @@ EXPECTED_NAMES = (
     "copy_files",
     "rename_file",
     "zip_files",
+    "output_device",
+    "dnd",
+    "dark_mode",
+    "night_light",
+    "brightness",
+    "media",
+    "wifi",
+    "bluetooth",
+    "lock_pc",
+    "power",
+    "open_url",
+    "system_info",
 )
 
 POLICY_MAP = {
@@ -70,6 +82,18 @@ POLICY_MAP = {
     "copy_files": "files.copy",
     "rename_file": "files.rename",
     "zip_files": "files.zip",
+    "output_device": "system.output_device",
+    "dnd": "system.dnd",
+    "dark_mode": "system.dark_mode",
+    "night_light": "system.night_light",
+    "brightness": "system.brightness",
+    "media": "system.media",
+    "wifi": "system.wifi",
+    "bluetooth": "system.bluetooth",
+    "lock_pc": "system.lock",
+    "power": "system.power",
+    "open_url": "system.open_url",
+    "system_info": "system.info",
 }
 
 

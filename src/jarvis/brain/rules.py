@@ -37,6 +37,9 @@ RULES: str = textwrap.dedent(
     run_shell(cmd, cwd?, timeout_s?) runs one shell command and returns
     its output; use it for what the other tools don't cover, and keep
     the dedicated tools first for files, windows, and typed input.
+    output_device, dnd, dark_mode, night_light, brightness, media,
+    wifi, bluetooth, lock_pc, power, open_url, system_info: the PC's
+    own controls; never open a URL that the user did not give you.
     If you cannot do something, say so through respond; never pretend.
     Declining an off-task or impossible request is status success. A
     policy, consent or cancel block is status failed with its error code
