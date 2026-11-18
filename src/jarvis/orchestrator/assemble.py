@@ -10,6 +10,7 @@ from typing import Any
 from jarvis import models
 from jarvis.audio import AudioSource, Endpointer, SileroVad
 from jarvis.brain import ClaudeCodeBrain
+from jarvis.brain.agent_bin import resolve_claude
 from jarvis.config import Settings
 from jarvis.confirm import HudAnswers
 from jarvis.consent.broker import build_consent
@@ -31,6 +32,7 @@ from jarvis.tts import Speaker
 from jarvis.tts.engines import AudioEngine, Engine, default_engine
 from jarvis.undo import UndoLog
 from jarvis.wake import WakeDetector
+from jarvis.web.researcher import WebResearcher
 
 __all__ = ["build_components"]
 
@@ -72,6 +74,7 @@ async def build_components(
     shell = ShellRunner()
     system = SystemControls(OsRunner())
     brain: ClaudeCodeBrain | None = None
+    web: WebResearcher | None = None
     services: list[ServicePort] = []
     if with_brain:
         # The MCP server must exist before the brain, and the brain before any dispatch, so
@@ -82,7 +85,12 @@ async def build_components(
             return await brain.dispatch(name, args)  # gate-ok: late-bound brain hook
 
         mcp = JarvisMcpServer(trace.wrap(dispatch), lambda: mode, turn=trace.turn_context)
-        brain = ClaudeCodeBrain(settings, mcp, desktop, files=files, shell=shell, system=system)
+        # The sealed web researcher uses the same claude and model as the brain (web.research).
+        claude_bin = settings.brain.claude_bin
+        web = WebResearcher(lambda: [resolve_claude(claude_bin)], settings.brain.model)
+        brain = ClaudeCodeBrain(
+            settings, mcp, desktop, files=files, shell=shell, system=system, web=web
+        )
         services.append(mcp)
     return Components(
         source=source,
@@ -100,6 +108,7 @@ async def build_components(
         undo=undo,
         shell=shell,
         system=system,
+        web=web,
     )
 
 

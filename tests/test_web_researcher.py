@@ -4,15 +4,19 @@ A fake `claude` (a small Python script) stands in for Claude Code: it records ho
 started and prints a canned result, so nothing here touches the network.
 """
 
+import asyncio
 import json
 import os
 import sys
 import textwrap
+import threading
+import time
 from pathlib import Path
 
 import pytest
 
 from jarvis.brain.failures import BrainUnavailable
+from jarvis.killswitch import KillSwitch
 from jarvis.web.errors import ResearchError
 from jarvis.web.researcher import MAX_ANSWER, RESEARCH_RULES, WebResearcher
 
@@ -141,3 +145,47 @@ def test_should_report_a_missing_claude_as_unavailable(tmp_path: Path) -> None:
     with pytest.raises(ResearchError) as caught:
         web.research("anything")
     assert caught.value.code == "MCP_UNAVAILABLE"
+
+
+posix_only = pytest.mark.skipif(
+    sys.platform != "linux", reason="the kill paths are POSIX process groups"
+)
+
+
+@posix_only
+def test_should_time_out_and_kill_the_session(tmp_path: Path) -> None:
+    web, _ = researcher(tmp_path, "sleep", timeout_s=1)
+    started = time.monotonic()
+    with pytest.raises(ResearchError) as caught:
+        web.research("slow question")
+    assert caught.value.code == "TIMEOUT"
+    assert time.monotonic() - started < 5
+
+
+@posix_only
+def test_should_stop_the_session_when_the_kill_switch_fires(tmp_path: Path) -> None:
+    async def stop() -> None:
+        return None
+
+    killswitch = KillSwitch(stop)
+    web, _ = researcher(tmp_path, "sleep", timeout_s=60)
+    web.bind(killswitch.register_process)
+    caught: dict[str, BaseException] = {}
+
+    def work() -> None:
+        try:
+            web.research("slow question")
+        except ResearchError as exc:
+            caught["error"] = exc
+
+    thread = threading.Thread(target=work)
+    thread.start()
+    time.sleep(0.5)
+    started = time.monotonic()
+    threading.Thread(target=lambda: asyncio.run(killswitch.trigger("hotkey"))).start()
+    thread.join(timeout=3)
+    assert not thread.is_alive(), "the search returned after the kill switch fired"
+    assert time.monotonic() - started < 3
+    error = caught["error"]
+    assert isinstance(error, ResearchError)
+    assert error.code == "CANCELLED"

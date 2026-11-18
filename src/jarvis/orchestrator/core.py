@@ -72,6 +72,8 @@ class Orchestrator:
         if parts.shell is not None:
             # The shell is built before this switch, so the binding happens here (R84).
             parts.shell.bind(self.killswitch.register_process)
+        if parts.web is not None:
+            parts.web.bind(self.killswitch.register_process)  # "Jarvis, stop" ends a web search
         turn_services = TurnServices(
             settings=settings,
             mode=mode,
