@@ -12,6 +12,7 @@ from jarvis.files import FILE_TOOLS  # noqa: F401 - registers the file tools' po
 from jarvis.files.search import KINDS, WHENS
 from jarvis.shell import SHELL_TOOLS  # noqa: F401 - registers the shell tool's policy
 from jarvis.system import SYSTEM_TOOLS  # noqa: F401 - registers the system tools' policy
+from jarvis.web import WEB_TOOLS  # noqa: F401 - registers the web tool's policy
 
 SERVER_NAME = "jarvis"
 
@@ -543,6 +544,30 @@ TOOLS: tuple[McpTool, ...] = (
         policy_name="system.info",
         description="Battery, memory, disk and uptime of this PC.",
         input_schema=_object_schema({}, []),
+    ),
+    McpTool(
+        name="web_research",
+        policy_name="web.research",
+        description=(
+            "Look something up on the internet: searches the web, reads the pages and "
+            "returns a short answer with source URLs. Use it for anything current or "
+            "outside what you know (prices, deals, news, weather, opening hours, reviews). "
+            "Takes about 10-60 seconds."
+        ),
+        input_schema=_object_schema(
+            {
+                "request": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "description": (
+                        "The question, self-contained: include the user's country or "
+                        "city, dates and any criteria that matter."
+                    ),
+                }
+            },
+            ["request"],
+        ),
     ),
 )
 

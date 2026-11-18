@@ -12,6 +12,7 @@ from jarvis.brain.file_tools import FilesLike, call_files
 from jarvis.brain.respond import RespondGate
 from jarvis.brain.shell_tools import ShellLike, call_shell
 from jarvis.brain.system_tools import SystemLike, call_system
+from jarvis.brain.web_tools import WebLike, call_web
 from jarvis.contract import FinalResponse, sanitise_spoken
 
 _T = TypeVar("_T")
@@ -48,6 +49,7 @@ class TurnTools:
         files: FilesLike | None = None,
         shell: ShellLike | None = None,
         system: SystemLike | None = None,
+        web: WebLike | None = None,
     ) -> None:
         """Create a turn handler bound to a turn id, hooks, desktop, files, shell and budget."""
         self._hooks = hooks
@@ -55,6 +57,7 @@ class TurnTools:
         self._files = files
         self._shell = shell
         self._system = system
+        self._web = web
         self._max_steps = max_steps
         self._steps = 0
         self._closed = False
@@ -96,7 +99,7 @@ class TurnTools:
         finally:
             self._inflight.discard(task)
 
-    async def __call__(self, policy_name: str, args: dict[str, object]) -> object:  # noqa: PLR0911 - one branch per route
+    async def __call__(self, policy_name: str, args: dict[str, object]) -> object:
         """Route a single tool call for the current turn."""
         if self._closed:
             raise ToolError("no active turn: this turn has already ended")
@@ -116,12 +119,18 @@ class TurnTools:
             return await self._ask(args)
         if policy_name == "jarvis.request_access":
             return "granted"  # the gate asked for every scope before letting this run
+        return await self._service(policy_name, args)
+
+    async def _service(self, policy_name: str, args: dict[str, object]) -> object:
+        """Route a tool call to the service that owns its prefix."""
         if policy_name.startswith("files.") and self._files is not None:
             return await call_files(self._files, policy_name, args)
         if policy_name.startswith("shell.") and self._shell is not None:
             return await call_shell(self._shell, policy_name, args)
         if policy_name.startswith("system.") and self._system is not None:
             return await call_system(self._system, policy_name, args)
+        if policy_name.startswith("web.") and self._web is not None:
+            return await call_web(self._web, policy_name, args)
         if policy_name.startswith("desktop."):
             return await call_desktop(self._desktop, policy_name, args)  # gate-ok: via MCP impl
         raise ToolError(f"unknown tool {policy_name}")

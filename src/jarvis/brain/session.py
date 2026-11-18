@@ -23,6 +23,7 @@ from jarvis.brain.launch import McpConfigWriter, prepare_launch
 from jarvis.brain.process import ClaudeProcess
 from jarvis.brain.shell_tools import ShellLike
 from jarvis.brain.system_tools import SystemLike
+from jarvis.brain.web_tools import WebLike
 from jarvis.config import Settings
 from jarvis.contract import FinalResponse, TurnEnvelope
 from jarvis.log import get_logger
@@ -40,7 +41,7 @@ class ClaudeCodeBrain:
     (late-bound) because the server needs its dispatch before the brain exists.
     """
 
-    def __init__(  # noqa: PLR0913 - the brain's inputs, plus the files/shell/system seams
+    def __init__(  # noqa: PLR0913 - the brain's inputs, plus the files/shell/system/web seams
         self,
         settings: Settings,
         mcp_server: McpConfigWriter,
@@ -49,6 +50,7 @@ class ClaudeCodeBrain:
         files: FilesLike | None = None,
         shell: ShellLike | None = None,
         system: SystemLike | None = None,
+        web: WebLike | None = None,
         extra_env: Mapping[str, str] | None = None,
     ) -> None:
         """Initialise the brain with settings, an MCP writer, a desktop, files and the shell."""
@@ -58,6 +60,7 @@ class ClaudeCodeBrain:
         self._files = files
         self._shell = shell
         self._system = system
+        self._web = web
         self._extra_env = extra_env  # tests only: variables the fake claude needs
         self._proc: ClaudeProcess | None = None
         self._queue: asyncio.Queue[_Item] = asyncio.Queue()
@@ -107,6 +110,7 @@ class ClaudeCodeBrain:
                 files=self._files,
                 shell=self._shell,
                 system=self._system,
+                web=self._web,
             )
             self._tools = tools
             started = time.monotonic()

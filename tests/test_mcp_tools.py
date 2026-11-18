@@ -50,6 +50,7 @@ EXPECTED_NAMES = (
     "power",
     "open_url",
     "system_info",
+    "web_research",
 )
 
 POLICY_MAP = {
@@ -94,6 +95,7 @@ POLICY_MAP = {
     "power": "system.power",
     "open_url": "system.open_url",
     "system_info": "system.info",
+    "web_research": "web.research",
 }
 
 

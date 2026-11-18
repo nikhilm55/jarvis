@@ -24,6 +24,7 @@ from jarvis.policy.ports import ConsentBroker, NoConsent
 from jarvis.shell.runner import ShellRunner
 from jarvis.system.controls import SystemControls
 from jarvis.undo import UndoLog
+from jarvis.web.researcher import WebResearcher
 
 __all__ = ["Components", "close_components", "start_components"]
 
@@ -49,6 +50,7 @@ class Components:
     undo: UndoLog | None = None  # what "Jarvis, undo that" reverses (R90)
     shell: ShellRunner | None = None  # the runner behind run_shell; the kill switch stops it
     system: SystemControls | None = None  # the controls behind the system.* tools (FR-PC-06/07/13)
+    web: WebResearcher | None = None  # the sealed researcher behind web_research; stop kills it
     barge_in: bool = False  # the source is echo-cancelled, so "stop" is heard over Jarvis (R88)
 
 
